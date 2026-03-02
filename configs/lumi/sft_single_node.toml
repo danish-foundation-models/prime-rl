@@ -1,0 +1,17 @@
+toml_files = ["../../examples/reverse_text/sft.toml"]
+
+output_dir = "/flash/project_465002183/prime-rl/outputs/lumi-sft-single-node"
+
+[deployment]
+type = "single_node"
+gpus_per_node = 8
+num_gpus = 1
+
+[model]
+attn = "sdpa"
+
+[slurm]
+job_name = "prime-rl-sft-lumi"
+project_dir = "."
+partition = "standard-g"
+template_path = "src/prime_rl/templates/lumi/single_node_sft_lumi.sbatch.j2"

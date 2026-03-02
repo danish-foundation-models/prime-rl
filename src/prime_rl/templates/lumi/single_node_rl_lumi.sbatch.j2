@@ -1,0 +1,96 @@
+#!/bin/bash
+
+#SBATCH --job-name={{ job_name }}
+#SBATCH --account=project_465002183
+#SBATCH --partition={{ partition }}
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=56
+#SBATCH --gpus-per-node={{ gpus_per_node }}
+#SBATCH --mem=0
+#SBATCH --time=02:00:00
+#SBATCH --exclusive=user
+#SBATCH --hint=nomultithread
+#SBATCH --output={{ output_dir }}/job_%j.log
+#SBATCH --error={{ output_dir }}/job_%j.err
+
+set -euo pipefail
+
+PROJECT_DIR={{ project_dir }}
+CONFIG_PATH={{ config_path }}
+
+BASE_DIR=/pfs/lustref1/appl/local/laifs
+LAIFS_APPL_DIR=/appl/local/laifs
+SIF=${SIF:-$BASE_DIR/containers/lumi-multitorch-u24r64f21m43t29-20260216_093549/lumi-multitorch-full-u24r64f21m43t29-20260216_093549.sif}
+OVERLAY_DIR=${OVERLAY_DIR:-$PROJECT_DIR/overlay_prime_rl_lumi}
+OVERLAY_ENV_NAME=${OVERLAY_ENV_NAME:-prime-rl-lumi}
+FLASH_PROJECT_ROOT=${FLASH_PROJECT_ROOT:-/flash/project_465002183}
+HF_HOME=${HF_HOME:-$FLASH_PROJECT_ROOT/.cache/huggingface}
+UV_CACHE_DIR=${UV_CACHE_DIR:-$FLASH_PROJECT_ROOT/.cache/uv}
+XDG_CACHE_HOME=${XDG_CACHE_HOME:-$FLASH_PROJECT_ROOT/.cache}
+WANDB_CACHE_DIR=${WANDB_CACHE_DIR:-$XDG_CACHE_HOME/wandb}
+WANDB_CONFIG_DIR=${WANDB_CONFIG_DIR:-$FLASH_PROJECT_ROOT/.config/wandb}
+
+if [[ ! -f "$SIF" ]]; then
+  echo "FATAL: SIF not found: $SIF" >&2
+  exit 1
+fi
+
+if [[ ! -d "$OVERLAY_DIR/venv/$OVERLAY_ENV_NAME" ]]; then
+  echo "FATAL: overlay env not found: $OVERLAY_DIR/venv/$OVERLAY_ENV_NAME" >&2
+  echo "Build it with: ./scripts/build_lumi_overlay_prime_rl.sh" >&2
+  exit 1
+fi
+
+mkdir -p {{ output_dir }}
+mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR"
+
+SING_BIND_ARGS=(
+  -B "$BASE_DIR:$LAIFS_APPL_DIR"
+  -B "$OVERLAY_DIR:/overlay"
+  -B "$PROJECT_DIR:/workdir"
+)
+if [[ -d /flash ]]; then
+  SING_BIND_ARGS+=(-B /flash:/flash)
+fi
+if [[ -e "$FLASH_PROJECT_ROOT" ]]; then
+  FLASH_PROJECT_TARGET="$(readlink -f "$FLASH_PROJECT_ROOT" || true)"
+  if [[ -n "$FLASH_PROJECT_TARGET" && -d "$FLASH_PROJECT_TARGET" ]]; then
+    SING_BIND_ARGS+=(-B "$FLASH_PROJECT_TARGET:$FLASH_PROJECT_TARGET")
+  elif [[ -d "$FLASH_PROJECT_ROOT" ]]; then
+    SING_BIND_ARGS+=(-B "$FLASH_PROJECT_ROOT:$FLASH_PROJECT_ROOT")
+  fi
+fi
+if [[ -d /scratch ]]; then
+  SING_BIND_ARGS+=(-B /scratch:/scratch)
+fi
+
+RANK_CMD="
+set -euo pipefail
+source /overlay/venv/$OVERLAY_ENV_NAME/bin/activate
+OVERLAY_SITE=/overlay/venv/$OVERLAY_ENV_NAME/lib/python3.12/site-packages
+export PYTHONPATH=/workdir/src:\${OVERLAY_SITE}\${PYTHONPATH:+:\$PYTHONPATH}
+if [[ -n \"\${ROCR_VISIBLE_DEVICES:-}\" && -z \"\${HIP_VISIBLE_DEVICES:-}\" ]]; then
+  export HIP_VISIBLE_DEVICES=\"\${ROCR_VISIBLE_DEVICES}\"
+fi
+if [[ -n \"\${HIP_VISIBLE_DEVICES:-}\" && -z \"\${ROCR_VISIBLE_DEVICES:-}\" ]]; then
+  export ROCR_VISIBLE_DEVICES=\"\${HIP_VISIBLE_DEVICES}\"
+fi
+if [[ -n \"\${SSL_CERT_FILE:-}\" && ! -f \"\${SSL_CERT_FILE}\" ]]; then
+  unset SSL_CERT_FILE
+fi
+if [[ -n \"\${SSL_CERT_DIR:-}\" && ! -d \"\${SSL_CERT_DIR}\" ]]; then
+  unset SSL_CERT_DIR
+fi
+export HF_HOME=\"$HF_HOME\"
+export UV_CACHE_DIR=\"$UV_CACHE_DIR\"
+export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\"
+export WANDB_CACHE_DIR=\"$WANDB_CACHE_DIR\"
+export WANDB_CONFIG_DIR=\"$WANDB_CONFIG_DIR\"
+export UV_NO_SYNC=1
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+cd /workdir
+uv run rl @ \"$CONFIG_PATH\"
+"
+
+singularity exec --rocm "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"

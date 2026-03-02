@@ -13,6 +13,7 @@ from vllm.distributed.utils import StatelessProcessGroup
 from prime_rl.configs.trainer import NCCLWeightBroadcastConfig
 from prime_rl.trainer.models import PreTrainedModelPrimeRL
 from prime_rl.trainer.rl.broadcast.base import WeightBroadcast
+from prime_rl.trainer.transformers_compat import revert_weight_conversion_if_supported
 from prime_rl.trainer.runs import get_multi_run_manager
 from prime_rl.trainer.utils import get_world
 from prime_rl.trainer.weights import get_max_layer_num
@@ -94,9 +95,7 @@ def preprocess_layer_checkpoint(
         model.convert_layer_to_hf(layer_state_dict, layer_idx)
         return layer_state_dict
 
-    from transformers.core_model_loading import revert_weight_conversion
-
-    return revert_weight_conversion(model, layer_state_dict)
+    return revert_weight_conversion_if_supported(model, layer_state_dict)
 
 
 def preprocess_layer_quantized(
