@@ -38,7 +38,7 @@ class InferencePool(Protocol):
         """Get next client in round-robin fashion."""
         ...
 
-    async def wait_for_ready(self, model_name: str, timeout: int = 1800) -> None:
+    async def wait_for_ready(self, model_name: str, timeout: int = 7200) -> None:
         """Wait for inference pool to be ready."""
         ...
 
@@ -82,7 +82,7 @@ class StaticInferencePool:
     async def get_next_client(self) -> vf.ClientConfig:
         return next(self._client_cycle)
 
-    async def wait_for_ready(self, model_name: str, timeout: int = 1800) -> None:
+    async def wait_for_ready(self, model_name: str, timeout: int = 7200) -> None:
         await check_health(self._admin_clients, timeout=timeout)
         await maybe_check_has_model(self._admin_clients, model_name, skip_model_check=self._skip_model_check)
 

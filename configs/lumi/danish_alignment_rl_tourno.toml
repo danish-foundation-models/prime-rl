@@ -1,0 +1,88 @@
+output_dir = "/flash/project_465002183/prime-rl/outputs/danish-alignment-lumi-tourno"
+max_steps = 400
+max_model_len = 4096
+seq_len = 4096
+
+# Policy: Dolci — Danish-SFT'd Gemma-3-4B from the SFT track. Same architecture
+# as Gemma-3-4B-IT so VLM template + tokenizer are inherited.
+[model]
+name = "/flash/project_465002183/andreas/.cache/huggingface/hub/models--synquid--gemma-3-4b-dolci-sft/snapshots/0a557d204d615e9f60eb7018c43533e2a2b55e64"
+
+[model.vlm]
+vision_encoder_attr = "model.vision_tower"
+language_model_attr = "model.language_model"
+
+[deployment]
+type = "multi_node"
+gpus_per_node = 8
+num_train_nodes = 1
+num_infer_nodes = 1
+num_judge_nodes = 1
+
+[orchestrator]
+batch_size = 128
+rollouts_per_example = 8
+use_token_client = true
+
+[orchestrator.sampling]
+max_tokens = 2048
+temperature = 1.0
+extra_body = { return_token_ids = true }
+
+[[orchestrator.env]]
+id = "fluent-alignment-da"
+name = "danish-alignment-tourno"
+args = { mode = "tourno", group_size = 8, num_pairs_per_group = 16, alpha = 3.0, dataset_name = "V4ldeLund/no_robots_da_translated", dataset_split = "train", judge_model_name = "google/gemma-4-31B-it", judge_base_url = "env:JUDGE_BASE_URL", judge_api_key_env = "DUMMY_API_KEY", judge_temperature = 0.2, parse_fail_score = 3.0 }
+
+[trainer.model]
+attn = "sdpa"
+optimization_dtype = "bfloat16"
+reduce_dtype = "bfloat16"
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.loss]
+type = "default"
+kl_tau = 1e-2
+
+[trainer.tokenizer]
+name = "/flash/project_465002183/andreas/.cache/huggingface/hub/models--synquid--gemma-3-4b-dolci-sft/snapshots/0a557d204d615e9f60eb7018c43533e2a2b55e64"
+
+[trainer.optim]
+lr = 1e-6
+
+[ckpt]
+interval = 50
+keep_last = 10
+keep_interval = 50
+
+[inference]
+gpu_memory_utilization = 0.85
+model.max_model_len = 4096
+
+[inference.parallel]
+tp = 1
+dp = 8
+
+[judge_inference]
+model.name = "google/gemma-4-31B-it"
+model.max_model_len = 4096
+gpu_memory_utilization = 0.9
+server.port = 8001
+
+[judge_inference.parallel]
+tp = 8
+dp = 1
+
+[wandb]
+offline = true
+shared = false
+
+[slurm]
+job_name = "danish-alignment-tourno"
+project_dir = "."
+partition = "standard-g"
+account = "project_465002183"
+time = "48:00:00"
+template_path = "src/prime_rl/templates/lumi/multi_node_rl.sbatch.j2"

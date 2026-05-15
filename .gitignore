@@ -23,6 +23,12 @@ final_summary.json
 .pydantic_config
 .chroma_db
 
+# Local-only experiment artifacts (top-level only)
+/data/
+/models/
+/local_test/
+/eval/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -10,4 +10,9 @@ monkey_patch_LRUCacheWorkerLoRAManager()
 monkey_patch_minimax_m2_for_lora()
 # NOTE: Fix LoRA + MoE + DP>1 corrupted output (vLLM 0.17.0 bug)
 # Applied here so it runs inside every worker subprocess, not just the main API server process.
-monkey_patch_fused_moe_lora_dp()
+# Imports vLLM internals that were renamed/removed in 0.20+, so skip if unavailable —
+# we don't use LoRA in this project, so the patch is irrelevant when its target is gone.
+try:
+    monkey_patch_fused_moe_lora_dp()
+except (ImportError, ModuleNotFoundError):
+    pass

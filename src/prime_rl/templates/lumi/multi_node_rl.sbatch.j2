@@ -112,7 +112,13 @@ ALL_ROUTER_ARGS=""
 for ((r=0; r<NUM_INFER_REPLICAS; r++)); do
     head_idx=$((r * NODES_PER_INFER_REPLICA))
     router_host="${INFER_HOSTS[$head_idx]}"
-    INFER_URLS="${INFER_URLS:+$INFER_URLS }http://${router_host}:${ROUTER_PORT}/v1"
+    # NOTE: Bypass vllm-router (port ROUTER_PORT). The router is a Rust binary that
+    # deserializes requests against a typed struct and silently drops vLLM-specific
+    # fields like `return_token_ids` before forwarding — which breaks RL training
+    # (orchestrator gets None token_ids → NoneType crash). Point straight at the
+    # backend port; vLLM's internal data-parallelism still load-balances across
+    # workers within a single FastAPI instance.
+    INFER_URLS="${INFER_URLS:+$INFER_URLS }http://${router_host}:${BACKEND_PORT}/v1"
 
     REPLICA_ROUTER_ARGS=""
     for ((n=0; n<NODES_PER_INFER_REPLICA; n++)); do
@@ -190,7 +196,7 @@ if [[ -d /scratch ]]; then
     SING_BIND_ARGS+=(-B /scratch:/scratch)
 fi
 
-srun singularity exec --rocm "${SING_BIND_ARGS[@]}" "$SIF" bash -c '
+srun --wait=120 singularity exec --rocm "${SING_BIND_ARGS[@]}" "$SIF" bash -c '
 set -euo pipefail
 
 source /overlay/venv/"$OVERLAY_ENV_NAME"/bin/activate
@@ -223,6 +229,10 @@ export WANDB_CONFIG_DIR
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=1
+# vLLM 0.20+ ApiServer waits for EngineCore ready; default 600s is short
+# given AMD/ROCm torch.compile of Gemma-4-31B (~535s init alone, plus weight
+# load). Bump to 1 hr so first-time compile cold-starts can finish.
+export VLLM_ENGINE_READY_TIMEOUT_S=3600
 
 cd /workdir
 [ -f .env ] && source .env
