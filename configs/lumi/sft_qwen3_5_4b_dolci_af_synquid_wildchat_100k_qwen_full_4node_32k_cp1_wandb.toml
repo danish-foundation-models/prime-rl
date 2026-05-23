@@ -1,0 +1,66 @@
+output_dir = "/scratch/project_465002183/rasmus/post/outputs/prime-rl/qwen3_5-4b-base-chatml-hermes-dolci-af-synquid-wildchat-100k-qwen-full-4n-prime-cp1-ac-fla-bs64-mbs1-lr3e5-warmup50-steps863"
+clean_output_dir = true
+max_steps = 863
+dist_timeout_seconds = 600
+loss_impl = "liger_fused"
+
+[deployment]
+type = "multi_node"
+num_nodes = 4
+gpus_per_node = 8
+nodes_per_fsdp_group = 4
+
+[model]
+name = "Qwen/Qwen3.5-4B-Base"
+seq_len = 32768
+attn = "flash_attention_2"
+impl = "hf"
+optimization_dtype = "bfloat16"
+reduce_dtype = "bfloat16"
+cp = 1
+
+[model.ac]
+freq = 1
+
+[model.debug]
+random_init = false
+
+[tokenizer]
+name = "/scratch/project_465002183/rasmus/artifacts/tokenizers/qwen3_5-4b-base-chatml-hermes"
+
+[data]
+type = "pretokenized"
+path = "/scratch/project_465002183/rasmus/post/datasets/tokenized/qwen3_5-4b-base-chatml-hermes-dolci-af-synquid-wildchat-100k-qwen-msl32768"
+seq_len = 32768
+batch_size = 64
+micro_batch_size = 1
+shuffle = false
+seed = 42
+input_ids_column = "input_ids"
+loss_mask_column = "assistant_masks"
+pad_to_seq_len = true
+
+[optim]
+lr = 3e-5
+
+[scheduler]
+type = "linear"
+warmup_steps = 50
+decay_steps = 813
+min_lr = 0.0
+
+[ckpt]
+interval = 500
+keep_last = 4
+
+[wandb]
+project = "prime-rl"
+name = "qwen3_5-4b-base-chatml-hermes-dolci-af-synquid-wildchat-100k-qwen-full-4n-prime-cp1-ac-fla-bs64-mbs1-lr3e5-warmup50-steps863"
+offline = false
+
+[slurm]
+job_name = "prime-q35-dolci-wildchat"
+project_dir = "."
+partition = "standard-g"
+time = "24:00:00"
+template_path = "src/prime_rl/templates/lumi/multi_node_sft_lumi.sbatch.j2"

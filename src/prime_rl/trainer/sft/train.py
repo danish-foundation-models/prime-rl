@@ -137,7 +137,13 @@ def train(config: SFTConfig):
     logger.info(f"Initializing model ({config.model})")
     loading_from_ckpt_later = config.ckpt and checkpoint_step is not None
     fused_cross_entropy: bool | str = {"liger_fused": "liger", "quack_fused": "quack"}.get(config.loss_impl, False)
-    model = setup_model(config.model, parallel_dims, loading_from_ckpt_later, fused_cross_entropy=fused_cross_entropy)
+    model = setup_model(
+        config.model,
+        parallel_dims,
+        loading_from_ckpt_later,
+        fused_cross_entropy=fused_cross_entropy,
+        tokenizer_vocab_size=len(tokenizer),
+    )
 
     if parallel_dims.cp_enabled:
         from prime_rl.utils.cp import assert_cp_style_supports_model

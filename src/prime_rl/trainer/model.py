@@ -72,6 +72,51 @@ def pre_download_model(model_name: str) -> None:
     )
 
 
+def _patch_ministral3_config_mapping():
+    """Map Ministral3 text configs to HF's MistralConfig until upstream registers it."""
+    try:
+        from transformers import AutoConfig
+        from transformers.models.mistral.configuration_mistral import MistralConfig
+
+        AutoConfig.register("ministral3", MistralConfig, exist_ok=True)
+    except (ImportError, ValueError):
+        pass
+
+
+def _model_config_vocab_size(config: PretrainedConfig) -> int:
+    vocab_size = int(getattr(config, "vocab_size", 0) or 0)
+    if vocab_size:
+        return vocab_size
+    text_config = getattr(config, "text_config", None)
+    return int(getattr(text_config, "vocab_size", 0) or 0)
+
+
+def _disable_tying_for_untied_lm_head(model: nn.Module) -> bool:
+    """Keep HF resize_token_embeddings from tying an untied checkpoint head."""
+    input_embeddings = model.get_input_embeddings()
+    output_embeddings = model.get_output_embeddings()
+    if input_embeddings is None or output_embeddings is None:
+        return False
+
+    input_weight = getattr(input_embeddings, "weight", None)
+    output_weight = getattr(output_embeddings, "weight", None)
+    if input_weight is None or output_weight is None:
+        return False
+    if input_weight is output_weight or input_weight.data_ptr() == output_weight.data_ptr():
+        return False
+
+    changed = False
+    for subconfig in [
+        getattr(model, "config", None),
+        getattr(getattr(model, "config", None), "text_config", None),
+        getattr(getattr(model, "language_model", None), "config", None),
+    ]:
+        if subconfig is not None and getattr(subconfig, "tie_word_embeddings", False):
+            subconfig.tie_word_embeddings = False
+            changed = True
+    return changed
+
+
 def _patch_qwen3_5_moe_conversion_mapping():
     """Fix Qwen3.5 MoE conversion mapping incorrectly applying qwen2_moe expert weight splitting.
 
@@ -460,6 +505,8 @@ def get_model(
         _patch_qwen3_5_text_position_ids()
         _patch_qwen3_5_moe_conversion_mapping()
         _patch_qwen3_5_linear_attn_varlen()
+    if "ministral-3" in config.name.lower() or "mistral3" in config.name.lower():
+        _patch_ministral3_config_mapping()
 
     model_config = cast(
         PretrainedConfig,
@@ -1066,6 +1113,7 @@ def setup_model(
     parallel_dims: ParallelDims,
     loading_from_checkpoint_later: bool = False,
     fused_cross_entropy: bool | str = False,
+    tokenizer_vocab_size: int | None = None,
 ) -> nn.Module:
     if config.attn == "flash_attention_3" and not is_flash_attn_3_available():
         raise ValueError(
@@ -1083,6 +1131,25 @@ def setup_model(
     configure_moe_ep_backend(model, config)
 
     possible_to_load_to_meta = can_reinit_empty_buffers(model)
+    model_vocab_size = _model_config_vocab_size(model.config)
+    resize_to_tokenizer_vocab = (
+        tokenizer_vocab_size is not None
+        and model_vocab_size > 0
+        and int(tokenizer_vocab_size) > model_vocab_size
+    )
+    if tokenizer_vocab_size is not None and model_vocab_size > 0 and int(tokenizer_vocab_size) < model_vocab_size:
+        logger.warning(
+            "Tokenizer vocab size is smaller than model vocab size; keeping model embeddings unchanged "
+            f"({tokenizer_vocab_size} < {model_vocab_size})."
+        )
+    if resize_to_tokenizer_vocab:
+        if loading_from_checkpoint_later:
+            raise ValueError("Cannot resize token embeddings while deferring model weights to checkpoint load.")
+        logger.warning(
+            "Tokenizer vocab size differs from model vocab size; loading the HF model on CPU and resizing "
+            f"token embeddings before FSDP ({model_vocab_size} -> {tokenizer_vocab_size})."
+        )
+        possible_to_load_to_meta = False
 
     if config.debug.random_init and not possible_to_load_to_meta:
         raise ValueError(
@@ -1094,6 +1161,17 @@ def setup_model(
         logger.warning("Cannot load model to meta device only, loading to CPU instead.")
         model = get_model(config, device=torch.device("cpu"), dtype=DTYPE_MAP[config.optimization_dtype])
         configure_moe_ep_backend(model, config)
+        if resize_to_tokenizer_vocab:
+            if _disable_tying_for_untied_lm_head(model):
+                logger.warning(
+                    "Detected untied input embeddings and lm_head despite tie_word_embeddings=True; "
+                    "disabling tying before resizing token embeddings."
+                )
+            original_vocab_size = int(model.get_input_embeddings().num_embeddings)
+            model.resize_token_embeddings(int(tokenizer_vocab_size))
+            logger.warning(
+                f"Resized token embeddings to match tokenizer ({original_vocab_size} -> {tokenizer_vocab_size})."
+            )
 
     lm_head_chunk_size: int | None = None
     if isinstance(config.fused_lm_head_token_chunk_size, int):
