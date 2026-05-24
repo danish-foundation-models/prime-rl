@@ -1,10 +1,11 @@
 import json
 import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import Literal, TypedDict, cast
 
 import torch
-from datasets import Dataset, interleave_datasets, load_dataset
+from datasets import Dataset, DatasetDict, concatenate_datasets, interleave_datasets, load_dataset, load_from_disk
 from jaxtyping import Bool, Int
 from renderers.base import Renderer, build_training_sample
 from torch import Tensor
@@ -13,7 +14,7 @@ from torch.utils.data import IterableDataset, get_worker_info
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers.tokenization_utils import PreTrainedTokenizer
 
-from prime_rl.configs.sft import DataConfig, LossMaskConfig, SFTDataConfig
+from prime_rl.configs.sft import DataConfig, LossMaskConfig, PretokenizedSFTDataConfig, SFTDataConfig
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.chat_template import (
     IncrementalTokenizationError,
@@ -25,6 +26,7 @@ from prime_rl.utils.chat_template import (
 from prime_rl.utils.logger import get_logger
 
 STACKING_DATASET_BUCKET_TIMEOUT = 10
+TOKENIZED_SHARDS_MANIFEST_NAME = "tokenized_shards.json"
 
 
 class Sample(TypedDict):
@@ -343,6 +345,165 @@ class SFTDataset(StatefulIterableDataset):
             yield processed_example
 
 
+class PretokenizedSFTDataset(StatefulIterableDataset):
+    """A dataset wrapping pretokenized SFT rows.
+
+    PRIME-RL computes loss against explicit target_ids, while TRL/HF causal LM
+    training commonly stores input_ids and labels at the same positions and
+    shifts inside the model. When target_ids_column is unset, this dataset
+    performs that shift once in the loader.
+    """
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        shuffle: bool = True,
+        seed: int = 0,
+        seq_len: int = 128,
+        non_dp_size: int = 1,
+        input_ids_column: str = "input_ids",
+        loss_mask_column: str = "assistant_masks",
+        target_ids_column: str | None = None,
+        pad_to_seq_len: bool = True,
+        pad_token_id: int = 0,
+        max_examples: int | None = None,
+        max_epochs: int | None = None,
+    ):
+        super().__init__()
+        self.logger = get_logger()
+        self.dataset = dataset
+        self.num_examples = len(self.dataset)
+        self.shuffle = shuffle
+        self.seed = seed
+        self.seq_len = seq_len
+        self.input_ids_column = input_ids_column
+        self.loss_mask_column = loss_mask_column
+        self.target_ids_column = target_ids_column
+        self.pad_to_seq_len = pad_to_seq_len
+        self.pad_token_id = pad_token_id
+        self.max_examples = max_examples
+        self.max_epochs = max_epochs
+
+        if self.max_examples is not None:
+            self.num_examples = min(self.num_examples, self.max_examples)
+            self.dataset = self.dataset.select(range(self.num_examples))
+
+        worker_info = get_worker_info()
+        worker_id, num_workers = 0, 1
+        if worker_info is not None:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+        assert get_world().world_size % non_dp_size == 0, "world_size must be divisible by non_dp_size"
+        self.data_rank = get_world().rank // non_dp_size * num_workers + worker_id
+        self.data_world_size = get_world().world_size // non_dp_size * num_workers
+
+    @staticmethod
+    def _to_int_list(value, column: str) -> list[int]:
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if not isinstance(value, list):
+            raise ValueError(f"Column '{column}' must contain a list of token IDs")
+        return [int(item) for item in value]
+
+    @staticmethod
+    def _to_bool_list(value, column: str) -> list[bool]:
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if not isinstance(value, list):
+            raise ValueError(f"Column '{column}' must contain a list of mask values")
+        return [bool(item) for item in value]
+
+    def _get_loss_mask(self, example: dict, expected_len: int) -> list[bool]:
+        if self.loss_mask_column in example:
+            loss_mask = self._to_bool_list(example[self.loss_mask_column], self.loss_mask_column)
+        elif "loss_mask" in example:
+            loss_mask = self._to_bool_list(example["loss_mask"], "loss_mask")
+        else:
+            loss_mask = [True] * expected_len
+
+        if len(loss_mask) != expected_len:
+            raise ValueError(
+                f"Loss mask length must match expected token length, but got {len(loss_mask)=} and {expected_len=}"
+            )
+        return loss_mask
+
+    def _process(self, example: dict) -> dict | None:
+        if self.input_ids_column not in example:
+            raise ValueError(f"Pretokenized dataset is missing input IDs column '{self.input_ids_column}'")
+
+        input_ids = self._to_int_list(example[self.input_ids_column], self.input_ids_column)
+        if self.target_ids_column is not None:
+            if self.target_ids_column not in example:
+                raise ValueError(f"Pretokenized dataset is missing target IDs column '{self.target_ids_column}'")
+            target_ids = self._to_int_list(example[self.target_ids_column], self.target_ids_column)
+            loss_mask = self._get_loss_mask(example, len(target_ids))
+            if len(input_ids) != len(target_ids):
+                raise ValueError(
+                    f"Explicit input and target lengths must match, but got {len(input_ids)=} and {len(target_ids)=}"
+                )
+        else:
+            if len(input_ids) < 2:
+                return None
+            loss_mask = self._get_loss_mask(example, len(input_ids))[1:]
+            target_ids = input_ids[1:]
+            input_ids = input_ids[:-1]
+
+        input_ids = input_ids[: self.seq_len]
+        target_ids = target_ids[: self.seq_len]
+        loss_mask = loss_mask[: self.seq_len]
+
+        if self.pad_to_seq_len and len(input_ids) < self.seq_len:
+            pad_len = self.seq_len - len(input_ids)
+            input_ids.extend([self.pad_token_id] * pad_len)
+            target_ids.extend([self.pad_token_id] * pad_len)
+            loss_mask.extend([False] * pad_len)
+
+        if sum(loss_mask) == 0:
+            self.logger.warning(
+                f"Skipping pretokenized example {example.get('__index', '')} because no trainable tokens were found within the context window ({self.seq_len}). This is to prevent NaN loss."
+            )
+            return None
+
+        assert len(input_ids) == len(loss_mask) == len(target_ids), (
+            f"input_ids, loss_mask and target_ids must have the same length, but got {len(input_ids)=}, {len(loss_mask)=}, {len(target_ids)=}"
+        )
+
+        return {
+            "input_ids": input_ids,
+            "target_ids": target_ids,
+            "loss_mask": loss_mask,
+            "position_ids": list(range(len(input_ids))),
+        }
+
+    def __iter__(self):
+        dataset = self.dataset.shuffle(seed=self.epoch + self.seed) if self.shuffle else self.dataset
+        while True:
+            self.step += 1
+
+            epoch = (self.step - 1) // self.num_examples
+            if self.max_epochs is not None and epoch >= self.max_epochs:
+                break
+
+            if epoch > self.epoch:
+                self.epoch = epoch
+                dataset = self.dataset.shuffle(seed=self.epoch + self.seed) if self.shuffle else self.dataset
+
+            if (self.step - 1) % self.data_world_size != self.data_rank:
+                continue
+
+            example = cast(dict, dataset[(self.step - 1) % self.num_examples])
+            processed_example = self._process(example)
+            if processed_example is None:
+                continue
+
+            self.logger.debug(
+                f"Yield pretokenized example {example.get('__index', '')} with {len(processed_example['input_ids'])} tokens ({sum(processed_example['loss_mask'])} trainable tokens)"
+            )
+            self.num_samples["pretokenized"] += 1
+            self.num_tokens["pretokenized"] += len(processed_example["input_ids"])
+            yield processed_example
+
+
 class CatDataset(StatefulIterableDataset):
     """A dataset that concatenates samples into a single sequence with a fixed length."""
 
@@ -508,6 +669,7 @@ def cat_collate(samples: list[Sample]) -> Batch:
 
 def setup_and_interleave_datasets(
     dataset_name: str,
+    load_method: Literal["hf", "disk"],
     subsets_and_splits: list[tuple[str | None, str]],
     probabilities: list[float] | None,
     stopping_strategy: Literal["first_exhausted", "all_exhausted"],
@@ -515,9 +677,25 @@ def setup_and_interleave_datasets(
 ) -> Dataset:
     logger = get_logger()
     datasets = []
+    disk_dataset = None
+    if load_method == "disk":
+        dataset_path = Path(dataset_name)
+        logger.debug(f"Loading dataset from disk at {dataset_path}")
+        disk_dataset = load_from_disk(str(dataset_path))
     for subset, split in subsets_and_splits:
         logger.debug(f"Loading dataset {dataset_name} with {subset=} and {split=}")
-        dataset = cast(Dataset, load_dataset(dataset_name, subset, split=split))
+        if load_method == "disk":
+            if subset is not None:
+                raise ValueError("subsets are not supported when data.load_method = 'disk'")
+            assert disk_dataset is not None
+            if isinstance(disk_dataset, DatasetDict):
+                dataset = cast(Dataset, disk_dataset[split])
+            else:
+                if split != "train":
+                    raise ValueError("Single-split disk datasets only support split = 'train'")
+                dataset = cast(Dataset, disk_dataset)
+        else:
+            dataset = cast(Dataset, load_dataset(dataset_name, subset, split=split))
         num_examples = len(dataset)
         dataset = dataset.add_column("__subset", [subset] * num_examples, new_fingerprint=str(uuid.uuid4()))
         dataset = dataset.add_column("__split", [split] * num_examples, new_fingerprint=str(uuid.uuid4()))
@@ -543,6 +721,7 @@ def load_sft_dataset(config: SFTDataConfig) -> Dataset:
     if config.subsets is None and config.splits is None:
         return setup_and_interleave_datasets(
             dataset_name=config.name,
+            load_method=config.load_method,
             subsets_and_splits=[(None, "train")],
             probabilities=config.probabilities,
             stopping_strategy=config.stopping_strategy,
@@ -551,6 +730,7 @@ def load_sft_dataset(config: SFTDataConfig) -> Dataset:
         logger.debug(f"Loading datasets for subsets {config.subsets} with default split 'train'")
         return setup_and_interleave_datasets(
             dataset_name=config.name,
+            load_method=config.load_method,
             subsets_and_splits=[(subset, "train") for subset in config.subsets],
             probabilities=config.probabilities,
             stopping_strategy=config.stopping_strategy,
@@ -559,6 +739,7 @@ def load_sft_dataset(config: SFTDataConfig) -> Dataset:
         logger.debug(f"Loading datasets for splits {config.splits} with default subset 'None'")
         return setup_and_interleave_datasets(
             dataset_name=config.name,
+            load_method=config.load_method,
             subsets_and_splits=[(None, split) for split in config.splits],
             probabilities=config.probabilities,
             stopping_strategy=config.stopping_strategy,
@@ -568,10 +749,66 @@ def load_sft_dataset(config: SFTDataConfig) -> Dataset:
         logger.debug(f"Loading datasets for subsets {config.subsets} with splits {config.splits}")
         return setup_and_interleave_datasets(
             dataset_name=config.name,
+            load_method=config.load_method,
             subsets_and_splits=list(zip(config.subsets, config.splits)),
             probabilities=config.probabilities,
             stopping_strategy=config.stopping_strategy,
         )
+
+
+def _resolve_shard_path(root: Path, shard: str | dict) -> Path:
+    if isinstance(shard, str):
+        path = Path(shard)
+    elif isinstance(shard, dict) and isinstance(shard.get("path"), str):
+        path = Path(shard["path"])
+    else:
+        raise ValueError(f"Invalid shard entry in {TOKENIZED_SHARDS_MANIFEST_NAME}: {shard!r}")
+
+    return path if path.is_absolute() else root / path
+
+
+def load_pretokenized_dataset(config: PretokenizedSFTDataConfig) -> Dataset:
+    """Load a pretokenized HF Dataset from disk, including root post tokenized shard manifests."""
+    logger = get_logger()
+    root = config.path.expanduser()
+    if not root.exists():
+        raise FileNotFoundError(f"Pretokenized dataset path does not exist: {root}")
+
+    manifest_path = root / TOKENIZED_SHARDS_MANIFEST_NAME
+    if not manifest_path.exists():
+        logger.debug(f"Loading pretokenized dataset from {root}")
+        return cast(Dataset, load_from_disk(str(root)))
+
+    logger.debug(f"Loading pretokenized dataset manifest from {manifest_path}")
+    with manifest_path.open("r") as f:
+        manifest = json.load(f)
+
+    shards = manifest.get("shards")
+    if not isinstance(shards, list) or len(shards) == 0:
+        raise ValueError(f"{manifest_path} must contain a non-empty 'shards' list")
+
+    datasets = []
+    for shard in shards:
+        shard_path = _resolve_shard_path(root, shard)
+        logger.debug(f"Loading pretokenized dataset shard from {shard_path}")
+        datasets.append(cast(Dataset, load_from_disk(str(shard_path))))
+
+    if len(datasets) == 1:
+        return datasets[0]
+    return concatenate_datasets(datasets)
+
+
+def load_data_config_dataset(config: DataConfig) -> Dataset | None:
+    """Load the map-style dataset backing a data config, when one exists."""
+    match config.type:
+        case "sft":
+            return load_sft_dataset(config)
+        case "pretokenized":
+            return load_pretokenized_dataset(config)
+        case "fake":
+            return None
+        case _:
+            raise ValueError(f"Invalid dataset type: {config.type}")
 
 
 def setup_dataset(
@@ -585,7 +822,7 @@ def setup_dataset(
 ) -> StatefulIterableDataset:
     if config.type == "fake":
         return FakeDataset(
-            vocab_size=tokenizer.vocab_size, seq_len=config.seq_len, length=config.length, input_ids=config.input_ids
+            vocab_size=len(tokenizer), seq_len=config.seq_len, length=config.length, input_ids=config.input_ids
         )
     elif config.type == "sft":
         if raw_dataset is None:
@@ -601,6 +838,25 @@ def setup_dataset(
             max_epochs=max_epochs,
             renderer=renderer,
         )
+    elif config.type == "pretokenized":
+        if raw_dataset is None:
+            raw_dataset = load_pretokenized_dataset(config)
+        pad_token_id = tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = tokenizer.eos_token_id
+        return PretokenizedSFTDataset(
+            raw_dataset,
+            shuffle=config.shuffle,
+            seed=config.seed,
+            seq_len=config.seq_len,
+            non_dp_size=non_dp_size,
+            input_ids_column=config.input_ids_column,
+            loss_mask_column=config.loss_mask_column,
+            target_ids_column=config.target_ids_column,
+            pad_to_seq_len=config.pad_to_seq_len,
+            pad_token_id=pad_token_id if pad_token_id is not None else 0,
+            max_epochs=max_epochs,
+        )
     else:
         raise ValueError(f"Invalid dataset type: {config.type}")
 
@@ -612,5 +868,13 @@ def setup_dataloader(dataset: StatefulIterableDataset, config: DataConfig) -> St
     elif config.pack_function == "cat":
         packing_dataset = CatDataset(dataset, config.seq_len * config.micro_batch_size)
         return StatefulDataLoader(packing_dataset, batch_size=1, collate_fn=cat_collate)
+    elif config.pack_function == "none":
+        if config.type != "pretokenized":
+            raise ValueError("pack_function='none' is only supported for pretokenized data")
+        if config.micro_batch_size != 1 and not config.pad_to_seq_len:
+            raise ValueError(
+                "pack_function='none' requires micro_batch_size=1 unless pretokenized samples are padded to seq_len"
+            )
+        return StatefulDataLoader(dataset, batch_size=config.micro_batch_size, collate_fn=cat_collate)
     else:
         raise ValueError(f"Invalid pack function: {config.pack_function}")

@@ -34,7 +34,7 @@ from prime_rl.trainer.model import (
 )
 from prime_rl.trainer.parallel_dims import get_parallel_dims
 from prime_rl.trainer.perf import get_perf_counter
-from prime_rl.trainer.sft.data import load_sft_dataset, setup_dataloader, setup_dataset
+from prime_rl.trainer.sft.data import load_data_config_dataset, setup_dataloader, setup_dataset
 from prime_rl.trainer.utils import (
     GarbageCollection,
     MemoryProfiler,
@@ -106,6 +106,8 @@ def train(config: SFTConfig):
     grad_accum_steps = total_micro_batches // micro_batches_per_step
 
     if parallel_dims.cp_enabled:
+        from ring_flash_attn import substitute_hf_flash_attn
+
         assert config.data.seq_len % parallel_dims.cp == 0, "Sequence length must be divisible by CP degree"
         cp_group = parallel_dims.world_mesh["cp"].get_group()
         cp_rank = parallel_dims.world_mesh["cp"].get_local_rank()
@@ -133,7 +135,11 @@ def train(config: SFTConfig):
         else:
             checkpoint_step = config.ckpt.resume_step
 
-    # Initialize the model and tokenizer
+    # Initialize the tokenizer before the model so added special tokens can
+    # drive embedding resize for Hermes-style tokenizer artifacts.
+    logger.info(f"Initializing tokenizer ({config.tokenizer})")
+    tokenizer = setup_tokenizer(config.tokenizer)
+
     logger.info(f"Initializing model ({config.model})")
     loading_from_ckpt_later = config.ckpt and checkpoint_step is not None
     fused_cross_entropy: bool | str = {"liger_fused": "liger", "quack_fused": "quack"}.get(config.loss_impl, False)
@@ -161,9 +167,6 @@ def train(config: SFTConfig):
         multi_run_manager = get_multi_run_manager()
         multi_run_manager.reset_run_parameters(0)
         multi_run_manager.scaling_factors[0] = config.model.lora.alpha / config.model.lora.rank
-
-    logger.info(f"Initializing tokenizer ({config.tokenizer})")
-    tokenizer = setup_tokenizer(config.tokenizer)
 
     renderer = None
     if config.renderer is not None:
@@ -202,8 +205,8 @@ def train(config: SFTConfig):
 
     val_raw_dataset = None
     if config.val is not None:
-        logger.info(f"Loading validation dataset ({config.val.data.name})")
-        val_raw_dataset = load_sft_dataset(config.val.data)
+        logger.info(f"Loading validation data ({config.val.data})")
+        val_raw_dataset = load_data_config_dataset(config.val.data)
 
     # Optionally, resume training from a checkpoint
     progress = Progress()

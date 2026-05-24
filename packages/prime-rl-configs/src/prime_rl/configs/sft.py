@@ -32,7 +32,7 @@ class BaseDataConfig(BaseConfig):
     seq_len: int = Field(128, ge=1)
     """Sequence length."""
 
-    pack_function: Literal["cat", "stack"] = "cat"
+    pack_function: Literal["cat", "stack", "none"] = "cat"
     """Sample packing strategy. ``cat`` concatenates; ``stack`` requires ``seq_len`` divisible by 256."""
 
     micro_batch_size: int = Field(1, ge=1)
@@ -77,6 +77,9 @@ class SFTDataConfig(BaseDataConfig):
     name: str = "PrimeIntellect/Reverse-Text-SFT"
     """HF dataset name or path."""
 
+    load_method: Literal["hf", "disk"] = "hf"
+    """How to load the dataset: via ``datasets.load_dataset`` or ``datasets.load_from_disk``."""
+
     subsets: list[str] | None = None
     """Subsets to load from the HF dataset."""
 
@@ -120,6 +123,39 @@ class SFTDataConfig(BaseDataConfig):
         return self
 
 
+class PretokenizedSFTDataConfig(BaseDataConfig):
+    """Configures pretokenized SFT data loaded from a datasets save_to_disk artifact."""
+
+    type: Literal["pretokenized"] = "pretokenized"
+
+    pack_function: Literal["none"] = "none"
+    path: Path
+    """Path to a datasets save_to_disk directory, or a directory containing tokenized_shards.json with shard paths."""
+
+    shuffle: bool = True
+    """Shuffle the dataset at the start of each epoch."""
+
+    seed: int = 0
+    """Random seed for shuffling. Re-shuffled per epoch by adding the epoch count to the seed."""
+
+    input_ids_column: str = "input_ids"
+    """Column containing token IDs."""
+
+    loss_mask_column: str = "assistant_masks"
+    """Column containing per-token loss/assistant masks."""
+
+    target_ids_column: str | None = None
+    """Optional target ID column. If unset, targets are created by shifting input_ids by one position."""
+
+    pad_to_seq_len: bool = True
+    """Pad each emitted sample to ``data.seq_len``. Required for CP-friendly prepacked rows."""
+
+
+DataConfig: TypeAlias = Annotated[
+    FakeDataConfig | SFTDataConfig | PretokenizedSFTDataConfig, Field(discriminator="type")
+]
+
+
 class SFTValConfig(BaseConfig):
     interval: int = Field(50, ge=1)
     """Run validation every N training steps."""
@@ -127,10 +163,7 @@ class SFTValConfig(BaseConfig):
     eval_on_start: bool = False
     """Run validation before the first training step."""
 
-    data: SFTDataConfig
-
-
-DataConfig: TypeAlias = Annotated[FakeDataConfig | SFTDataConfig, Field(discriminator="type")]
+    data: DataConfig
 
 
 class BaseDeploymentConfig(BaseConfig):
@@ -276,10 +309,26 @@ class SFTConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_pack_function(self):
         if self.model.cp > 1:
-            if self.data.pack_function != "cat":
-                raise ValueError("Packing function must be 'cat' when CP is enabled")
-            if self.val is not None and self.val.data.pack_function != "cat":
-                raise ValueError("Validation packing function must be 'cat' when CP is enabled")
+            if not (
+                self.data.pack_function == "cat"
+                or (self.data.type == "pretokenized" and self.data.pack_function == "none" and self.data.pad_to_seq_len)
+            ):
+                raise ValueError(
+                    "Packing function must be 'cat' when CP is enabled, except pretokenized data may use "
+                    "'none' with pad_to_seq_len=True"
+                )
+            if self.val is not None and not (
+                self.val.data.pack_function == "cat"
+                or (
+                    self.val.data.type == "pretokenized"
+                    and self.val.data.pack_function == "none"
+                    and self.val.data.pad_to_seq_len
+                )
+            ):
+                raise ValueError(
+                    "Validation packing function must be 'cat' when CP is enabled, except pretokenized data may use "
+                    "'none' with pad_to_seq_len=True"
+                )
         return self
 
     @model_validator(mode="after")
