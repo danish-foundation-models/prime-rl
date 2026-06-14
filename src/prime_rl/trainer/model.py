@@ -117,6 +117,69 @@ def _disable_tying_for_untied_lm_head(model: nn.Module) -> bool:
     return changed
 
 
+def _config_token_ids(config: PretrainedConfig, field: str) -> list[int]:
+    value = getattr(config, field, None)
+    if value is None:
+        return []
+    if isinstance(value, int):
+        return [int(value)]
+    if isinstance(value, (list, tuple)):
+        return [int(item) for item in value if item is not None]
+    return []
+
+
+def _initialize_added_token_rows(model: nn.Module, target_token_ids: list[int], logger: logging.Logger) -> None:
+    target_token_ids = sorted(set(int(token_id) for token_id in target_token_ids))
+    if not target_token_ids:
+        return
+
+    input_embeddings = model.get_input_embeddings()
+    if input_embeddings is None or getattr(input_embeddings, "weight", None) is None:
+        raise ValueError("Cannot initialize added token rows because input embeddings are missing")
+
+    input_weight = input_embeddings.weight
+    vocab_size = int(input_weight.shape[0])
+    out_of_range = [token_id for token_id in target_token_ids if token_id < 0 or token_id >= vocab_size]
+    if out_of_range:
+        raise ValueError(
+            "Cannot initialize added token rows outside model embedding matrix: "
+            f"{out_of_range} for vocab size {vocab_size}"
+        )
+
+    source_token_ids: list[int] = []
+    for subconfig in [
+        getattr(model, "config", None),
+        getattr(getattr(model, "config", None), "text_config", None),
+        getattr(getattr(model, "language_model", None), "config", None),
+    ]:
+        if subconfig is None:
+            continue
+        for field in ("bos_token_id", "eos_token_id", "pad_token_id", "unk_token_id"):
+            source_token_ids.extend(_config_token_ids(subconfig, field))
+
+    target_set = set(target_token_ids)
+    source_token_ids = sorted(
+        {token_id for token_id in source_token_ids if 0 <= token_id < vocab_size and token_id not in target_set}
+    )
+    if not source_token_ids:
+        raise ValueError("Cannot initialize added token rows because no pretrained source token ids were found")
+
+    with torch.no_grad():
+        source_input = input_weight[source_token_ids].mean(dim=0)
+        input_weight[target_token_ids] = source_input.to(dtype=input_weight.dtype, device=input_weight.device)
+
+        output_embeddings = model.get_output_embeddings()
+        output_weight = getattr(output_embeddings, "weight", None) if output_embeddings is not None else None
+        if output_weight is not None and output_weight.data_ptr() != input_weight.data_ptr():
+            source_output = output_weight[source_token_ids].mean(dim=0)
+            output_weight[target_token_ids] = source_output.to(dtype=output_weight.dtype, device=output_weight.device)
+
+    logger.warning(
+        "Initialized tokenizer-added model rows from pretrained special-token rows "
+        f"(targets={target_token_ids}, sources={source_token_ids})."
+    )
+
+
 def _patch_qwen3_5_moe_conversion_mapping():
     """Fix Qwen3.5 MoE conversion mapping incorrectly applying qwen2_moe expert weight splitting.
 
@@ -661,9 +724,16 @@ def get_model(
             )
         logger.debug(f"Loaded model {config.name} in {time.perf_counter() - load_model_start_time:.2f} seconds")
 
-    # For VLM models, optionally freeze the vision encoder
+    # For VLM models, optionally freeze the vision encoder. Also freeze it for
+    # text-only training on composite VLM checkpoints so unused vision
+    # parameters do not enter optimizer state and break checkpoint resume.
     if is_vlm_training and config.vlm.freeze_vision_encoder:
         freeze_vision_encoder(model, override_attr=config.vlm.vision_encoder_attr)
+    elif is_vlm_arch:
+        vision_encoder = get_vision_encoder(model)
+        if vision_encoder is not None:
+            logger.info("Detected VLM architecture without [model.vlm]; freezing vision encoder for text-only training")
+            freeze_vision_encoder(model)
 
     assert model.lm_head.weight.dtype == dtype, (
         f"LM head dtype wasnt loaded correctly {model.lm_head.weight.dtype} != {dtype}"
@@ -734,17 +804,34 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
             **fsdp_config,
         )
 
-    shard_norm_and_lm_head = hasattr(model, "config") and not model.config.tie_word_embeddings
+    embed_module = getattr(language_model, "embed_tokens", None) or getattr(language_model, "embeddings", None)
+    norm_module = getattr(language_model, "norm", None) or language_model.norm_f
+    tie_word_embeddings = bool(getattr(getattr(model, "config", None), "tie_word_embeddings", False))
+    shard_norm_and_lm_head = not tie_word_embeddings
 
-    if shard_norm_and_lm_head:
-        # This optimization breaks weight tying
-        embed_module = getattr(language_model, "embed_tokens", None) or getattr(language_model, "embeddings", None)
+    if tie_word_embeddings:
+        if embed_module is not None and getattr(model, "lm_head", None) is not None:
+            fully_shard(
+                [embed_module, model.lm_head],
+                mesh=hsdp_mesh,
+                **fsdp_config,
+            )
+            get_logger().info("Applied grouped FSDP to tied input/output embeddings")
+        else:
+            get_logger().warning("Model uses tied word embeddings, but embed/lm_head modules were not found.")
+        fully_shard(
+            norm_module,
+            mesh=hsdp_mesh,
+            **fsdp_config,
+        )
+    else:
+        # For untied heads, keep the final projection unsharded after forward so
+        # backward can start without immediately all-gathering it again.
         fully_shard(
             embed_module,
             mesh=hsdp_mesh,
             **fsdp_config,
         )
-        norm_module = getattr(language_model, "norm", None) or language_model.norm_f
         fully_shard(
             [model.lm_head, norm_module],
             mesh=hsdp_mesh,
@@ -752,8 +839,6 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
             offload_policy=offload_policy,
             reshard_after_forward=False,
         )
-    else:
-        get_logger().warning("Model uses tied word embeddings, so skipping the last-layer no-reshard optimization.")
 
     fully_shard(
         model,
@@ -772,9 +857,8 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
     transformer_blocks = list(language_model.layers)
     next_transformer_blocks = transformer_blocks[1:] + [None]
 
-    embed_module = getattr(language_model, "embed_tokens", None) or getattr(language_model, "embeddings", None)
     if embed_module is not None and len(language_model.layers) > 0:
-        if shard_norm_and_lm_head:
+        if not tie_word_embeddings:
             embed_module.set_modules_to_forward_prefetch([transformer_blocks[0]])
 
     for transformer_block, next_transformer_block in zip(transformer_blocks, next_transformer_blocks):
@@ -785,7 +869,7 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
             else:
                 transformer_block.set_modules_to_forward_prefetch([next_transformer_block])
         elif language_model.norm is not None and model.lm_head is not None:
-            if shard_norm_and_lm_head:
+            if not tie_word_embeddings:
                 transformer_block.set_modules_to_forward_prefetch([language_model.norm, model.lm_head])
 
     # backward
@@ -793,7 +877,7 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
     prev_transformer_blocks = reversed_transformer_blocks[1:] + [None]
 
     if language_model.norm is not None and model.lm_head is not None and len(language_model.layers) > 0:
-        if shard_norm_and_lm_head:
+        if not tie_word_embeddings:
             model.lm_head.set_modules_to_backward_prefetch([reversed_transformer_blocks[0]])
         else:
             model.set_modules_to_backward_prefetch([reversed_transformer_blocks[0]])
@@ -806,7 +890,7 @@ def setup_fsdp(model: nn.Module, config: ModelConfig, parallel_dims: ParallelDim
             else:
                 transformer_block.set_modules_to_backward_prefetch([prev_transformer_block])
         elif embed_module is not None:
-            if shard_norm_and_lm_head:
+            if not tie_word_embeddings:
                 transformer_block.set_modules_to_backward_prefetch([embed_module])
 
 
@@ -1114,6 +1198,7 @@ def setup_model(
     loading_from_checkpoint_later: bool = False,
     fused_cross_entropy: bool | str = False,
     tokenizer_vocab_size: int | None = None,
+    added_token_ids_to_init: list[int] | None = None,
 ) -> nn.Module:
     if config.attn == "flash_attention_3" and not is_flash_attn_3_available():
         raise ValueError(
@@ -1172,6 +1257,11 @@ def setup_model(
             logger.warning(
                 f"Resized token embeddings to match tokenizer ({original_vocab_size} -> {tokenizer_vocab_size})."
             )
+
+    if config.init_added_token_embeddings and added_token_ids_to_init:
+        if possible_to_load_to_meta:
+            raise ValueError("Cannot initialize added token embeddings while loading model on meta device.")
+        _initialize_added_token_rows(model, added_token_ids_to_init, logger)
 
     lm_head_chunk_size: int | None = None
     if isinstance(config.fused_lm_head_token_chunk_size, int):

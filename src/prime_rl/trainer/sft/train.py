@@ -139,6 +139,14 @@ def train(config: SFTConfig):
     # drive embedding resize for Hermes-style tokenizer artifacts.
     logger.info(f"Initializing tokenizer ({config.tokenizer})")
     tokenizer = setup_tokenizer(config.tokenizer)
+    tokenizer_base_vocab_size = int(getattr(tokenizer, "vocab_size", len(tokenizer)))
+    added_token_ids_to_init = sorted(
+        {
+            int(token_id)
+            for token_id in tokenizer.get_added_vocab().values()
+            if int(token_id) >= tokenizer_base_vocab_size
+        }
+    )
 
     logger.info(f"Initializing model ({config.model})")
     loading_from_ckpt_later = config.ckpt and checkpoint_step is not None
@@ -149,6 +157,7 @@ def train(config: SFTConfig):
         loading_from_ckpt_later,
         fused_cross_entropy=fused_cross_entropy,
         tokenizer_vocab_size=len(tokenizer),
+        added_token_ids_to_init=added_token_ids_to_init,
     )
 
     if parallel_dims.cp_enabled:

@@ -191,6 +191,9 @@ class ModelConfig(BaseModelConfig):
     fused_lm_head_token_chunk_size: int | Literal["auto", "disabled"] = "disabled"
     """Flattened token chunk size for the fused LM head. ``int >= 1`` sets the tokens per LM-head chunk explicitly; ``auto`` auto-enables (RL training picks 8192); ``disabled`` uses the vanilla LM head. Integer values aren't supported for SFT training."""
 
+    init_added_token_embeddings: bool = False
+    """Initialize tokenizer-added rows that fall inside spare model vocab capacity from pretrained special-token rows before FSDP wrapping."""
+
     @model_validator(mode="before")
     @classmethod
     def _normalize_attn_alias(cls, data):

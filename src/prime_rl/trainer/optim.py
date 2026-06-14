@@ -131,6 +131,11 @@ def setup_optimizer(
             time.sleep(1)
         named_params = multi_run_manager.get_named_parameters_for_run(0)
 
+    frozen_params = sum(1 for _, p in named_params if not p.requires_grad)
+    if frozen_params:
+        get_logger().info(f"Excluding {frozen_params} frozen parameters from optimizer")
+        named_params = [(n, p) for n, p in named_params if p.requires_grad]
+
     optimizer = _create_optimizer(config, named_params, parallel_dims)
 
     if cpu_offload:

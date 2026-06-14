@@ -153,16 +153,21 @@ class PerfCounter:
 
         # Some MoE models (e.g. DeepSeek) use moe_intermediate_size, others (e.g. Granite) just use intermediate_size
         moe_intermediate_size = getattr(config, "moe_intermediate_size", None) or intermediate_size
-        if hasattr(config, "num_shared_experts") and config.num_shared_experts:  # Shared experts
-            sparse_mlp_params += num_sparse_layers * config.num_shared_experts * 3 * moe_intermediate_size * hidden_size
-        if hasattr(config, "num_experts_per_tok") and config.num_experts_per_tok:  # Routed experts
+        num_shared_experts = getattr(config, "num_shared_experts", None)
+        num_experts_per_tok = getattr(config, "num_experts_per_tok", None)
+        n_routed_experts = getattr(config, "n_routed_experts", None)
+        num_experts = getattr(config, "num_experts", None)
+
+        if num_shared_experts is not None:  # Shared experts
+            sparse_mlp_params += num_sparse_layers * num_shared_experts * 3 * moe_intermediate_size * hidden_size
+        if num_experts_per_tok is not None:  # Routed experts
             sparse_mlp_params += (
-                num_sparse_layers * config.num_experts_per_tok * 3 * moe_intermediate_size * hidden_size
+                num_sparse_layers * num_experts_per_tok * 3 * moe_intermediate_size * hidden_size
             )
-        if hasattr(config, "n_routed_experts"):  # DeepSeek Router
-            sparse_mlp_params += num_sparse_layers * config.n_routed_experts * hidden_size
-        elif hasattr(config, "num_experts") and config.num_experts is not None:  # Qwen Router
-            sparse_mlp_params += num_sparse_layers * config.num_experts * hidden_size
+        if n_routed_experts is not None:  # DeepSeek Router
+            sparse_mlp_params += num_sparse_layers * n_routed_experts * hidden_size
+        elif num_experts is not None:  # Qwen Router
+            sparse_mlp_params += num_sparse_layers * num_experts * hidden_size
         else:
             sparse_mlp_params = 0
 
