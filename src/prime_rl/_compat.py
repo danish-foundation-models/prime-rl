@@ -38,7 +38,7 @@ try:
 except ImportError:
     _hub_kernels = None  # transformers < 5.5, no patch needed
 
-if _hub_kernels is not None:
+if _hub_kernels is not None and hasattr(_hub_kernels, "lazy_load_kernel"):
     from huggingface_hub.errors import OfflineModeIsEnabled
 
     _original_lazy_load_kernel = _hub_kernels.lazy_load_kernel

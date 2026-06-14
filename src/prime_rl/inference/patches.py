@@ -339,15 +339,18 @@ def _patch_qwen35_lora():
 
     Upstream: https://github.com/vllm-project/vllm/issues/36372
     """
-    from vllm.lora.layers.column_parallel_linear import (
-        MergedColumnParallelLinearWithLoRA,
-        MergedColumnParallelLinearWithShardedLoRA,
-    )
-    from vllm.model_executor.models.qwen3_5 import (
-        Qwen3_5ForCausalLMBase,
-        Qwen3_5ForConditionalGeneration,
-        Qwen3_5MoeForConditionalGeneration,
-    )
+    try:
+        from vllm.lora.layers.column_parallel_linear import (
+            MergedColumnParallelLinearWithLoRA,
+            MergedColumnParallelLinearWithShardedLoRA,
+        )
+        from vllm.model_executor.models.qwen3_5 import (
+            Qwen3_5ForCausalLMBase,
+            Qwen3_5ForConditionalGeneration,
+            Qwen3_5MoeForConditionalGeneration,
+        )
+    except (ImportError, ModuleNotFoundError):
+        return
 
     qkvz_fix = ["in_proj_q", "in_proj_k", "in_proj_v", "in_proj_z"]
 
@@ -385,17 +388,20 @@ def _patch_lora_key_prefix():
     This is a copy of the upstream patch: https://github.com/vllm-project/vllm/pull/38522
     We can remove this patch once that PR makes it into a release.
     """
-    from vllm.lora.lora_model import (
-        LoRAModel,
-        PEFTHelper,
-        TensorizerConfig,
-        WeightsMapper,
-        get_lora_id,
-        is_base_embedding_weights,
-        os,
-        parse_fine_tuned_lora_name,
-        safetensors,
-    )
+    try:
+        from vllm.lora.lora_model import (
+            LoRAModel,
+            PEFTHelper,
+            TensorizerConfig,
+            WeightsMapper,
+            get_lora_id,
+            is_base_embedding_weights,
+            os,
+            parse_fine_tuned_lora_name,
+            safetensors,
+        )
+    except ImportError:
+        return
 
     def _patched_from_local_checkpoint(
         cls,
@@ -642,12 +648,15 @@ def monkey_patch_LRUCacheWorkerLoRAManager():
 # logger.warning_once about modules that will be ignored. Adapter validity is
 # already enforced by from_local_checkpoint, so dropping the warnings is safe.
 def monkey_patch_skip_lora_module_warnings():
-    from vllm.exceptions import LoRAAdapterNotFoundError
-    from vllm.lora.lora_model import LoRAModel
-    from vllm.lora.peft_helper import PEFTHelper
-    from vllm.lora.request import LoRARequest
-    from vllm.lora.utils import get_adapter_absolute_path
-    from vllm.lora.worker_manager import WorkerLoRAManager
+    try:
+        from vllm.exceptions import LoRAAdapterNotFoundError
+        from vllm.lora.lora_model import LoRAModel
+        from vllm.lora.peft_helper import PEFTHelper
+        from vllm.lora.request import LoRARequest
+        from vllm.lora.utils import get_adapter_absolute_path
+        from vllm.lora.worker_manager import WorkerLoRAManager
+    except ImportError:
+        return
 
     def _patched_load_adapter(self: WorkerLoRAManager, lora_request: LoRARequest) -> LoRAModel:
         try:
@@ -708,8 +717,11 @@ def monkey_patch_tokenize_params_validation():
         - Only rejects if prompt_len > max_model_len
         - Lets the engine naturally cap generation at max_model_len
     """
-    from vllm.exceptions import VLLMValidationError
-    from vllm.renderers.params import TokenizeParams
+    try:
+        from vllm.exceptions import VLLMValidationError
+        from vllm.renderers.params import TokenizeParams
+    except ModuleNotFoundError:
+        return
 
     def _patched_token_len_check(self, tokenizer, tokens):
         """Only validate that prompt fits in max_model_len, not prompt+max_tokens"""
@@ -872,7 +884,10 @@ def monkey_patch_no_moe_lora():
     Otherwise, the oracle will always try to pick TritonExperts.
     For blackwells, we want TRTLLMFlashInfer.
     """
-    from vllm.model_executor.layers.fused_moe.config import FusedMoEConfig, logger
+    try:
+        from vllm.model_executor.layers.fused_moe.config import FusedMoEConfig, logger
+    except (ImportError, ModuleNotFoundError):
+        return
 
     def _patched__post_init__(self: FusedMoEConfig):
         if self.dp_size > 1:
@@ -914,10 +929,13 @@ def monkey_patch_fp32_lm_head():
     Per @Jackmin801 on PR #2438, native ``out_dtype=fp32`` mm is more efficient
     and just as correct.
     """
-    import torch
-    from vllm.config import get_current_vllm_config
-    from vllm.logger import init_logger
-    from vllm.model_executor.layers.logits_processor import LogitsProcessor
+    try:
+        import torch
+        from vllm.config import get_current_vllm_config
+        from vllm.logger import init_logger
+        from vllm.model_executor.layers.logits_processor import LogitsProcessor
+    except (ImportError, ModuleNotFoundError):
+        return
 
     logger = init_logger(__name__)
 
