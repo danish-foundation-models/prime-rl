@@ -1,0 +1,59 @@
+output_dir = "/scratch/project_465002183/rasmus/post/external/prime-rl/outputs/lumi-hendrycks-sanity-500-seq12k-r10"
+max_steps = 500
+
+[deployment]
+type = "single_node"
+gpus_per_node = 8
+num_train_gpus = 4
+num_infer_gpus = 4
+
+[model]
+name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+
+[wandb]
+project = "prime-rl"
+name = "lumi-hendrycks-sanity-500-seq12k-r10"
+offline = false
+
+[trainer.model]
+name = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+seq_len = 12288
+attn = "sdpa"
+fused_lm_head_token_chunk_size = 1024
+
+[orchestrator]
+batch_size = 512
+group_size = 8
+seq_len = 8192
+
+[orchestrator.train.sampling]
+max_completion_tokens = 2048
+
+[[orchestrator.train.env]]
+id = "math-env"
+name = "hendrycks-math"
+args = { dataset_name = "mikasenghaas/Sanity-Test-R1D-1.5B", dataset_subset = "default" }
+
+[orchestrator.renderer]
+name = "default"
+reasoning_parser = "think"
+
+[orchestrator.eval]
+interval = 50
+
+[orchestrator.eval.sampling]
+max_completion_tokens = 2048
+
+[[orchestrator.eval.env]]
+id = "aime2024"
+name = "aime2024"
+group_size = 32
+
+[inference.model]
+max_model_len = 8192
+
+[slurm]
+job_name = "rl-hendrycks-sanity"
+project_dir = "."
+partition = "standard-g"
+template_path = "src/prime_rl/templates/lumi/single_node_rl_lumi.sbatch.j2"

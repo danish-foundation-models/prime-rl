@@ -1,0 +1,67 @@
+output_dir = "/scratch/project_465002183/rasmus/post/outputs/prime-rl/dfm-decoder-open-v0-7b-qwen35-agentic-apertus-wildchat-ifbench-when2call-agentic-code-danish-v1-4n-prime-cp1-ac-fla-bs64-mbs1-lr3e5-warmup100-steps3393-16k"
+clean_output_dir = true
+max_steps = 3393
+dist_timeout_seconds = 600
+loss_impl = "liger_fused"
+
+[deployment]
+type = "multi_node"
+num_nodes = 4
+gpus_per_node = 8
+nodes_per_fsdp_group = 4
+
+[model]
+name = "danish-foundation-models/dfm-decoder-open-v0-7b-pt"
+seq_len = 16384
+attn = "flash_attention_2"
+impl = "hf"
+optimization_dtype = "bfloat16"
+reduce_dtype = "bfloat16"
+cp = 1
+init_added_token_embeddings = true
+
+[model.ac]
+freq = 1
+
+[model.debug]
+random_init = false
+
+[tokenizer]
+name = "/scratch/project_465002183/rasmus/artifacts/tokenizers/dfm-decoder-open-v0-7b-qwen35-agentic-v1"
+
+[data]
+type = "pretokenized"
+path = "/scratch/project_465002183/rasmus/post/datasets/tokenized/dfm-decoder-open-v0-7b-qwen35-agentic-v1-apertus-sft-mixture-synquid-wildchat-100k-qwen-ifbench-train-when2call-agentic-code-danish-v1-msl16384"
+seq_len = 16384
+batch_size = 64
+micro_batch_size = 1
+shuffle = false
+seed = 42
+input_ids_column = "input_ids"
+loss_mask_column = "assistant_masks"
+pad_to_seq_len = true
+
+[optim]
+lr = 3e-5
+
+[scheduler]
+type = "linear"
+warmup_steps = 100
+decay_steps = 3293
+min_lr = 0.0
+
+[ckpt]
+interval = 500
+keep_last = 4
+
+[wandb]
+project = "prime-rl"
+name = "dfm-decoder-open-v0-7b-qwen35-agentic-apertus-wildchat-ifbench-when2call-agentic-code-danish-v1-4n-prime-cp1-ac-fla-bs64-mbs1-lr3e5-warmup100-steps3393-16k"
+offline = false
+
+[slurm]
+job_name = "prime-dfm-decoder-da-v1"
+project_dir = "."
+partition = "standard-g"
+time = "24:00:00"
+template_path = "src/prime_rl/templates/lumi/multi_node_sft_lumi.sbatch.j2"
