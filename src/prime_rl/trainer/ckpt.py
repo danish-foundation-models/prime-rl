@@ -463,11 +463,11 @@ class WeightCheckpointManager:
                 f"Converted PrimeRL format to HF format in {time.perf_counter() - start_time:.2f} seconds"
             )
         else:
-            from transformers.core_model_loading import revert_weight_conversion
+            from prime_rl.trainer.transformers_compat import revert_weight_conversion_if_supported
 
             self.logger.debug("Reverting transformers internal format to HF hub format for weight checkpoint")
             start_time = time.perf_counter()
-            state_dict = revert_weight_conversion(model, state_dict)
+            state_dict = revert_weight_conversion_if_supported(model, state_dict)
             self.logger.debug(f"Reverted to HF hub format in {time.perf_counter() - start_time:.2f} seconds")
 
         # Save weight checkpoint on master rank
