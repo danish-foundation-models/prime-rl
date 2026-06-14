@@ -37,11 +37,33 @@ INFERENCE_TOML = "inference.toml"
 
 def get_physical_gpu_ids() -> list[int]:
     """Return physical GPU IDs visible to the launcher."""
-    raw_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
-    if raw_visible is None:
+    raw_visible = os.environ.get("CUDA_VISIBLE_DEVICES") or os.environ.get("ROCR_VISIBLE_DEVICES") or os.environ.get(
+        "HIP_VISIBLE_DEVICES"
+    )
+    if raw_visible is not None:
+        return [int(token.strip()) for token in raw_visible.split(",") if token.strip()]
+
+    try:
         pynvml.nvmlInit()
         return list(range(pynvml.nvmlDeviceGetCount()))
-    return [int(token.strip()) for token in raw_visible.split(",") if token.strip()]
+    except pynvml.NVMLError:
+        pass
+
+    for env_var in ("SLURM_GPUS_ON_NODE", "SLURM_GPUS_PER_NODE"):
+        raw_count = os.environ.get(env_var)
+        if raw_count is not None:
+            digits = "".join(char for char in raw_count if char.isdigit())
+            if digits:
+                return list(range(int(digits)))
+    return []
+
+
+def visible_device_env(gpu_ids: list[int]) -> dict[str, str]:
+    visible = ",".join(map(str, gpu_ids))
+    return {
+        "CUDA_VISIBLE_DEVICES": visible,
+        "HIP_VISIBLE_DEVICES": visible,
+    }
 
 
 def write_config(config: RLConfig, output_dir: Path, exclude: set[str] | None = None) -> None:
@@ -162,7 +184,7 @@ def rl_local(config: RLConfig):
                     inference_cmd,
                     env={
                         **os.environ,
-                        "CUDA_VISIBLE_DEVICES": ",".join(map(str, infer_gpu_ids)),
+                        **visible_device_env(infer_gpu_ids),
                     },
                     stdout=log_file,
                     stderr=log_file,
@@ -254,7 +276,7 @@ def rl_local(config: RLConfig):
                     **os.environ,
                     **wandb_shared_env,
                     "WANDB_SHARED_LABEL": "trainer",
-                    "CUDA_VISIBLE_DEVICES": ",".join(map(str, trainer_gpu_ids)),
+                    **visible_device_env(trainer_gpu_ids),
                     "PYTHONUNBUFFERED": "1",
                     "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
                     "LOGURU_FORCE_COLORS": "1",

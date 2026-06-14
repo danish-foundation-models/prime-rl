@@ -7,14 +7,14 @@ REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BASE_DIR=/pfs/lustref1/appl/local/laifs
 LAIFS_APPL_DIR=/appl/local/laifs
 
-: "${SIF:=$BASE_DIR/containers/lumi-multitorch-u24r64f21m43t29-20260216_093549/lumi-multitorch-full-u24r64f21m43t29-20260216_093549.sif}"
+: "${SIF:=$BASE_DIR/containers/lumi-multitorch-u24r70f21m50t210-20260513_121430/lumi-multitorch-full-u24r70f21m50t210-20260513_121430.sif}"
 : "${OVERLAY_DIR:=$REPO_DIR/overlay_prime_rl_lumi}"
 : "${OVERLAY_ENV_NAME:=prime-rl-lumi}"
-: "${EXTRA_PIP_PACKAGES:=tomli tomli_w beartype jaxtyping torchdata ring-flash-attn aiolimiter tenacity}"
+: "${SINGULARITY_GPU_ARGS:=}"
+: "${EXTRA_PIP_PACKAGES:=tomli tomli_w beartype jaxtyping torchdata ring-flash-attn aiolimiter tenacity orjson}"
 : "${PRIMEINTELLECT_INDEX_URL:=https://hub.primeintellect.ai/primeintellect/simple/}"
 : "${DION_REF:=d891eeb}"
 : "${TORCHTITAN_REF:=a1fdd7e}"
-: "${VERIFIERS_REF:=b35d0c7}"
 
 if [[ ! -f "$SIF" ]]; then
   echo "FATAL: SIF not found: $SIF" >&2
@@ -29,11 +29,12 @@ echo "+ Overlay: $OVERLAY_DIR"
 echo "+ Overlay env: $OVERLAY_ENV_NAME"
 echo "+ Repo: $REPO_DIR"
 echo "+ Extra pip packages: ${EXTRA_PIP_PACKAGES:-<none>}"
+echo "+ Singularity GPU args: ${SINGULARITY_GPU_ARGS:-<none>}"
 
 export OVERLAY_ENV_NAME EXTRA_PIP_PACKAGES
-export PRIMEINTELLECT_INDEX_URL DION_REF TORCHTITAN_REF VERIFIERS_REF
+export PRIMEINTELLECT_INDEX_URL DION_REF TORCHTITAN_REF
 
-singularity exec --rocm \
+singularity exec ${SINGULARITY_GPU_ARGS} \
   -B "$BASE_DIR:$LAIFS_APPL_DIR" \
   -B "$OVERLAY_DIR:/overlay" \
   -B "$REPO_DIR:/workdir" \
@@ -65,6 +66,7 @@ fi
 python -m pip install --no-user --extra-index-url "${PRIMEINTELLECT_INDEX_URL}" \
   "prime>=0.5.37" \
   "math-env" \
+  "aime2024" \
   "reverse-text"
 
 python -m pip install --no-user \
@@ -77,10 +79,8 @@ python -m pip install --no-user \
 python -m pip install --no-user \
   "git+https://github.com/pytorch/torchtitan@${TORCHTITAN_REF}"
 
-python -m pip install --no-user \
-  "git+https://github.com/PrimeIntellect-ai/verifiers.git@${VERIFIERS_REF}"
-
-python -m pip install --no-user "compressed-tensors==0.13.0"
+python -m pip install --no-user --extra-index-url "${PRIMEINTELLECT_INDEX_URL}" \
+  --upgrade "verifiers>=0.1.15.dev17"
 
 TORCH_TRITON_VERSION="$(python - <<'PY'
 import importlib.metadata as md
@@ -103,12 +103,15 @@ else
 fi
 
 python - <<'PY'
+import importlib.metadata as md
 import prime_rl
-import torch
 
 print("prime_rl:", prime_rl.__file__)
-print("torch:", torch.__version__)
-print("cuda_available:", torch.cuda.is_available())
+for name in ("torch", "vllm", "transformers", "triton", "compressed-tensors", "verifiers", "math-env"):
+    try:
+        print(f"{name}: {md.version(name)}")
+    except md.PackageNotFoundError:
+        print(f"{name}: <missing>")
 PY
 
 python -m pip freeze > /overlay/overlay-pip-freeze.txt

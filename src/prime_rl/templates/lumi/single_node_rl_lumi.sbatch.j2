@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=56
 #SBATCH --gpus-per-node={{ gpus_per_node }}
 #SBATCH --mem=0
-#SBATCH --time=02:00:00
+#SBATCH --time=24:00:00
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
 #SBATCH --output={{ output_dir }}/job_%j.log
@@ -21,15 +21,18 @@ CONFIG_PATH={{ config_path }}
 
 BASE_DIR=/pfs/lustref1/appl/local/laifs
 LAIFS_APPL_DIR=/appl/local/laifs
-SIF=${SIF:-$BASE_DIR/containers/lumi-multitorch-u24r64f21m43t29-20260216_093549/lumi-multitorch-full-u24r64f21m43t29-20260216_093549.sif}
+SIF=${SIF:-$BASE_DIR/containers/lumi-multitorch-u24r70f21m50t210-20260513_121430/lumi-multitorch-full-u24r70f21m50t210-20260513_121430.sif}
 OVERLAY_DIR=${OVERLAY_DIR:-$PROJECT_DIR/overlay_prime_rl_lumi}
 OVERLAY_ENV_NAME=${OVERLAY_ENV_NAME:-prime-rl-lumi}
-FLASH_PROJECT_ROOT=${FLASH_PROJECT_ROOT:-/flash/project_465002183}
-HF_HOME=${HF_HOME:-$FLASH_PROJECT_ROOT/.cache/huggingface}
-UV_CACHE_DIR=${UV_CACHE_DIR:-$FLASH_PROJECT_ROOT/.cache/uv}
-XDG_CACHE_HOME=${XDG_CACHE_HOME:-$FLASH_PROJECT_ROOT/.cache}
-WANDB_CACHE_DIR=${WANDB_CACHE_DIR:-$XDG_CACHE_HOME/wandb}
-WANDB_CONFIG_DIR=${WANDB_CONFIG_DIR:-$FLASH_PROJECT_ROOT/.config/wandb}
+SINGULARITY_GPU_ARGS=${SINGULARITY_GPU_ARGS:-}
+HOST_CACHE_DIR=${HOST_CACHE_DIR:-/scratch/project_465002183/.cache}
+CONTAINER_CACHE_DIR=${CONTAINER_CACHE_DIR:-/scratch/project_465002183/.cache}
+HF_HOME=${HF_HOME:-$CONTAINER_CACHE_DIR/huggingface}
+UV_CACHE_DIR=${UV_CACHE_DIR:-$CONTAINER_CACHE_DIR/uv}
+XDG_CACHE_HOME=${XDG_CACHE_HOME:-$CONTAINER_CACHE_DIR}
+WANDB_CACHE_DIR=${WANDB_CACHE_DIR:-$CONTAINER_CACHE_DIR/wandb}
+WANDB_CONFIG_DIR=${WANDB_CONFIG_DIR:-$CONTAINER_CACHE_DIR/wandb-config}
+MPLCONFIGDIR=${MPLCONFIGDIR:-$CONTAINER_CACHE_DIR/matplotlib}
 
 if [[ ! -f "$SIF" ]]; then
   echo "FATAL: SIF not found: $SIF" >&2
@@ -43,24 +46,14 @@ if [[ ! -d "$OVERLAY_DIR/venv/$OVERLAY_ENV_NAME" ]]; then
 fi
 
 mkdir -p {{ output_dir }}
-mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR"
+mkdir -p "$HOST_CACHE_DIR/huggingface" "$HOST_CACHE_DIR/uv" "$HOST_CACHE_DIR/wandb" "$HOST_CACHE_DIR/wandb-config" "$HOST_CACHE_DIR/matplotlib"
 
 SING_BIND_ARGS=(
   -B "$BASE_DIR:$LAIFS_APPL_DIR"
   -B "$OVERLAY_DIR:/overlay"
   -B "$PROJECT_DIR:/workdir"
+  -B /pfs/lustrep4/scratch/project_465002183:/pfs/lustrep4/scratch/project_465002183
 )
-if [[ -d /flash ]]; then
-  SING_BIND_ARGS+=(-B /flash:/flash)
-fi
-if [[ -e "$FLASH_PROJECT_ROOT" ]]; then
-  FLASH_PROJECT_TARGET="$(readlink -f "$FLASH_PROJECT_ROOT" || true)"
-  if [[ -n "$FLASH_PROJECT_TARGET" && -d "$FLASH_PROJECT_TARGET" ]]; then
-    SING_BIND_ARGS+=(-B "$FLASH_PROJECT_TARGET:$FLASH_PROJECT_TARGET")
-  elif [[ -d "$FLASH_PROJECT_ROOT" ]]; then
-    SING_BIND_ARGS+=(-B "$FLASH_PROJECT_ROOT:$FLASH_PROJECT_ROOT")
-  fi
-fi
 if [[ -d /scratch ]]; then
   SING_BIND_ARGS+=(-B /scratch:/scratch)
 fi
@@ -69,7 +62,8 @@ RANK_CMD="
 set -euo pipefail
 source /overlay/venv/$OVERLAY_ENV_NAME/bin/activate
 OVERLAY_SITE=/overlay/venv/$OVERLAY_ENV_NAME/lib/python3.12/site-packages
-export PYTHONPATH=/workdir/src:\${OVERLAY_SITE}\${PYTHONPATH:+:\$PYTHONPATH}
+BASE_SITE=/opt/venv/lib/python3.12/site-packages
+export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:\${OVERLAY_SITE}:\${BASE_SITE}\${PYTHONPATH:+:\$PYTHONPATH}
 if [[ -n \"\${ROCR_VISIBLE_DEVICES:-}\" && -z \"\${HIP_VISIBLE_DEVICES:-}\" ]]; then
   export HIP_VISIBLE_DEVICES=\"\${ROCR_VISIBLE_DEVICES}\"
 fi
@@ -87,10 +81,12 @@ export UV_CACHE_DIR=\"$UV_CACHE_DIR\"
 export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\"
 export WANDB_CACHE_DIR=\"$WANDB_CACHE_DIR\"
 export WANDB_CONFIG_DIR=\"$WANDB_CONFIG_DIR\"
+export MPLCONFIGDIR=\"$MPLCONFIGDIR\"
+export WANDB_MODE=online
 export UV_NO_SYNC=1
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 cd /workdir
-uv run rl @ \"$CONFIG_PATH\"
+rl @ \"$CONFIG_PATH\"
 "
 
-singularity exec --rocm "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"
+singularity exec ${SINGULARITY_GPU_ARGS} "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"

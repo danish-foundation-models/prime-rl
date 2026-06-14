@@ -39,6 +39,7 @@ dependencies = [
     "tilelang>=0.1.8",
     "flash-linear-attention",
     "nvidia-ml-py>=12.575.51",
+    "orjson>=3.10.0",
     "pybase64>=1.4.2",
 ]
 

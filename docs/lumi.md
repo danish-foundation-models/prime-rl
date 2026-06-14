@@ -29,7 +29,7 @@ Main scripts:
 - Access to LUMI project `project_465002183`
 - This repo checked out on a filesystem visible from compute nodes
 - Base container available at:
-  `/pfs/lustref1/appl/local/laifs/containers/lumi-multitorch-u24r64f21m43t29-20260216_093549/lumi-multitorch-full-u24r64f21m43t29-20260216_093549.sif`
+  `/pfs/lustref1/appl/local/laifs/containers/lumi-multitorch-u24r70f21m50t210-20260513_121430/lumi-multitorch-full-u24r70f21m50t210-20260513_121430.sif`
 
 ## One-Time Setup
 
@@ -43,6 +43,8 @@ Defaults (override with env vars if needed):
 - `SIF`: base container path
 - `OVERLAY_DIR`: `./overlay_prime_rl_lumi`
 - `OVERLAY_ENV_NAME`: `prime-rl-lumi`
+- `SINGULARITY_GPU_ARGS`: empty by default for the ROCm 7 base image. Set to
+  `--rocm` only for older images that require host ROCm library binding.
 
 ## Cache Policy
 
