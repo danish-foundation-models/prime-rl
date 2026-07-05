@@ -27,8 +27,16 @@ launch_inference_rank() {
     [ -n "$rpc" ] && cmd+=(--data-parallel-rpc-port "$rpc")
     [ -n "$extra" ] && cmd+=(--vllm-extra "$extra")
     if [ -n "$nixl" ]; then
-        CUDA_VISIBLE_DEVICES="$gpus" VLLM_NIXL_SIDE_CHANNEL_PORT="$nixl" VLLM_RPC_BASE_PATH="$rpcbase" "${cmd[@]}" 2>&1 | tee -a "$log" &
+        (
+            unset ROCR_VISIBLE_DEVICES
+            export CUDA_VISIBLE_DEVICES="$gpus" HIP_VISIBLE_DEVICES="$gpus" VLLM_NIXL_SIDE_CHANNEL_PORT="$nixl" VLLM_RPC_BASE_PATH="$rpcbase"
+            "${cmd[@]}"
+        ) 2>&1 | tee -a "$log" &
     else
-        CUDA_VISIBLE_DEVICES="$gpus" VLLM_RPC_BASE_PATH="$rpcbase" "${cmd[@]}" 2>&1 | tee -a "$log" &
+        (
+            unset ROCR_VISIBLE_DEVICES
+            export CUDA_VISIBLE_DEVICES="$gpus" HIP_VISIBLE_DEVICES="$gpus" VLLM_RPC_BASE_PATH="$rpcbase"
+            "${cmd[@]}"
+        ) 2>&1 | tee -a "$log" &
     fi
 }

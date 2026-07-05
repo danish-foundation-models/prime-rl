@@ -56,9 +56,19 @@ LLMD_EOF
 {%- else %}
     local tag="vllm-router"; [ "$mode" = pd ] && tag="vllm-router (PD)"
     echo "Starting $tag on $LOCAL_IP:$port${replica:+ for replica $replica}" | tee "$log"
-    local -a cmd=(vllm-router --policy "$policy" --host 0.0.0.0 --port "$port"
-        --request-id-headers x-session-id
-        --worker-startup-timeout-secs 4200 --log-level debug)
+    local -a cmd
+    if command -v vllm-router >/dev/null 2>&1; then
+        cmd=(vllm-router --policy "$policy" --host 0.0.0.0 --port "$port"
+            --request-id-headers x-session-id
+            --worker-startup-timeout-secs 4200 --log-level debug)
+    else
+        if [ "$mode" = pd ]; then
+            echo "FATAL: vllm-router is required for PD/disaggregated routing; fallback router only supports regular worker URLs" | tee -a "$log"
+            return 1
+        fi
+        cmd=(python -m prime_rl.inference.router_proxy --policy "$policy" --host 0.0.0.0 --port "$port"
+            --worker-startup-timeout-secs 4200 --log-level info)
+    fi
     if [ "$mode" = pd ]; then
         cmd+=(--vllm-pd-disaggregation $worker_args)
     else
