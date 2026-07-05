@@ -1,5 +1,6 @@
 import prime_rl._compat  # noqa: F401 — patch ring_flash_attn compat before import
 
+import os
 import time
 from contextlib import nullcontext
 from datetime import timedelta
@@ -52,10 +53,128 @@ from prime_rl.utils.config import cli
 from prime_rl.utils.process import set_proc_title
 from prime_rl.utils.utils import clean_exit, to_col_format
 import torch.distributed as dist
+from torch.distributed.tensor import DTensor
 from liger_kernel.transformers.cross_entropy import LigerCrossEntropyLoss
 from prime_rl.trainer.models.layers.lm_head import FUSED_CE_IGNORE_INDEX
 
 from torchtitan.distributed.utils import clip_grad_norm_
+
+
+def _grad_norm_probe(parameters, group) -> dict[str, float]:
+    grads = [param.grad for param in parameters if param.grad is not None]
+    if not grads:
+        return {"torch_total": float("nan"), "local_shard": float("nan"), "global_shard": float("nan")}
+
+    torch_total = torch.nn.utils.get_total_norm(grads, 2.0, False, None)
+    if isinstance(torch_total, DTensor):
+        torch_total = torch_total.full_tensor()
+
+    local_sq = torch.zeros((), device="cuda", dtype=torch.float32)
+    for grad in grads:
+        local_grad = grad.to_local() if isinstance(grad, DTensor) else grad
+        local_sq += local_grad.detach().float().pow(2).sum()
+
+    global_sq = local_sq.clone()
+    dist.all_reduce(global_sq, op=dist.ReduceOp.SUM, group=group)
+
+    return {
+        "torch_total": float(torch_total.detach().float().item()),
+        "local_shard": float(local_sq.sqrt().item()),
+        "global_shard": float(global_sq.sqrt().item()),
+    }
+
+
+def _top_grad_norms(named_parameters, group, limit: int) -> list[dict[str, float | str]]:
+    if limit <= 0:
+        return []
+
+    names = []
+    local_sqs = []
+    for name, param in named_parameters:
+        if param.grad is None:
+            continue
+        grad = param.grad.to_local() if isinstance(param.grad, DTensor) else param.grad
+        names.append(name)
+        local_sqs.append(grad.detach().float().pow(2).sum())
+
+    if not local_sqs:
+        return []
+
+    local_sq = torch.stack(local_sqs)
+    global_sq = local_sq.clone()
+    dist.all_reduce(global_sq, op=dist.ReduceOp.SUM, group=group)
+
+    top_count = min(limit, global_sq.numel())
+    top_values, top_indices = torch.topk(global_sq, k=top_count)
+    results = []
+    for value, index in zip(top_values, top_indices, strict=True):
+        idx = int(index.item())
+        results.append(
+            {
+                "name": names[idx],
+                "global_norm": float(value.sqrt().item()),
+                "local_norm": float(local_sq[idx].sqrt().item()),
+            }
+        )
+    return results
+
+
+def _embedding_grad_row_probe(named_parameters, tokenizer, group, limit: int) -> dict[str, object] | None:
+    if limit <= 0:
+        return None
+
+    for name, param in named_parameters:
+        if name != "model.embed_tokens.weight" or param.grad is None:
+            continue
+
+        grad = param.grad
+        placements = str(getattr(grad, "placements", None))
+        global_shape = tuple(grad.shape)
+        local_grad = grad.to_local() if isinstance(grad, DTensor) else grad
+        local_shape = tuple(local_grad.shape)
+
+        result: dict[str, object] = {
+            "name": name,
+            "placements": placements,
+            "global_shape": global_shape,
+            "local_shape": local_shape,
+            "rows": [],
+        }
+        if local_grad.ndim != 2:
+            flat_norms = local_grad.detach().float().abs().flatten()
+            top_count = min(limit, flat_norms.numel())
+            top_values, top_indices = torch.topk(flat_norms, k=top_count)
+            result["flat_abs"] = [
+                {"index": int(index.item()), "value": float(value.item())}
+                for value, index in zip(top_values, top_indices, strict=True)
+            ]
+            return result
+
+        row_norms = local_grad.detach().float().pow(2).sum(dim=1).sqrt()
+        top_count = min(limit, row_norms.numel())
+        top_values, top_indices = torch.topk(row_norms, k=top_count)
+
+        rank = dist.get_rank(group)
+        row_sharded = len(global_shape) == 2 and local_shape[1] == global_shape[1]
+        local_start = rank * local_shape[0] if row_sharded else 0
+        rows = []
+        for value, index in zip(top_values, top_indices, strict=True):
+            local_index = int(index.item())
+            token_id = local_start + local_index if row_sharded else local_index
+            token = tokenizer.convert_ids_to_tokens(token_id) if 0 <= token_id < len(tokenizer) else None
+            rows.append(
+                {
+                    "local_index": local_index,
+                    "token_id": token_id,
+                    "token": token,
+                    "norm": float(value.item()),
+                    "max_abs": float(local_grad[local_index].detach().float().abs().max().item()),
+                }
+            )
+        result["rows"] = rows
+        return result
+
+    return None
 
 
 @clean_exit
@@ -67,6 +186,9 @@ def train(config: SFTConfig):
         json_logging=config.log.json_logging,
     )
     logger.info(f"Starting SFT trainer in {world}")
+    debug_grads = os.environ.get("PRIME_RL_SFT_DEBUG_GRADS", "").strip().lower() in {"1", "true", "yes"}
+    debug_grad_steps = int(os.environ.get("PRIME_RL_SFT_DEBUG_GRADS_STEPS", "4"))
+    debug_grad_topk = int(os.environ.get("PRIME_RL_SFT_DEBUG_GRADS_TOPK", "0"))
 
     # Print warning if running in benchmark mode
     if config.bench is not None:
@@ -431,11 +553,26 @@ def train(config: SFTConfig):
         dist.all_reduce(global_step_token_count, op=dist.ReduceOp.SUM, group=dp_cp_group)
         global_token_count_val = global_step_token_count.item()
 
+        grad_probe_enabled = debug_grads and progress.step < debug_grad_steps
+        grad_norm_before_scale = _grad_norm_probe(model.parameters(), dp_cp_group) if grad_probe_enabled else None
+        grad_top_before_scale = (
+            _top_grad_norms(model.named_parameters(), dp_cp_group, debug_grad_topk) if grad_probe_enabled else None
+        )
+        grad_embed_rows_before_scale = (
+            _embedding_grad_row_probe(model.named_parameters(), tokenizer, dp_cp_group, debug_grad_topk)
+            if grad_probe_enabled and world.is_master
+            else None
+        )
+
         if global_token_count_val > 0:
             grad_scale = parallel_dims.fsdp_gradient_divide_factor * grad_accum_steps / global_token_count_val
             for param in model.parameters():
                 if param.grad is not None:
                     param.grad.mul_(grad_scale)
+        else:
+            grad_scale = 0.0
+
+        grad_norm_after_scale = _grad_norm_probe(model.parameters(), dp_cp_group) if grad_probe_enabled else None
 
         # Run validation after forward-backward (so torch.compile sees training graph first) but before
         # optimizer step (so eval_on_start evaluates untrained weights)
@@ -462,6 +599,22 @@ def train(config: SFTConfig):
             )
             if grad_norm.device.type == "cpu":
                 grad_norm = grad_norm.to(torch.device("cuda"))
+        grad_norm_after_clip = _grad_norm_probe(model.parameters(), dp_cp_group) if grad_probe_enabled else None
+
+        if grad_probe_enabled and world.is_master:
+            logger.warning(
+                "SFT grad probe | "
+                f"step={progress.step} seq_len={config.data.seq_len} "
+                f"local_tokens={step_local_token_count.item()} global_tokens={global_token_count_val} "
+                f"grad_accum_steps={grad_accum_steps} fsdp_divide={parallel_dims.fsdp_gradient_divide_factor} "
+                f"grad_scale={grad_scale:.12g} "
+                f"before_scale={grad_norm_before_scale} "
+                f"top_before_scale={grad_top_before_scale} "
+                f"embed_rows_before_scale={grad_embed_rows_before_scale} "
+                f"after_scale={grad_norm_after_scale} "
+                f"clip_return={grad_norm.detach().float().item() if grad_norm is not None else None} "
+                f"after_clip={grad_norm_after_clip}"
+            )
         zero_grad_ratio = get_zero_gradient_ratio(model.parameters(), parallel_dims.dp_replicate)
 
         logger.debug("Optimizer step")
