@@ -20,6 +20,7 @@ from prime_rl.trainer.models.layers.attn import (
     flash_attn_3_varlen_func,
     flash_attn_4_varlen_func,
     flash_attn_varlen_func,
+    packed_causal_mask_from_cu_seqlens,
 )
 from prime_rl.trainer.models.layers.lm_head import PrimeLmOutput
 from prime_rl.trainer.models.layers.moe import FeedForward, MoE, MoEArgs
@@ -114,8 +115,38 @@ def torch_chunk_gated_delta_rule(
     initial_state=None,
     output_final_state=False,
     use_qk_l2norm_in_kernel=False,
+    cu_seqlens=None,
+    cp_context=None,
 ):
     """Pure-PyTorch fallback for chunk_gated_delta_rule."""
+    if cp_context is not None:
+        raise RuntimeError("Qwen3.5 MoE DeltaNet context parallelism requires flash-linear-attention")
+
+    if cu_seqlens is not None:
+        if initial_state is not None or output_final_state:
+            raise NotImplementedError("Packed torch_chunk_gated_delta_rule does not support recurrent state")
+        if query.shape[0] != 1:
+            raise NotImplementedError("Packed torch_chunk_gated_delta_rule expects flattened batch size 1")
+
+        cu = cu_seqlens.tolist()
+        outs = []
+        for start, end in zip(cu, cu[1:]):
+            if start == end:
+                continue
+            out, _ = torch_chunk_gated_delta_rule(
+                query[:, start:end],
+                key[:, start:end],
+                value[:, start:end],
+                g=g[:, start:end],
+                beta=beta[:, start:end],
+                chunk_size=chunk_size,
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+            )
+            outs.append(out)
+        return torch.cat(outs, dim=1), None
+
     initial_dtype = query.dtype
     if use_qk_l2norm_in_kernel:
         query = l2norm(query, dim=-1, eps=1e-6)
@@ -431,14 +462,19 @@ class Qwen3_5MoeGatedSDPAAttention(Qwen3_5MoeGatedAttentionBase):
         query_states: torch.Tensor,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
+        cu_seqlens: torch.LongTensor | None = None,
+        max_seqlen: int | None = None,
     ) -> torch.Tensor:
+        del max_seqlen
         key_states = _repeat_kv(key_states, self.num_key_value_groups)
         value_states = _repeat_kv(value_states, self.num_key_value_groups)
+        attn_mask = packed_causal_mask_from_cu_seqlens(cu_seqlens, query_states.shape[-2], query_states.device)
         return F.scaled_dot_product_attention(
             query_states,
             key_states,
             value_states,
-            is_causal=True,
+            attn_mask=attn_mask,
+            is_causal=attn_mask is None,
             scale=self.scaling,
         )
 
@@ -450,7 +486,13 @@ class Qwen3_5MoeGatedSDPAAttention(Qwen3_5MoeGatedAttentionBase):
         max_seqlen: int | None = None,
     ) -> tuple[torch.Tensor, None]:
         query_states, key_states, value_states, gate = self.attn_projections(hidden_states, position_embeddings)
-        attn_output = self._attention_core(query_states, key_states, value_states)
+        attn_output = self._attention_core(
+            query_states,
+            key_states,
+            value_states,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
         return self.output_proj(attn_output, gate), None
 
 
@@ -851,6 +893,7 @@ class Qwen3_5MoeModel(Qwen3_5MoePreTrainedModel):
             position_ids = torch.arange(inputs_embeds.shape[1], device=inputs_embeds.device).unsqueeze(0)
 
         flash_attn_enabled = self.config._attn_implementation in ("flash_attention_2", "flash_attention_3", "fa4")
+        sdpa_enabled = self.config._attn_implementation == "sdpa"
         if flash_attn_enabled:
             if position_ids.ndim == 3:
                 if inputs_embeds.shape[0] != 1:
@@ -864,6 +907,17 @@ class Qwen3_5MoeModel(Qwen3_5MoePreTrainedModel):
                         seq_lens.to(device=inputs_embeds.device),
                         total_tokens=seq_len,
                     )
+            else:
+                cu_seqlens, max_seqlen = get_cu_seqlens_from_position_ids(position_ids)
+            torch._dynamo.mark_dynamic(cu_seqlens, 0)
+        elif sdpa_enabled:
+            if position_ids.ndim == 3:
+                if seq_lens is None:
+                    raise ValueError("3D Qwen3.5 MRoPE positions with SDPA require seq_lens")
+                cu_seqlens, max_seqlen = get_cu_seqlens_from_seq_lens(
+                    seq_lens.to(device=inputs_embeds.device),
+                    total_tokens=inputs_embeds.shape[1],
+                )
             else:
                 cu_seqlens, max_seqlen = get_cu_seqlens_from_position_ids(position_ids)
             torch._dynamo.mark_dynamic(cu_seqlens, 0)

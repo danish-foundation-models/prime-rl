@@ -41,6 +41,22 @@ class AttentionConfig:
     output_bias: bool = False
 
 
+def packed_causal_mask_from_cu_seqlens(
+    cu_seqlens: torch.LongTensor | None,
+    seq_len: int,
+    device: torch.device,
+) -> torch.Tensor | None:
+    if cu_seqlens is None or cu_seqlens.numel() <= 2:
+        return None
+
+    cu_seqlens = cu_seqlens.to(device=device)
+    token_idx = torch.arange(seq_len, device=device)
+    segment_ids = torch.bucketize(token_idx, cu_seqlens[1:], right=True)
+    causal_mask = token_idx[:, None] >= token_idx[None, :]
+    segment_mask = segment_ids[:, None] == segment_ids[None, :]
+    return (causal_mask & segment_mask).unsqueeze(0).unsqueeze(0)
+
+
 # TODO: Does torch compile support config._attn_implementation forking?
 # If so, we can combine FlashAttention and SDPAAttention into one class
 # Otherwise, do ABC or something to make the signatures match
@@ -256,10 +272,20 @@ class SDPAAttention(nn.Module):
         query_states: torch.Tensor,
         key_states: torch.Tensor,
         value_states: torch.Tensor,
+        cu_seqlens: torch.LongTensor | None = None,
+        max_seqlen: int | None = None,
     ) -> torch.Tensor:
+        del max_seqlen
         key_states = key_states.repeat_interleave(self.num_key_value_groups, dim=1)
         value_states = value_states.repeat_interleave(self.num_key_value_groups, dim=1)
-        out = F.scaled_dot_product_attention(query_states, key_states, value_states, is_causal=True)
+        attn_mask = packed_causal_mask_from_cu_seqlens(cu_seqlens, query_states.shape[-2], query_states.device)
+        out = F.scaled_dot_product_attention(
+            query_states,
+            key_states,
+            value_states,
+            attn_mask=attn_mask,
+            is_causal=attn_mask is None,
+        )
         out = out.transpose(1, 2).contiguous()
         return out.view(out.shape[0], out.shape[1], -1)
 
@@ -275,7 +301,13 @@ class SDPAAttention(nn.Module):
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
         query_states, key_states, value_states = self.attn_projections(hidden_states, position_embeddings)
 
-        attn_output = self._attention_core(query_states, key_states, value_states)
+        attn_output = self._attention_core(
+            query_states,
+            key_states,
+            value_states,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
+        )
         attn_output = self.output_proj(attn_output)
         return attn_output, None
 

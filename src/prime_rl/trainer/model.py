@@ -91,6 +91,36 @@ def _model_config_vocab_size(config: PretrainedConfig) -> int:
     return int(getattr(text_config, "vocab_size", 0) or 0)
 
 
+def _set_tie_word_embeddings(config: PretrainedConfig, value: bool) -> bool:
+    changed = False
+    for subconfig in [config, getattr(config, "text_config", None)]:
+        if subconfig is not None and getattr(subconfig, "tie_word_embeddings", None) != value:
+            subconfig.tie_word_embeddings = value
+            changed = True
+    return changed
+
+
+def _checkpoint_has_untied_lm_head(model_name: str, logger) -> bool:
+    try:
+        snapshot_path = (
+            Path(model_name)
+            if Path(model_name).exists()
+            else Path(snapshot_download(repo_id=model_name, repo_type="model"))
+        )
+        keys = set(load_state_dict_keys(snapshot_path))
+    except Exception as exc:
+        logger.warning(f"Could not inspect checkpoint keys for tied embedding detection: {exc}")
+        return False
+
+    input_embedding_keys = {
+        "model.embed_tokens.weight",
+        "language_model.embed_tokens.weight",
+        "language_model.model.embed_tokens.weight",
+        "model.language_model.embed_tokens.weight",
+    }
+    return "lm_head.weight" in keys and any(key in keys for key in input_embedding_keys)
+
+
 def _disable_tying_for_untied_lm_head(model: nn.Module) -> bool:
     """Keep HF resize_token_embeddings from tying an untied checkpoint head."""
     input_embeddings = model.get_input_embeddings()
@@ -105,15 +135,11 @@ def _disable_tying_for_untied_lm_head(model: nn.Module) -> bool:
     if input_weight is output_weight or input_weight.data_ptr() == output_weight.data_ptr():
         return False
 
-    changed = False
-    for subconfig in [
-        getattr(model, "config", None),
-        getattr(getattr(model, "config", None), "text_config", None),
-        getattr(getattr(model, "language_model", None), "config", None),
-    ]:
-        if subconfig is not None and getattr(subconfig, "tie_word_embeddings", False):
-            subconfig.tie_word_embeddings = False
-            changed = True
+    changed = _set_tie_word_embeddings(model.config, False)
+    language_config = getattr(getattr(model, "language_model", None), "config", None)
+    if language_config is not None and getattr(language_config, "tie_word_embeddings", False):
+        language_config.tie_word_embeddings = False
+        changed = True
     return changed
 
 
@@ -600,6 +626,12 @@ def get_model(
             config.name, attn_implementation=config.attn, trust_remote_code=config.trust_remote_code
         ),
     )
+    if getattr(model_config, "tie_word_embeddings", False) and _checkpoint_has_untied_lm_head(config.name, logger):
+        _set_tie_word_embeddings(model_config, False)
+        logger.warning(
+            "Checkpoint contains a separate lm_head.weight despite tie_word_embeddings=True; "
+            "disabling tied embeddings to match Hugging Face/vLLM loading semantics."
+        )
     model_config.use_cache = False
     is_vlm_arch = is_vlm_architecture(model_config)
 
