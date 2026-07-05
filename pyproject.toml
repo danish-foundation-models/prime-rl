@@ -42,7 +42,6 @@ dependencies = [
     "nvidia-ml-py>=12.575.51",
     "orjson>=3.10.0",
     "pybase64>=1.4.2",
-    "orjson>=3.10",
     "pandas>=2.0",
     "msgspec>=0.18",
 ]
@@ -101,6 +100,7 @@ envs = [
     "math-env-v1",
     "math-python",
     "math500-v1",
+    "mini-swe-agent-v2",
     "mmlu-pro-v1",
     "mrcr-v2-v1",
     "oolong-pairs-v1",
@@ -276,6 +276,7 @@ math-env = { path = "deps/research-environments/environments/math_env", editable
 math-env-v1 = { path = "deps/research-environments/environments/math_env_v1", editable = true }
 math-python = { path = "deps/verifiers/environments/math_python", editable = true }
 math500-v1 = { path = "deps/research-environments/environments/math500_v1", editable = true }
+mini-swe-agent-v2 = { path = "deps/research-environments/environments/mini_swe_agent_v2", editable = true }
 mmlu-pro-v1 = { path = "deps/research-environments/environments/mmlu_pro_v1", editable = true }
 mrcr-v2-v1 = { path = "deps/research-environments/environments/mrcr_v2_v1", editable = true }
 oolong-pairs-v1 = { path = "deps/research-environments/environments/oolong_pairs_v1", editable = true }

@@ -11,7 +11,7 @@ LAIFS_APPL_DIR=/appl/local/laifs
 : "${OVERLAY_DIR:=$REPO_DIR/overlay_prime_rl_lumi}"
 : "${OVERLAY_ENV_NAME:=prime-rl-lumi}"
 : "${SINGULARITY_GPU_ARGS:=}"
-: "${EXTRA_PIP_PACKAGES:=tomli tomli_w beartype jaxtyping torchdata ring-flash-attn aiolimiter tenacity orjson}"
+: "${EXTRA_PIP_PACKAGES:=tomli tomli_w beartype jaxtyping torchdata ring-flash-attn flash-linear-attention swebench==4.1.0 multi-swe-bench aiolimiter tenacity orjson aiohttp git+https://github.com/rlrs/ucloud-sandboxes-sdk.git}"
 : "${PRIMEINTELLECT_INDEX_URL:=https://hub.primeintellect.ai/primeintellect/simple/}"
 : "${DION_REF:=d891eeb}"
 : "${TORCHTITAN_REF:=a1fdd7e}"

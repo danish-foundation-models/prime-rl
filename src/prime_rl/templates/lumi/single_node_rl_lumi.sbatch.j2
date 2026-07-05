@@ -1,14 +1,18 @@
 #!/bin/bash
 
 #SBATCH --job-name={{ job_name }}
-#SBATCH --account=project_465002183
+#SBATCH --account={{ account or "project_465002751" }}
 #SBATCH --partition={{ partition }}
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=56
 #SBATCH --gpus-per-node={{ gpus_per_node }}
 #SBATCH --mem=0
+{%- if time %}
+#SBATCH --time={{ time }}
+{%- else %}
 #SBATCH --time=24:00:00
+{%- endif %}
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
 #SBATCH --output={{ output_dir }}/job_%j.log
@@ -24,6 +28,7 @@ LAIFS_APPL_DIR=/appl/local/laifs
 SIF=${SIF:-$BASE_DIR/containers/lumi-multitorch-u24r70f21m50t210-20260513_121430/lumi-multitorch-full-u24r70f21m50t210-20260513_121430.sif}
 OVERLAY_DIR=${OVERLAY_DIR:-$PROJECT_DIR/overlay_prime_rl_lumi}
 OVERLAY_ENV_NAME=${OVERLAY_ENV_NAME:-prime-rl-lumi}
+export OVERLAY_ENV_NAME
 SINGULARITY_GPU_ARGS=${SINGULARITY_GPU_ARGS:-}
 HOST_CACHE_DIR=${HOST_CACHE_DIR:-/scratch/project_465002183/.cache}
 CONTAINER_CACHE_DIR=${CONTAINER_CACHE_DIR:-/scratch/project_465002183/.cache}
@@ -58,12 +63,40 @@ if [[ -d /scratch ]]; then
   SING_BIND_ARGS+=(-B /scratch:/scratch)
 fi
 
+load_dotenv_for_cleanup() {
+  set +u
+  set -a
+  if [[ -f "$PROJECT_DIR/../../.env" ]]; then source "$PROJECT_DIR/../../.env"; fi
+  if [[ -f "$PROJECT_DIR/.env" ]]; then source "$PROJECT_DIR/.env"; fi
+  set +a
+  set -u
+}
+
+cleanup_remote_sandboxes() {
+  status=$?
+  load_dotenv_for_cleanup
+  if [[ -n "${UCLOUD_SANDBOX_API_URL:-}" && -n "${UCLOUD_SANDBOX_API_TOKEN:-}" && -f "$CONFIG_PATH" ]]; then
+    echo "+ Cleaning UCloud sandboxes for $CONFIG_PATH"
+    singularity exec ${SINGULARITY_GPU_ARGS} "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
+      set -euo pipefail
+      source /overlay/venv/$OVERLAY_ENV_NAME/bin/activate
+      python /workdir/scripts/cleanup_ucloud_sandboxes.py --config "$1"
+    ' cleanup-ucloud "$CONFIG_PATH" || true
+  fi
+  exit "$status"
+}
+trap cleanup_remote_sandboxes EXIT
+
 RANK_CMD="
 set -euo pipefail
 source /overlay/venv/$OVERLAY_ENV_NAME/bin/activate
+set -a
+if [[ -f /workdir/../../.env ]]; then source /workdir/../../.env; fi
+if [[ -f /workdir/.env ]]; then source /workdir/.env; fi
+set +a
 OVERLAY_SITE=/overlay/venv/$OVERLAY_ENV_NAME/lib/python3.12/site-packages
 BASE_SITE=/opt/venv/lib/python3.12/site-packages
-export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:\${OVERLAY_SITE}:\${BASE_SITE}\${PYTHONPATH:+:\$PYTHONPATH}
+export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:/workdir/deps/research-environments/environments/mini_swe_agent_v2:\${OVERLAY_SITE}:\${BASE_SITE}\${PYTHONPATH:+:\$PYTHONPATH}
 if [[ -n \"\${ROCR_VISIBLE_DEVICES:-}\" && -z \"\${HIP_VISIBLE_DEVICES:-}\" ]]; then
   export HIP_VISIBLE_DEVICES=\"\${ROCR_VISIBLE_DEVICES}\"
 fi
