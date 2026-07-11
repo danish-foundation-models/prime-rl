@@ -1,0 +1,123 @@
+# Four-family agent curriculum with demand-driven TMax image builds.
+
+output_dir = "outputs/qwen35-9b-curriculum-50step"
+max_steps = 50
+seq_len = 16384
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+gpus_per_node = 2
+
+[model]
+name = "Qwen/Qwen3.5-9B"
+
+[orchestrator]
+batch_size = 128
+group_size = 8
+pool_size = 16
+max_inflight_rollouts = 128
+
+[orchestrator.renderer]
+name = "qwen3.5"
+enable_thinking = true
+
+[orchestrator.train.sampling]
+max_completion_tokens = 4096
+
+[[orchestrator.train.env]]
+name = "general-agent"
+ratio = 0.45
+sampling = { max_completion_tokens = 4096 }
+taskset = { id = "general-agent-v1", task = { tools = { colocated = true } } }
+harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, labels = { experiment = "curriculum-50step" } } }
+
+[[orchestrator.train.env]]
+name = "tmax"
+ratio = 0.25
+sampling = { max_completion_tokens = 8192 }
+pool = { type = "static", num_workers = 1 }
+harness = { id = "mini-swe-agent", env = { TMPDIR = "/home/user/.cache/tmp", UV_CACHE_DIR = "/home/user/.cache/uv" }, runtime = { type = "ucloud", image = "ubuntu:22.04", network = "bridge", ttl_seconds = 7200, start_timeout_seconds = 1800, labels = { experiment = "curriculum-50step" } } }
+
+[orchestrator.train.env.taskset]
+id = "tmax-v1"
+image_prefix = "ucloud-sandbox-registry:5000/prime-rl/tmax"
+image_profile = "mini-swe-agent-2.2.8"
+image_apt_packages = ["curl", "ca-certificates"]
+build_missing_images = true
+max_concurrent_builds = 4
+prepare_builder_ttl = 86400
+
+[[orchestrator.train.env]]
+name = "tau2-library"
+ratio = 0.0333333333
+sampling = { max_completion_tokens = 8192 }
+taskset = { id = "tau2-synth-v1", domain = "library" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 100 }
+
+[[orchestrator.train.env]]
+name = "tau2-fitness-gym"
+ratio = 0.0333333333
+sampling = { max_completion_tokens = 8192 }
+taskset = { id = "tau2-synth-v1", domain = "fitness_gym" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 100 }
+
+[[orchestrator.train.env]]
+name = "tau2-tech-support"
+ratio = 0.0333333333
+sampling = { max_completion_tokens = 8192 }
+taskset = { id = "tau2-synth-v1", domain = "tech_support" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 100 }
+
+[[orchestrator.train.env]]
+name = "tau2-cloud-incident-response"
+ratio = 0.0333333333
+sampling = { max_completion_tokens = 8192 }
+taskset = { id = "tau2-synth-v1", domain = "cloud_incident_response" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 100 }
+
+[[orchestrator.train.env]]
+name = "tau2-daily-planner"
+ratio = 0.0333333333
+sampling = { max_completion_tokens = 8192 }
+taskset = { id = "tau2-synth-v1", domain = "daily_planner" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 100 }
+
+[[orchestrator.train.env]]
+name = "tau2-ev-charging-support"
+ratio = 0.0333333335
+sampling = { max_completion_tokens = 8192 }
+taskset = { id = "tau2-synth-v1", domain = "ev_charging_support" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 100 }
+
+[[orchestrator.train.env]]
+name = "reasoning-gym"
+ratio = 0.10
+sampling = { max_completion_tokens = 1024 }
+taskset = { id = "reasoning-gym-v1", gym = "arc_1d", size = 2000, seed = 0 }
+harness = { id = "null", runtime = { type = "subprocess" } }
+
+[trainer]
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.optim]
+lr = 3e-6
+
+[inference]
+gpu_memory_utilization = 0.8
+enable_prefix_caching = true
+
+[inference.env_vars]
+CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
+
+[inference.model]
+max_model_len = 16384
+
+[inference.parallel]
+dp = 1
+tp = 1
+
+[inference.vllm_extra]
+language_model_only = true
