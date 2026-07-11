@@ -1,0 +1,71 @@
+# Three-regime v1 curriculum: application tools, user simulation, and procedural reasoning.
+
+output_dir = "outputs/qwen35-9b-curriculum-smoke"
+max_steps = 1
+seq_len = 16384
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+gpus_per_node = 2
+
+[model]
+name = "Qwen/Qwen3.5-9B"
+
+[orchestrator]
+batch_size = 6
+group_size = 2
+pool_size = 3
+max_inflight_rollouts = 6
+
+[orchestrator.renderer]
+name = "qwen3.5"
+enable_thinking = true
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[[orchestrator.train.env]]
+name = "general-agent"
+ratio = 0.5
+taskset = { id = "general-agent-v1", task = { tools = { colocated = true } } }
+harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, labels = { experiment = "curriculum-smoke" } } }
+
+[[orchestrator.train.env]]
+name = "tau2-synth-library"
+ratio = 0.3
+sampling = { max_completion_tokens = 8192 }
+taskset = { id = "tau2-synth-v1", domain = "library" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 100 }
+
+[[orchestrator.train.env]]
+name = "reasoning-gym"
+ratio = 0.2
+sampling = { max_completion_tokens = 1024 }
+taskset = { id = "reasoning-gym-v1", gym = "arc_1d", size = 2000, seed = 0 }
+harness = { id = "null", runtime = { type = "subprocess" } }
+
+[trainer]
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.optim]
+lr = 3e-6
+
+[inference]
+gpu_memory_utilization = 0.8
+enable_prefix_caching = true
+
+[inference.env_vars]
+CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
+
+[inference.model]
+max_model_len = 16384
+
+[inference.parallel]
+dp = 1
+tp = 1
+
+[inference.vllm_extra]
+language_model_only = true

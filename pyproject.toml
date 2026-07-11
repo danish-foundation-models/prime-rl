@@ -112,6 +112,7 @@ envs = [
     "prolog-v1",
     "r2e-gym-v1",
     "redsearcher-v1",
+    "reasoning-gym-v1",
     "reverse-text",
     "reverse-text-v1",
     "s1-deepresearch-v1",
@@ -289,6 +290,7 @@ patterned-needle-in-haystack-v1 = { path = "deps/research-environments/environme
 prolog-v1 = { path = "deps/research-environments/environments/prolog_v1", editable = true }
 r2e-gym-v1 = { path = "deps/research-environments/environments/swe/r2e_gym_v1", editable = true }
 redsearcher-v1 = { path = "deps/research-environments/environments/redsearcher_v1", editable = true }
+reasoning-gym-v1 = { path = "deps/verifiers/environments/reasoning_gym_v1", editable = true }
 reverse-text = { path = "deps/verifiers/environments/reverse_text", editable = true }
 reverse-text-v1 = { path = "deps/verifiers/environments/reverse_text_v1", editable = true }
 s1-deepresearch-v1 = { path = "deps/research-environments/environments/s1_deepresearch_v1", editable = true }
