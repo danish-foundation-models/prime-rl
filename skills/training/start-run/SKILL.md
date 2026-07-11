@@ -90,7 +90,8 @@ For v1 environments on the `ucloud` runtime, load the sandbox and relay credenti
 before launching `rl`. SDK 0.4.0 or newer is required: model calls use its OpenAI
 relay and task/state calls use its general HTTP tunnel. A live rollout showing a
 reward is the control-plane smoke check; a trainer `Step` line confirms the complete
-two-GPU path.
+two-GPU path. Set a short, environment-specific `runtime.name_prefix` so active
+sandboxes are identifiable in UCloud; the runtime appends the unique rollout ID.
 
 TMax Harbor exports include complete Docker build contexts, but their published image
 references may be private. For a manual prebuild or image debugging, build only the
