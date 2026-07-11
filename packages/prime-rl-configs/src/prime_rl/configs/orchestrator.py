@@ -189,12 +189,7 @@ class EnvConfig(vf.EnvServerConfig):
     @property
     def env_id(self) -> str:
         """The topology, taskset, or legacy environment identifier."""
-        return (
-            (self.topology.id if self.topology is not None else None)
-            or self.taskset.id
-            or self.id
-            or ""
-        )
+        return (self.topology.id if self.topology is not None else None) or self.taskset.id or self.id or ""
 
     @property
     def resolved_name(self) -> str:
@@ -234,6 +229,9 @@ class TrainEnvConfig(EnvConfig):
     group_size: int = Field(1, ge=1, validation_alias=AliasChoices("group_size", "rollouts_per_example"))
     """Rollouts generated per example for GRPO group-relative advantages.
     Inherits from ``orchestrator.group_size`` when unset."""
+
+    max_inflight: int | None = Field(None, ge=1)
+    """Maximum rollouts from this environment admitted by the dispatcher. None uses only the global limit."""
 
     algo: AlgoConfig | None = None
     """Training algorithm for this env. Inherits from the top-level

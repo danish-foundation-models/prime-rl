@@ -355,7 +355,7 @@ class RolloutDispatcher:
                 continue
             env = envs.get(group.env_name)
             cost = group.rollouts_to_schedule if env.requires_group_scoring else 1
-            if cost <= self.available_permits:
+            if cost <= self.available_permits and self.env_has_capacity(kind, group.env_name, cost):
                 return await self.schedule_group_rollout(gid, group)
 
         fresh = self.next_fresh_group(kind, envs)
@@ -364,6 +364,17 @@ class RolloutDispatcher:
         gid = uuid.uuid4()
         self.groups[gid] = fresh
         return await self.schedule_group_rollout(gid, fresh)
+
+    def env_has_capacity(self, kind: RolloutKind, env_name: str, cost: int) -> bool:
+        if kind != "train":
+            return True
+        limit = self.train_envs.get(env_name).config.max_inflight
+        if limit is None:
+            return True
+        current = sum(
+            meta.rollout_count for meta in self.inflight.values() if meta.kind == "train" and meta.env_name == env_name
+        )
+        return current + cost <= limit
 
     def next_fresh_group(self, kind: RolloutKind, envs) -> GroupState | None:
         """Pop the next example from the corresponding source and wrap it in
@@ -374,7 +385,14 @@ class RolloutDispatcher:
         else:
             assert self.eval_source is not None
             source = self.eval_source
-        example = source.next_example(self.available_permits)
+        if kind == "train":
+            counts = self.inflight_by_env
+            example = source.next_example(
+                self.available_permits,
+                {env.name: counts.get(("train", env.name), 0) for env in self.train_envs},
+            )
+        else:
+            example = source.next_example(self.available_permits)
         if example is None:
             return None
 
