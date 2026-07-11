@@ -93,8 +93,8 @@ reward is the control-plane smoke check; a trainer `Step` line confirms the comp
 two-GPU path.
 
 TMax Harbor exports include complete Docker build contexts, but their published image
-references may be private. Build the selected contexts into the uCloud registry before
-running them:
+references may be private. For a manual prebuild or image debugging, build only the
+selected contexts:
 
 ```bash
 uv run tmax-build-ucloud task_000000_f8baca82
@@ -103,6 +103,13 @@ uv run tmax-build-ucloud task_000000_f8baca82
 The builder skips tags already present and retries transient builder-capacity and
 registry-state responses. Set the TMax taskset's `image_prefix` to the same repository;
 the default build command uses `ucloud-sandbox-registry:5000/prime-rl/tmax`.
+
+Training can instead build missing images just in time with
+`taskset.build_missing_images = true`. Use a single async env worker
+(`pool = { type = "static", num_workers = 1 }`) and keep
+`taskset.max_concurrent_builds = 1` initially. Requested tasks deduplicate by tag and
+queue behind the build semaphore while rollouts whose images are ready continue. This
+is bounded by rollout demand; it does not enumerate or prebuild the dataset.
 
 `tau2-synth-v1` runs its harness locally and may point the configurable user simulator
 at the policy inference server for a smoke test. Tau domain policies, tool schemas, and

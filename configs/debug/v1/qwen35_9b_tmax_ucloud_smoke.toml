@@ -27,12 +27,15 @@ max_completion_tokens = 8192
 
 [[orchestrator.train.env]]
 name = "tmax-ucloud"
+pool = { type = "static", num_workers = 1 }
 harness = { id = "rlm", runtime = { type = "ucloud", image = "ubuntu:22.04", network = "bridge", ttl_seconds = 7200, start_timeout_seconds = 1800, labels = { experiment = "tmax-smoke" } } }
 
 [orchestrator.train.env.taskset]
 id = "tmax-v1"
 tasks = "task_000000_f8baca82"
 image_prefix = "ucloud-sandbox-registry:5000/prime-rl/tmax"
+build_missing_images = true
+max_concurrent_builds = 1
 
 [trainer]
 
