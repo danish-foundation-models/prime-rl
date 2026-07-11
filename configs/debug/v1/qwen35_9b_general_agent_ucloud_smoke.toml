@@ -1,0 +1,56 @@
+# Two-GPU v1 smoke run with General Agent tools colocated in a UCloud sandbox.
+
+output_dir = "outputs/qwen35-9b-general-agent-ucloud-smoke"
+max_steps = 1
+seq_len = 4096
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+gpus_per_node = 2
+
+[model]
+name = "Qwen/Qwen3.5-9B"
+
+[orchestrator]
+batch_size = 2
+group_size = 2
+pool_size = 1
+max_inflight_rollouts = 2
+
+[orchestrator.renderer]
+name = "qwen3.5"
+enable_thinking = true
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[[orchestrator.train.env]]
+name = "general-agent-ucloud"
+taskset = { id = "general-agent-v1", task = { tools = { colocated = true } } }
+harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, labels = { experiment = "general-agent-smoke" } } }
+
+[trainer]
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.optim]
+lr = 3e-6
+
+[inference]
+gpu_memory_utilization = 0.8
+enable_prefix_caching = true
+
+[inference.env_vars]
+CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
+
+[inference.model]
+max_model_len = 4096
+
+[inference.parallel]
+dp = 1
+tp = 1
+
+[inference.vllm_extra]
+language_model_only = true

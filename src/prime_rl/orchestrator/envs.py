@@ -3,9 +3,9 @@
 Each ``Env`` owns a v1 ``EnvServer`` (spawned as a child process, or an
 external one given by ``config.address``) and an ``EnvClient`` to drive it. The
 orchestrator never *runs* an environment: it asks the server for ``info``
-(``num_tasks`` + whether group scoring is needed), then runs rollouts purely by
-**task index**. The server returns a ``Trace`` (a plain ``model_dump`` — derived values are
-properties, not serialized) which we validate into a ``Trace[WireTaskData]`` — a real ``vf.Trace``
+(``num_tasks`` + ordered task ids), then runs invocations purely by **task index**.
+Native v1 servers return an ``AgentGraph``; Prime-RL currently accepts graphs with exactly
+one trainable trace. The trace is validated into a ``Trace[WireTaskData]`` — a real ``vf.Trace``
 (never a loose dict) whose task keeps the env's
 task-specific fields as extras (``WireTaskData`` allows them). The orchestrator never imports the
 env package: the env's *type* and *runtime* both live only in the server, and the orchestrator
@@ -111,7 +111,7 @@ class Env:
             await self.env_client.wait_for_server_startup()
         info = await self.env_client.info()
         self.num_tasks = info.num_tasks
-        self.requires_group_scoring = info.requires_group_scoring
+        self.requires_group_scoring = getattr(info, "requires_group_scoring", False)
         get_logger().info(
             f"Env {self.name} ready: num_tasks={self.num_tasks} group_scoring={self.requires_group_scoring}"
         )
@@ -171,13 +171,24 @@ class Env:
     async def run_rollout(
         self, client: vf.ClientConfig, task_idx: int, model_name: str, cache_salt: str | None
     ) -> Rollout:
-        """Run a single rollout for ``task_idx``; return a typed Trace."""
-        wire = await self.env_client.run_rollout(
+        """Run one invocation and return its single trainable trace."""
+        kwargs = dict(
             task_idx=task_idx,
             client=client,
             model=model_name,
             sampling=self._sampling(cache_salt),
         )
+        if self.config.is_legacy:
+            wire = await self.env_client.run_rollout(**kwargs)
+        else:
+            graph = await self.env_client.run(**kwargs)
+            trainable = [trace for trace in graph.traces if trace.trainable]
+            if len(trainable) != 1:
+                raise ValueError(
+                    f"Prime-RL requires exactly one trainable trace per topology invocation; "
+                    f"{self.name!r} returned {len(trainable)}"
+                )
+            wire = trainable[0]
         return ROLLOUT_TYPE.model_construct(**dict(wire))
 
     async def run_group(

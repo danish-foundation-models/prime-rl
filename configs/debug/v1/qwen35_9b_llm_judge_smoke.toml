@@ -1,0 +1,55 @@
+# Two-agent topology smoke: a trainable GSM8K solver and a non-trainable LLM judge.
+
+output_dir = "outputs/qwen35-9b-llm-judge-smoke"
+max_steps = 1
+seq_len = 4096
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+gpus_per_node = 2
+
+[model]
+name = "Qwen/Qwen3.5-9B"
+
+[orchestrator]
+batch_size = 4
+group_size = 2
+pool_size = 4
+max_inflight_rollouts = 8
+
+[orchestrator.renderer]
+name = "qwen3.5"
+enable_thinking = true
+
+[orchestrator.train.sampling]
+max_completion_tokens = 768
+
+[[orchestrator.train.env]]
+name = "gsm8k-llm-judge"
+topology = { id = "llm-judge", taskset = { id = "gsm8k-v1", split = "train" }, solver = { harness = { id = "null", runtime = { type = "subprocess" } } }, judge = { model = "Qwen/Qwen3.5-9B", sampling = { max_tokens = 256, enable_thinking = false } } }
+
+[trainer]
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.optim]
+lr = 3e-6
+
+[inference]
+gpu_memory_utilization = 0.8
+enable_prefix_caching = true
+
+[inference.env_vars]
+CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
+
+[inference.model]
+max_model_len = 4096
+
+[inference.parallel]
+dp = 1
+tp = 1
+
+[inference.vllm_extra]
+language_model_only = true

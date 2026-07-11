@@ -1,0 +1,61 @@
+# Two-GPU v1 smoke run: one inference GPU and one training GPU.
+
+output_dir = "outputs/qwen35-9b-multi-env-smoke"
+max_steps = 2
+seq_len = 4096
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+gpus_per_node = 2
+
+[model]
+name = "Qwen/Qwen3.5-9B"
+
+[orchestrator]
+batch_size = 8
+group_size = 2
+pool_size = 4
+max_inflight_rollouts = 16
+
+[orchestrator.renderer]
+name = "qwen3.5"
+enable_thinking = true
+
+[orchestrator.train.sampling]
+max_completion_tokens = 1024
+
+[[orchestrator.train.env]]
+name = "gsm8k"
+taskset = { id = "gsm8k-v1", split = "train" }
+harness = { id = "null", runtime = { type = "subprocess" } }
+
+[[orchestrator.train.env]]
+name = "reverse-text"
+taskset = { id = "reverse-text-v1" }
+harness = { id = "null", runtime = { type = "subprocess" } }
+
+[trainer]
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.optim]
+lr = 3e-6
+
+[inference]
+gpu_memory_utilization = 0.8
+enable_prefix_caching = true
+
+[inference.env_vars]
+CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
+
+[inference.model]
+max_model_len = 4096
+
+[inference.parallel]
+dp = 1
+tp = 1
+
+[inference.vllm_extra]
+language_model_only = true

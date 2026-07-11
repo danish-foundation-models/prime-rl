@@ -35,6 +35,7 @@ dependencies = [
     "uvloop>=0.21.0",
     "torchtitan",
     "verifiers[harbor]>=0.2.0",
+    "ucloud-sandboxes-sdk[async] @ https://github.com/rlrs/ucloud-sandboxes-sdk/archive/baf0021.tar.gz",
     "renderers",
     "dion",
     "tilelang>=0.1.8",
@@ -120,7 +121,7 @@ envs = [
     "swebench-pro-v1",
     "swebench-verified-v1",
     "swelego-v1",
-    "tau2-bench-v1",
+    "tau2-synth-v1",
     "terminal-bench-2-v1",
     "tmax-v1",
     "unscramble-v1",
@@ -189,6 +190,9 @@ override-dependencies = [
     "nvidia-cutlass-dsl>=4.4.1",
     "transformers==5.6.2",
     "torch>=2.9.0",
+    # tau2-synth pins an older LiteLLM, but uses the same completion APIs exercised by
+    # the current Tau2 integration. Harbor requires the current line as well.
+    "litellm>=1.83.14",
     "openenv-core",
 ]
 
@@ -294,7 +298,7 @@ simpleqa-verified-v1 = { path = "deps/research-environments/environments/simpleq
 swebench-pro-v1 = { path = "deps/research-environments/environments/swe/swebench_pro_v1", editable = true }
 swebench-verified-v1 = { path = "deps/research-environments/environments/swe/swebench_verified_v1", editable = true }
 swelego-v1 = { path = "deps/research-environments/environments/swe/swelego_v1", editable = true }
-tau2-bench-v1 = { path = "deps/research-environments/environments/tau2_bench_v1", editable = true }
+tau2-synth-v1 = { path = "deps/research-environments/environments/tau2_synth_v1", editable = true }
 terminal-bench-2-v1 = { path = "deps/research-environments/environments/terminal_bench_2_v1", editable = true }
 tmax-v1 = { path = "deps/research-environments/environments/tmax_v1", editable = true }
 unscramble-v1 = { path = "deps/research-environments/environments/unscramble_v1", editable = true }

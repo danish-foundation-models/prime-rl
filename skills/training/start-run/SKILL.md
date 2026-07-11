@@ -74,6 +74,31 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{"model": "Qwen/Qwen3-0.6B", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 50}'
 ```
 
+FlashInfer may need `nvcc` during vLLM startup to JIT-build a decode kernel. On
+EasyBuild hosts where CUDA is installed outside `/usr/local/cuda`, point the
+inference process at the toolkit matching `torch.version.cuda`:
+
+```toml
+[inference.env_vars]
+CUDA_HOME = "/path/to/matching/CUDA/toolkit"
+```
+
+If no matching toolkit is installed, select the prebuilt FlashAttention backend
+with `VLLM_ATTENTION_BACKEND = "FLASH_ATTN"` instead.
+
+For v1 environments on the `ucloud` runtime, load the sandbox and relay credentials
+before launching `rl`. SDK 0.4.0 or newer is required: model calls use its OpenAI
+relay and task/state calls use its general HTTP tunnel. A live rollout showing a
+reward is the control-plane smoke check; a trainer `Step` line confirms the complete
+two-GPU path.
+
+`tau2-synth-v1` runs its harness locally and may point the configurable user simulator
+at the policy inference server for a smoke test. Tau domain policies, tool schemas, and
+multi-turn history need a larger budget than short tool tasks: use an 8K completion
+allowance with at least a 16K total context when thinking is enabled. A small harness
+`max_steps` is useful for topology checks but can terminate valid workflows before they
+earn reward.
+
 - Config: `InferenceConfig` (`packages/prime-rl-configs/src/prime_rl/configs/inference.py`)
 - Entrypoint: `src/prime_rl/entrypoints/inference.py`
 - SLURM: single-node, multi-node, and disaggregated deployments

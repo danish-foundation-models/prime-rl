@@ -1,0 +1,56 @@
+# Two-GPU Tau2 Synth smoke: the policy and user simulator share local Qwen inference.
+
+output_dir = "outputs/qwen35-9b-tau2-synth-smoke"
+max_steps = 1
+seq_len = 16384
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+gpus_per_node = 2
+
+[model]
+name = "Qwen/Qwen3.5-9B"
+
+[orchestrator]
+batch_size = 2
+group_size = 2
+pool_size = 1
+max_inflight_rollouts = 2
+
+[orchestrator.renderer]
+name = "qwen3.5"
+enable_thinking = true
+
+[orchestrator.train.sampling]
+max_completion_tokens = 8192
+
+[[orchestrator.train.env]]
+name = "tau2-synth-library"
+taskset = { id = "tau2-synth-v1", domain = "library" }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 20 }
+
+[trainer]
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.optim]
+lr = 3e-6
+
+[inference]
+gpu_memory_utilization = 0.8
+enable_prefix_caching = true
+
+[inference.env_vars]
+CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
+
+[inference.model]
+max_model_len = 16384
+
+[inference.parallel]
+dp = 1
+tp = 1
+
+[inference.vllm_extra]
+language_model_only = true

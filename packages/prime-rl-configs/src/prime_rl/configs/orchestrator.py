@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
 import verifiers.v1 as vf
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, model_serializer, model_validator
 from renderers import AutoRendererConfig, RendererConfig
 
 from prime_rl.configs.algorithm import (
@@ -160,6 +160,15 @@ class EnvConfig(vf.EnvServerConfig):
     ratio: float = Field(1.0, gt=0)
     """Sampling weight for this environment in the buffer. Relative weights are normalized to probabilities across envs (e.g. [1, 1] and [0.5, 0.5] are equivalent). Defaults to 1, i.e. equal weight per env."""
 
+    @model_serializer(mode="wrap")
+    def serialize_env(self, handler):
+        data = handler(self)
+        if self.topology is not None:
+            data.pop("taskset", None)
+            data.pop("harness", None)
+            data.pop("id", None)
+        return data
+
     @model_validator(mode="before")
     @classmethod
     def _migrate_num_workers(cls, data):
@@ -175,12 +184,17 @@ class EnvConfig(vf.EnvServerConfig):
     @property
     def is_legacy(self) -> bool:
         """A v0/legacy env (run via the bridge): an ``id`` is set and no v1 ``taskset`` is."""
-        return not self.taskset.id
+        return self.topology is None and not self.taskset.id
 
     @property
     def env_id(self) -> str:
-        """The env identifier — the v1 taskset id (v1) or the legacy env id (v0)."""
-        return self.taskset.id or self.id or ""
+        """The topology, taskset, or legacy environment identifier."""
+        return (
+            (self.topology.id if self.topology is not None else None)
+            or self.taskset.id
+            or self.id
+            or ""
+        )
 
     @property
     def resolved_name(self) -> str:
@@ -188,8 +202,11 @@ class EnvConfig(vf.EnvServerConfig):
 
     @model_validator(mode="after")
     def validate_env(self):
-        if not self.taskset.id and not self.id:
-            raise ValueError('no env configured — set taskset = { id = "<id>" } (v1) or id = "<id>" (v0/legacy)')
+        if self.topology is None and not self.taskset.id and not self.id:
+            raise ValueError(
+                'no env configured — set topology = { id = "<id>" }, '
+                'taskset = { id = "<id>" } (v1), or id = "<id>" (v0/legacy)'
+            )
         if self.resolved_name == "agg":
             raise ValueError(
                 'Environment name "agg" is reserved for cross-env metric aggregation. Use a different name or id.'

@@ -34,6 +34,7 @@ prime = false
 
 [manifest]
 overrides = [
+    { name = "litellm", specifier = ">=1.83.14" },
     { name = "nvidia-cudnn-cu12", specifier = ">=9.15" },
     { name = "nvidia-cutlass-dsl", specifier = ">=4.4.1" },
     { name = "openenv-core" },
@@ -76,7 +77,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -91,7 +92,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -106,7 +107,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -282,7 +283,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -306,7 +307,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -423,7 +424,7 @@ dependencies = [
 requires-dist = [
     { name = "httpx" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -929,7 +930,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1357,7 +1358,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1413,7 +1414,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic" },
-    { name = "verifiers", extras = ["harbor"], specifier = ">=0.2.0" },
+    { name = "verifiers", extras = ["harbor"], specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1531,7 +1532,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1546,7 +1547,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1799,7 +1800,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "orjson" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1814,7 +1815,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1863,7 +1864,7 @@ requires-dist = [
     { name = "setuptools", specifier = "<78" },
     { name = "spacy" },
     { name = "syllapy" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -1884,7 +1885,7 @@ requires-dist = [
     { name = "immutabledict" },
     { name = "langdetect" },
     { name = "nltk" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2276,7 +2277,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets", specifier = ">=2.0.0" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2341,7 +2342,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "huggingface-hub" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2435,7 +2436,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "longcot", git = "https://github.com/LongHorizonReasoning/longcot.git?rev=6a569ab" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2452,7 +2453,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "longcot", git = "https://github.com/LongHorizonReasoning/longcot.git?rev=6a569ab" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2467,7 +2468,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets", specifier = ">=3.0" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2552,7 +2553,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2596,7 +2597,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2739,7 +2740,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -2813,7 +2814,7 @@ dependencies = [
 requires-dist = [
     { name = "filelock" },
     { name = "httpx" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -3326,7 +3327,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "huggingface-hub" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -3343,7 +3344,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -3362,7 +3363,7 @@ requires-dist = [
     { name = "datasets" },
     { name = "openai" },
     { name = "python-dateutil" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -3444,7 +3445,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -3581,7 +3582,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "orderly-set"
@@ -3662,7 +3663,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -3704,7 +3705,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "nltk", specifier = ">=3.8" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -3930,6 +3931,7 @@ dependencies = [
     { name = "torchtitan" },
     { name = "torchvision" },
     { name = "transformers" },
+    { name = "ucloud-sandboxes-sdk", extra = ["async"] },
     { name = "uvloop" },
     { name = "verifiers", extra = ["harbor"] },
     { name = "vllm", version = "0.24.0+cu129", source = { url = "https://github.com/vllm-project/vllm/releases/download/v0.24.0/vllm-0.24.0+cu129-cp38-abi3-manylinux_2_28_aarch64.whl" }, marker = "platform_machine != 'x86_64'" },
@@ -4011,7 +4013,7 @@ envs = [
     { name = "swebench-pro-v1" },
     { name = "swebench-verified-v1" },
     { name = "swelego-v1" },
-    { name = "tau2-bench-v1" },
+    { name = "tau2-synth-v1" },
     { name = "terminal-bench-2-v1" },
     { name = "tmax-v1" },
     { name = "unscramble-v1" },
@@ -4152,7 +4154,7 @@ requires-dist = [
     { name = "swebench-pro-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/swe/swebench_pro_v1" },
     { name = "swebench-verified-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/swe/swebench_verified_v1" },
     { name = "swelego-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/swe/swelego_v1" },
-    { name = "tau2-bench-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/tau2_bench_v1" },
+    { name = "tau2-synth-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/tau2_synth_v1" },
     { name = "tenacity", specifier = ">=8.2.0" },
     { name = "terminal-bench-2-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/terminal_bench_2_v1" },
     { name = "tilelang", specifier = ">=0.1.8" },
@@ -4163,6 +4165,7 @@ requires-dist = [
     { name = "torchtitan", git = "https://github.com/pytorch/torchtitan?rev=23e4dfc" },
     { name = "torchvision", index = "https://download.pytorch.org/whl/cu128" },
     { name = "transformers", specifier = "==5.6.2" },
+    { name = "ucloud-sandboxes-sdk", extras = ["async"], url = "https://github.com/rlrs/ucloud-sandboxes-sdk/archive/baf0021.tar.gz" },
     { name = "unscramble-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/unscramble_v1" },
     { name = "uuid-ctf-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/uuid_ctf_v1" },
     { name = "uvloop", specifier = ">=0.21.0" },
@@ -4257,7 +4260,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "prometheus-client"
@@ -4715,7 +4718,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -4766,7 +4769,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -4969,7 +4972,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "huggingface-hub" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -4996,7 +4999,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -5134,7 +5137,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -5151,7 +5154,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -5386,7 +5389,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "swebench-verified-v1"
@@ -5397,7 +5400,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "swelego-v1"
@@ -5411,7 +5414,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -5447,7 +5450,7 @@ wheels = [
 [[package]]
 name = "tau2"
 version = "0.2.1.dev0"
-source = { git = "https://github.com/sierra-research/tau2-bench.git?rev=337326e#337326e62d8e0ca74c353b004a9c5d748e0ba914" }
+source = { git = "https://github.com/mikasenghaas/tau2-synth.git?rev=798589e#798589e02ca91ea61e85557eb672be0a915592eb" }
 dependencies = [
     { name = "addict" },
     { name = "deepdiff" },
@@ -5472,15 +5475,16 @@ dependencies = [
     { name = "seaborn" },
     { name = "tabulate" },
     { name = "tenacity" },
+    { name = "textual" },
     { name = "toml" },
     { name = "uvicorn" },
     { name = "watchdog" },
 ]
 
 [[package]]
-name = "tau2-bench-v1"
-version = "0.3.0"
-source = { editable = "deps/research-environments/environments/tau2_bench_v1" }
+name = "tau2-synth-v1"
+version = "0.1.0"
+source = { editable = "deps/research-environments/environments/tau2_synth_v1" }
 dependencies = [
     { name = "tau2" },
     { name = "verifiers" },
@@ -5489,8 +5493,8 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "audioop-lts", marker = "python_full_version >= '3.13'" },
-    { name = "tau2", git = "https://github.com/sierra-research/tau2-bench.git?rev=337326e" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "tau2", git = "https://github.com/mikasenghaas/tau2-synth.git?rev=798589e" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -5540,7 +5544,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "textarena"
@@ -5686,7 +5690,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", extras = ["harbor"], specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", extras = ["harbor"], specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "tokenizers"
@@ -5998,6 +6002,25 @@ wheels = [
 ]
 
 [[package]]
+name = "ucloud-sandboxes-sdk"
+version = "0.4.0"
+source = { url = "https://github.com/rlrs/ucloud-sandboxes-sdk/archive/baf0021.tar.gz" }
+sdist = { hash = "sha256:6275052f92dec45b203967dcbfc3717416faa8856c1cd45a20b58400c63f95fd" }
+
+[package.optional-dependencies]
+async = [
+    { name = "aiohttp" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "aiohttp", marker = "extra == 'async'", specifier = ">=3.10,<4" },
+    { name = "aiohttp", marker = "extra == 'inspect'", specifier = ">=3.10,<4" },
+    { name = "inspect-ai", marker = "extra == 'inspect'", specifier = ">=0.3.240,<0.4" },
+]
+provides-extras = ["async", "inspect"]
+
+[[package]]
 name = "unscramble-v1"
 version = "0.1.0"
 source = { editable = "deps/research-environments/environments/unscramble_v1" }
@@ -6009,7 +6032,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "datasets" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -6030,7 +6053,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "uvicorn"
@@ -6079,7 +6102,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "faker", specifier = ">=20.0.0" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -6169,11 +6192,12 @@ requires-dist = [
     { name = "torch", marker = "extra == 'rl'", specifier = ">=2.8.0,<2.9.0" },
     { name = "transformers", marker = "extra == 'rl'", specifier = ">=4.56.2" },
     { name = "typing-extensions", marker = "python_full_version < '3.12'" },
+    { name = "ucloud-sandboxes-sdk", extras = ["async"], marker = "extra == 'ucloud'", url = "https://github.com/rlrs/ucloud-sandboxes-sdk/archive/baf0021.tar.gz" },
     { name = "uvloop", marker = "platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'", specifier = ">=0.21.0" },
     { name = "vllm", marker = "extra == 'rl'", specifier = ">=0.10.0,<0.11.0" },
     { name = "wandb", marker = "extra == 'rl'" },
 ]
-provides-extras = ["browser", "harbor", "modal", "notebook", "quest", "rg", "rl", "ta"]
+provides-extras = ["browser", "harbor", "modal", "notebook", "quest", "rg", "rl", "ta", "ucloud"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -6195,16 +6219,21 @@ dev = [
 ]
 examples = [
     { name = "alphabet-sort-v1", editable = "deps/verifiers/environments/alphabet_sort_v1" },
+    { name = "chess-v1", editable = "deps/verifiers/environments/chess_v1" },
     { name = "code-golf-v1", editable = "deps/verifiers/environments/code_golf_v1" },
     { name = "color-codeword-v1", editable = "deps/verifiers/environments/color_codeword_v1" },
     { name = "compact", editable = "deps/verifiers/environments/compact" },
+    { name = "debate-v1", editable = "deps/verifiers/environments/debate_v1" },
     { name = "deepwiki-v1", editable = "deps/verifiers/environments/deepwiki_v1" },
     { name = "glossary-v1", editable = "deps/verifiers/environments/glossary_v1" },
     { name = "gsm8k-v1", editable = "deps/verifiers/environments/gsm8k_v1" },
+    { name = "proposer-solver-v1", editable = "deps/verifiers/environments/proposer_solver_v1" },
     { name = "reverse-text-v1", editable = "deps/verifiers/environments/reverse_text_v1" },
     { name = "scratchpad-v1", editable = "deps/verifiers/environments/scratchpad_v1" },
+    { name = "shared-runtime-v1", editable = "deps/verifiers/environments/shared_runtime_v1" },
     { name = "wiki-search-v1", editable = "deps/verifiers/environments/wiki_search_v1" },
     { name = "wordle-v1", editable = "deps/verifiers/environments/wordle_v1" },
+    { name = "writer-editors-v1", editable = "deps/verifiers/environments/writer_editors_v1" },
 ]
 
 [[package]]
@@ -6779,7 +6808,7 @@ dependencies = [
 requires-dist = [
     { name = "datasets" },
     { name = "openai" },
-    { name = "verifiers", specifier = ">=0.2.0" },
+    { name = "verifiers", specifier = ">=0.1.15.dev443" },
 ]
 
 [[package]]
@@ -6836,7 +6865,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", specifier = ">=0.2.0" }]
+requires-dist = [{ name = "verifiers", specifier = ">=0.1.15.dev443" }]
 
 [[package]]
 name = "wordle"
