@@ -92,6 +92,18 @@ relay and task/state calls use its general HTTP tunnel. A live rollout showing a
 reward is the control-plane smoke check; a trainer `Step` line confirms the complete
 two-GPU path.
 
+TMax Harbor exports include complete Docker build contexts, but their published image
+references may be private. Build the selected contexts into the uCloud registry before
+running them:
+
+```bash
+uv run tmax-build-ucloud task_000000_f8baca82
+```
+
+The builder skips tags already present and retries transient builder-capacity and
+registry-state responses. Set the TMax taskset's `image_prefix` to the same repository;
+the default build command uses `ucloud-sandbox-registry:5000/prime-rl/tmax`.
+
 `tau2-synth-v1` runs its harness locally and may point the configurable user simulator
 at the policy inference server for a smoke test. Tau domain policies, tool schemas, and
 multi-turn history need a larger budget than short tool tasks: use an 8K completion

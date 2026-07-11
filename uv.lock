@@ -5801,11 +5801,15 @@ name = "tmax-v1"
 version = "0.1.0"
 source = { editable = "deps/research-environments/environments/tmax_v1" }
 dependencies = [
+    { name = "ucloud-sandboxes-sdk", extra = ["async"] },
     { name = "verifiers", extra = ["harbor"] },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "verifiers", extras = ["harbor"], specifier = ">=0.1.15.dev443" }]
+requires-dist = [
+    { name = "ucloud-sandboxes-sdk", extras = ["async"], url = "https://github.com/rlrs/ucloud-sandboxes-sdk/archive/baf0021.tar.gz" },
+    { name = "verifiers", extras = ["harbor"], specifier = ">=0.1.15.dev443" },
+]
 
 [[package]]
 name = "tokenizers"
