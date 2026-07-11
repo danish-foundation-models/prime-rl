@@ -97,12 +97,22 @@ references may be private. For a manual prebuild or image debugging, build only 
 selected contexts:
 
 ```bash
-uv run tmax-build-ucloud task_000000_f8baca82
+uv run tmax-build-ucloud task_000000_f8baca82 \
+  --profile mini-swe-agent-2.2.8 \
+  --apt-package curl --apt-package ca-certificates
 ```
 
 The builder skips tags already present and retries transient builder-capacity and
 registry-state responses. Set the TMax taskset's `image_prefix` to the same repository;
 the default build command uses `ucloud-sandbox-registry:5000/prime-rl/tmax`.
+Image profiles keep harness bootstrap dependencies explicit: use the same
+`image_profile` and `image_apt_packages` in the taskset config. TMax itself does not
+require a particular harness; this profile supports mini-swe-agent 2.2.8 running inside
+the task sandbox.
+
+Keep mini-swe-agent's uv bootstrap off uCloud's 64 MB `/tmp` by setting the harness
+environment's `TMPDIR` and `UV_CACHE_DIR` to disk-backed paths under the task workdir.
+`prepare_uv_script` creates configured cache directories before installing.
 
 Training can instead build missing images just in time with
 `taskset.build_missing_images = true`. Use a single async env worker
