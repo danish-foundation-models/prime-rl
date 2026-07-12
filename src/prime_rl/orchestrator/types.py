@@ -48,6 +48,7 @@ class InflightRollout:
     group_id: uuid.UUID
     policy_version: int
     rollout_count: int
+    started_at: float = 0.0
     client_config: vf.ClientConfig | None = None
     off_policy_steps: int = 0
     eval_step: int | None = None

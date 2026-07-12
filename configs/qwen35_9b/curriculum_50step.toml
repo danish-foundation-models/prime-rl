@@ -24,6 +24,11 @@ group_size = 8
 pool_size = 64
 max_inflight_rollouts = 256
 
+[orchestrator.mixture]
+service_time_alpha = 0.2
+max_supply_multiplier = 2.0
+require_complete_groups = true
+
 [orchestrator.renderer]
 name = "qwen3.5"
 enable_thinking = true
@@ -47,6 +52,8 @@ harness = { id = "mini-swe-agent", env = { TMPDIR = "/home/user/.cache/tmp", UV_
 
 [orchestrator.train.env.taskset]
 id = "tmax-v1"
+timeout_multiplier = 1.5
+resource_multiplier = 1.5
 image_prefix = "ucloud-sandbox-registry:5000/prime-rl/tmax"
 image_profile = "mini-swe-agent-2.2.8"
 image_apt_packages = ["curl", "ca-certificates"]

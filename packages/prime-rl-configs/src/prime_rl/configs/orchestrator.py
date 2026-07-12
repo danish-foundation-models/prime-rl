@@ -438,6 +438,17 @@ WeightBroadcastConfig: TypeAlias = Annotated[
 ]
 
 
+class RolloutMixtureConfig(BaseConfig):
+    service_time_alpha: float | None = Field(None, gt=0, le=1)
+    """EWMA weight for service-time-aware dispatch. None preserves ratio-based dispatch."""
+
+    max_supply_multiplier: float = Field(1.0, ge=1)
+    """Maximum completed-plus-in-flight supply relative to each environment's inventory limit."""
+
+    require_complete_groups: bool = False
+    """Drop a whole optimizer group when any member fails instead of admitting survivors."""
+
+
 class OrchestratorConfig(BaseConfig):
     algo: AlgoConfig = GRPOAlgoConfig()
     """Training algorithm: sampling plus the per-token training signal (credit
@@ -452,6 +463,9 @@ class OrchestratorConfig(BaseConfig):
     ``"policy"``."""
 
     train: TrainConfig = TrainConfig()
+
+    mixture: RolloutMixtureConfig = RolloutMixtureConfig()
+    """Optional rollout feedback. Defaults preserve ratio-based dispatch and partial groups."""
 
     tokenizer: TokenizerConfig = TokenizerConfig()
 

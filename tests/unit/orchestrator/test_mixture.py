@@ -37,6 +37,53 @@ def test_inventory_feedback_stops_overfilled_environment():
     assert eligible == ["slow"]
 
 
+def test_service_time_feedback_redirects_free_capacity_to_slow_environment():
+    planner = MixturePlanner(
+        ratios={"fast": 0.75, "slow": 0.25},
+        group_sizes={"fast": 4, "slow": 4},
+        batch_size=8,
+        max_inflight=32,
+        service_time_alpha=0.2,
+        max_supply_multiplier=2,
+    )
+
+    planner.observe_completion("fast", service_seconds=10, tokens_per_rollout=100)
+    planner.observe_completion("slow", service_seconds=40, tokens_per_rollout=400)
+
+    eligible = planner.environments_needing_work(
+        pending={"fast": 0, "slow": 0},
+        inflight={"fast": 16, "slow": 8},
+        costs={"fast": 4, "slow": 4},
+        available_permits=4,
+    )
+
+    assert planner.choose_environment(eligible=eligible, inflight={"fast": 16, "slow": 8}) == "slow"
+
+    eligible = planner.environments_needing_work(
+        pending={"fast": 24, "slow": 0},
+        inflight={"fast": 0, "slow": 16},
+        costs={"fast": 4, "slow": 4},
+        available_permits=4,
+    )
+
+    assert eligible == []
+
+
+def test_unobserved_environment_inherits_slowest_observed_service_time():
+    planner = MixturePlanner(
+        ratios={"fast": 0.5, "unseen": 0.5},
+        group_sizes={"fast": 4, "unseen": 4},
+        batch_size=8,
+        max_inflight=32,
+        service_time_alpha=0.2,
+    )
+
+    planner.observe_completion("fast", service_seconds=20, tokens_per_rollout=200)
+
+    assert planner.service_seconds == {"fast": 20, "unseen": 20}
+    assert planner.tokens_per_rollout == {"fast": 200, "unseen": 200}
+
+
 def test_dispatcher_lifecycle_metrics_are_dense_and_drained():
     metrics = DispatcherMetrics()
     metrics.record_launch(kind="train", env_name="slow", n=4)

@@ -56,6 +56,9 @@ class TrainSource:
     def next_example(self, available_permits: int, inflight_by_env: Mapping[str, int] | None = None) -> dict | None:
         if self.mixture is None:
             eligible = [name for name in self.env_names if self.env_costs[name] <= available_permits]
+            if not eligible:
+                return None
+            env_name = self.rng.choices(eligible, weights=[self.weights[name] for name in eligible], k=1)[0]
         else:
             assert self.pending_by_env is not None
             eligible = self.mixture.environments_needing_work(
@@ -64,9 +67,12 @@ class TrainSource:
                 costs=self.group_sizes,
                 available_permits=available_permits,
             )
-        if not eligible:
-            return None
-        env_name = self.rng.choices(eligible, weights=[self.weights[name] for name in eligible], k=1)[0]
+            if not eligible:
+                return None
+            if self.mixture.service_time_alpha is None:
+                env_name = self.rng.choices(eligible, weights=[self.weights[name] for name in eligible], k=1)[0]
+            else:
+                env_name = self.mixture.choose_environment(eligible=eligible, inflight=inflight_by_env or {})
         rows = self.examples[env_name]
         cursor = self.cursors[env_name]
         if cursor >= len(rows):

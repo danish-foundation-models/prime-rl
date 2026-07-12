@@ -7,7 +7,7 @@ from collections.abc import Mapping
 
 
 class MixturePlanner:
-    """Plan whole-group batches and bound queued plus in-flight supply."""
+    """Plan optimizer mixtures and steer bounded rollout supply from observed service time."""
 
     def __init__(
         self,
@@ -16,6 +16,8 @@ class MixturePlanner:
         group_sizes: Mapping[str, int],
         batch_size: int,
         max_inflight: int,
+        service_time_alpha: float | None = None,
+        max_supply_multiplier: float = 1.0,
     ) -> None:
         total_ratio = sum(ratios.values())
         self.env_names = list(ratios)
@@ -26,6 +28,13 @@ class MixturePlanner:
         self.inventory_limits = {
             name: max(self.group_sizes[name], math.ceil(max_inflight * self.weights[name])) for name in self.env_names
         }
+        self.supply_limits = {
+            name: math.ceil(max_supply_multiplier * self.inventory_limits[name]) for name in self.env_names
+        }
+        self.max_inflight = max_inflight
+        self.service_time_alpha = service_time_alpha
+        self._service_seconds: dict[str, float | None] = {name: None for name in self.env_names}
+        self._tokens_per_rollout: dict[str, float | None] = {name: None for name in self.env_names}
 
     def plan_batch(self) -> tuple[str, ...]:
         """Return an environment plan whose whole groups fill one batch."""
@@ -42,6 +51,36 @@ class MixturePlanner:
             planned_rollouts += group_size
         return tuple(plan)
 
+    def observe_completion(self, name: str, *, service_seconds: float, tokens_per_rollout: float) -> None:
+        """Update delayed rollout-cost estimates without treating unseen strata as cheap."""
+        if self.service_time_alpha is None:
+            return
+        previous_service = self._service_seconds[name]
+        self._service_seconds[name] = (
+            service_seconds
+            if previous_service is None
+            else self.service_time_alpha * service_seconds + (1 - self.service_time_alpha) * previous_service
+        )
+        previous_tokens = self._tokens_per_rollout[name]
+        self._tokens_per_rollout[name] = (
+            tokens_per_rollout
+            if previous_tokens is None
+            else self.service_time_alpha * tokens_per_rollout + (1 - self.service_time_alpha) * previous_tokens
+        )
+
+    def _estimates(self, values: Mapping[str, float | None], default: float) -> dict[str, float]:
+        observed = [value for value in values.values() if value is not None]
+        fallback = max(observed, default=default)
+        return {name: value if value is not None else fallback for name, value in values.items()}
+
+    @property
+    def service_seconds(self) -> dict[str, float]:
+        return self._estimates(self._service_seconds, 1.0)
+
+    @property
+    def tokens_per_rollout(self) -> dict[str, float]:
+        return self._estimates(self._tokens_per_rollout, 0.0)
+
     def environments_needing_work(
         self,
         *,
@@ -50,10 +89,25 @@ class MixturePlanner:
         costs: Mapping[str, int],
         available_permits: int,
     ) -> list[str]:
-        """Return environments whose bounded future inventory has room."""
+        """Return environments with room in their configured future-supply bound."""
         return [
             name
             for name in self.env_names
             if costs[name] <= available_permits
-            and pending.get(name, 0) + inflight.get(name, 0) + costs[name] <= self.inventory_limits[name]
+            and pending.get(name, 0) < self.inventory_limits[name]
+            and pending.get(name, 0) + inflight.get(name, 0) + costs[name] <= self.supply_limits[name]
         ]
+
+    def choose_environment(self, *, eligible: list[str], inflight: Mapping[str, int]) -> str:
+        """Choose the largest service-time-weighted concurrency deficit."""
+        if self.service_time_alpha is None:
+            raise ValueError("service-time feedback is not configured")
+
+        service = self.service_seconds
+        demand = {name: self.weights[name] * service[name] for name in eligible}
+        total_demand = sum(demand.values())
+        targets = {name: self.max_inflight * demand[name] / total_demand for name in eligible}
+        return max(
+            eligible,
+            key=lambda name: (targets[name] - inflight.get(name, 0)) / max(targets[name], self.group_sizes[name]),
+        )

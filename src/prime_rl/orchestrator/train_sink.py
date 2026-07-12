@@ -4,9 +4,9 @@
    dispatcher producing more rollouts), then the env algorithm's
    ``finalize_rollout`` (rollout-local scoring + any reference I/O). Errored
    rollouts skip this.
-2. ``process_group`` — filters errored rollouts, hands survivors to the env
-   algorithm's ``finalize_group`` (advantages + per-sample wire stamping),
-   runs the pre-batch filter pass.
+2. ``process_group`` — applies the configured incomplete-group policy, hands
+   admitted groups to the env algorithm's ``finalize_group`` (advantages plus
+   per-sample wire stamping), then runs the pre-batch filter pass.
 3. ``process_batch`` — applies post-batch filter annotations and assembles
    the trainer-bound ``TrainingSample`` list. Returns a ``TrainBatch``.
 
@@ -176,9 +176,7 @@ class TrainSink:
         await self.train_envs.get(rollout.env_name).algorithm.finalize_rollout(rollout)
 
     async def process_group(self, group_id: uuid.UUID) -> None:
-        """Finalize one GRPO group: drop errored rollouts (the whole group
-        when ``requires_group_scoring`` and any failed), assign advantages,
-        run pre-batch filters, append survivors to ``pending_batch``."""
+        """Apply group failure policy, then finalize an admitted GRPO group."""
         group = self.pending_groups.pop(group_id, [])
         if not group:
             return
@@ -187,13 +185,11 @@ class TrainSink:
         survivors = [r for r in group if not r.has_error]
         num_errored = len(group) - len(survivors)
 
-        # Group-scoring envs: any failure makes survivors' rewards unsafe
-        # (computed relative to the missing ones)
         env = self.train_envs.get(env_name)
-        if num_errored > 0 and env.requires_group_scoring:
+        if num_errored > 0 and (self.config.mixture.require_complete_groups or env.requires_group_scoring):
             get_logger().debug(
                 f"Finished group | env={env_name} task_idx={task_idx} | "
-                f"rollouts={len(group)} (errored={num_errored}) | dropped: group-scored partial"
+                f"rollouts={len(group)} (errored={num_errored}) | dropped: incomplete group"
             )
             return
         if not survivors:

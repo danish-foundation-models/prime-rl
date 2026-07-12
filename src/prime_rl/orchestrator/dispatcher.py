@@ -6,7 +6,7 @@
 - Emit-everything invariant: every dispatched rollout eventually reaches
   ``out_q`` exactly once as a ``Rollout``. Failures
   (env error, empty trajectory, task exception, off-policy cancel) carry
-  ``trace.error`` set; sinks decide drop / partial-train policy.
+  ``trace.error`` set; the train sink applies the configured group policy.
 - ``DispatcherMode.PREFER_TRAIN`` / ``PREFER_EVAL`` controls which kind to
   schedule next. Transitions are level-triggered (driven by the eval
   source's emptiness), so in-flight rollouts of the opposite kind drain
@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -505,6 +506,7 @@ class RolloutDispatcher:
             group_id=group_id,
             policy_version=group.policy_version_at_start,
             rollout_count=permits,
+            started_at=time.monotonic(),
             client_config=client,
             eval_step=group.eval_step,
         )
@@ -553,6 +555,12 @@ class RolloutDispatcher:
             is_synth_exception = True
 
         self.metrics.record_completion(kind=meta.kind, env_name=meta.env_name, n=len(rollouts))
+        if meta.kind == "train" and self.train_source.mixture is not None and meta.started_at:
+            self.train_source.mixture.observe_completion(
+                meta.env_name,
+                service_seconds=time.monotonic() - meta.started_at,
+                tokens_per_rollout=sum(rollout.num_total_tokens for rollout in rollouts) / len(rollouts),
+            )
 
         for r in rollouts:
             if not r.has_error and r.num_turns == 0:

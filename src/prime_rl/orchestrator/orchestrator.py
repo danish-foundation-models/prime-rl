@@ -335,6 +335,8 @@ class Orchestrator:
                 group_sizes={env.name: env.config.group_size for env in self.train_envs},
                 batch_size=config.batch_size,
                 max_inflight=config.max_inflight_rollouts,
+                service_time_alpha=config.mixture.service_time_alpha,
+                max_supply_multiplier=config.mixture.max_supply_multiplier,
             )
             if config.batch_size is not None
             else None
@@ -409,7 +411,15 @@ class Orchestrator:
                 ),
                 *[
                     f"curriculum/{metric}/{env.name}"
-                    for metric in ("target_share", "inventory_limit", "inventory", "batch_ready")
+                    for metric in (
+                        "target_share",
+                        "inventory_limit",
+                        "supply_limit",
+                        "inventory",
+                        "batch_ready",
+                        "service_seconds",
+                        "tokens_per_rollout",
+                    )
                     for env in self.train_envs
                 ],
                 "event_loop_lag/min",
@@ -733,6 +743,13 @@ class Orchestrator:
                 payload[f"curriculum/inventory_limit/{env.name}"] = float(
                     self.train_sink.mixture.inventory_limits[env.name]
                 )
+                payload[f"curriculum/supply_limit/{env.name}"] = float(
+                    self.train_sink.mixture.supply_limits[env.name]
+                )
+                payload[f"curriculum/service_seconds/{env.name}"] = self.train_sink.mixture.service_seconds[env.name]
+                payload[f"curriculum/tokens_per_rollout/{env.name}"] = self.train_sink.mixture.tokens_per_rollout[
+                    env.name
+                ]
         if self.eval_envs is not None:
             for env in self.eval_envs:
                 payload[f"dispatcher/inflight/eval/{env.name}"] = float(inflight_by_env.get(("eval", env.name), 0))

@@ -128,6 +128,16 @@ and control-plane calls under load (120 seconds is the established curriculum va
 The runtime reports the exception type even when an SDK timeout has an empty message.
 Transient relay long-poll failures are retried by the runtime and reported as
 `relay_poll_retries_count`; non-retryable relay responses still fail immediately.
+The initial idempotent workdir bootstrap retries a briefly missing exec route;
+an exec `WaitPID` EOF is classified as a sandbox transport failure rather than
+a harness answer.
+
+Mixture feedback is opt-in under `[orchestrator.mixture]`; defaults retain
+ratio-based dispatch and the standard group failure behavior. An experiment can
+enable a service-time EWMA, a bounded future-supply multiplier, and complete-group
+admission. Monitor
+`curriculum/service_seconds/*`, `curriculum/tokens_per_rollout/*`, inventory,
+supply limits, and per-environment in-flight counts together.
 
 Training can instead build missing images just in time with
 `taskset.build_missing_images = true`. Use a single async env worker
