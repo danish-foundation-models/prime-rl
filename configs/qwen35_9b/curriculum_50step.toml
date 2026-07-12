@@ -28,7 +28,6 @@ max_completion_tokens = 8192
 [[orchestrator.train.env]]
 name = "general-agent"
 ratio = 0.45
-max_inflight = 96
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "general-agent-v1", task = { tools = { colocated = true } } }
 harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, name_prefix = "general-agent", labels = { experiment = "curriculum-50step", environment = "general-agent" } } }
@@ -36,7 +35,6 @@ harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim"
 [[orchestrator.train.env]]
 name = "tmax"
 ratio = 0.25
-max_inflight = 32
 sampling = { max_completion_tokens = 8192 }
 pool = { type = "static", num_workers = 1 }
 harness = { id = "mini-swe-agent", env = { TMPDIR = "/home/user/.cache/tmp", UV_CACHE_DIR = "/home/user/.cache/uv" }, runtime = { type = "ucloud", image = "ubuntu:22.04", network = "bridge", ttl_seconds = 7200, start_timeout_seconds = 1800, name_prefix = "tmax", labels = { experiment = "curriculum-50step", environment = "tmax" } } }

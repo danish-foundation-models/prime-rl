@@ -91,10 +91,7 @@ before launching `rl`. SDK 0.4.0 or newer is required: model calls use its OpenA
 relay and task/state calls use its general HTTP tunnel. A live rollout showing a
 reward is the control-plane smoke check; a trainer `Step` line confirms the complete
 two-GPU path. Set a short, environment-specific `runtime.name_prefix` so active
-sandboxes are identifiable in UCloud; the runtime appends the unique rollout ID. Use each
-training environment's `max_inflight` to admit expensive remote rollouts before their
-timeout starts; caps compose with the global `max_inflight_rollouts`. Teardown cancels
-pending creation by its requested sandbox ID even when provisioning never returned a handle.
+sandboxes are identifiable in UCloud; the runtime appends the unique rollout ID.
 
 TMax Harbor exports include complete Docker build contexts, but their published image
 references may be private. For a manual prebuild or image debugging, build only the

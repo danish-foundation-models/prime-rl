@@ -6,15 +6,14 @@ per env). ``next_example`` reshuffles on cursor exhaustion."""
 from __future__ import annotations
 
 import random
-from collections.abc import Mapping
 
 from prime_rl.orchestrator.envs import TrainEnvs
 
 
 class TrainSource:
     """``next_example(available_permits)`` picks a weighted-RR env and
-    returns its next example (or ``None`` when no environment fits the global
-    permits and per-environment in-flight limits).
+    returns its next example (or ``None`` when the env's per-call permit
+    cost doesn't fit — the dispatch loop retries when permits free up).
     Returned dicts carry ``env_name`` + ``task_idx``."""
 
     def __init__(self, train_envs: TrainEnvs, *, seed: int | None) -> None:
@@ -38,22 +37,12 @@ class TrainSource:
             self.env_costs[env.name] = env.config.group_size if env.requires_group_scoring else 1
 
         self.env_names = [e.name for e in self.envs]
-        self.weights: dict[str, float] = {e.name: float(e.config.ratio) for e in self.envs}
-        self.max_inflight: dict[str, int | None] = {e.name: e.config.max_inflight for e in self.envs}
+        self.weights: list[float] = [float(e.config.ratio) for e in self.envs]
 
-    def next_example(self, available_permits: int, inflight_by_env: Mapping[str, int]) -> dict | None:
-        eligible = [
-            env_name
-            for env_name in self.env_names
-            if self.env_costs[env_name] <= available_permits
-            and (
-                self.max_inflight[env_name] is None
-                or inflight_by_env.get(env_name, 0) + self.env_costs[env_name] <= self.max_inflight[env_name]
-            )
-        ]
-        if not eligible:
+    def next_example(self, available_permits: int) -> dict | None:
+        env_name = self.rng.choices(self.env_names, weights=self.weights, k=1)[0]
+        if self.env_costs[env_name] > available_permits:
             return None
-        env_name = self.rng.choices(eligible, weights=[self.weights[name] for name in eligible], k=1)[0]
         rows = self.examples[env_name]
         cursor = self.cursors[env_name]
         if cursor >= len(rows):

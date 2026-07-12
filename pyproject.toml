@@ -35,7 +35,7 @@ dependencies = [
     "uvloop>=0.21.0",
     "torchtitan",
     "verifiers[harbor]>=0.2.0",
-    "ucloud-sandboxes-sdk[async] @ https://github.com/rlrs/ucloud-sandboxes-sdk/archive/dabc395.tar.gz",
+    "ucloud-sandboxes-sdk[async] @ https://github.com/rlrs/ucloud-sandboxes-sdk/archive/baf0021.tar.gz",
     "renderers",
     "dion",
     "tilelang>=0.1.8",
