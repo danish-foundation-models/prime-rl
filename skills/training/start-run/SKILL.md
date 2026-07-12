@@ -135,9 +135,11 @@ a harness answer.
 Mixture feedback is opt-in under `[orchestrator.mixture]`; defaults retain
 ratio-based dispatch and the standard group failure behavior. An experiment can
 enable a service-time EWMA, a bounded future-supply multiplier, and complete-group
-admission. Monitor
-`curriculum/service_seconds/*`, `curriculum/tokens_per_rollout/*`, inventory,
-supply limits, and per-environment in-flight counts together.
+admission. Set `success_rate_alpha` to reduce only the generate-ahead headroom of
+environments whose rollouts are failing; their baseline target allocation remains
+available. Monitor `curriculum/service_seconds/*`, `curriculum/success_rate/*`,
+effective and maximum supply limits, inventory, and per-environment in-flight
+counts together.
 For strict GRPO cohorts, set `max_group_replacements` to keep successful members
 while replacing failed attempts from the same prompt and policy. A bounded
 `group_hedge_after_seconds` duplicates only an old final member; the first success

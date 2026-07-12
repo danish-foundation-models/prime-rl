@@ -26,6 +26,7 @@ max_inflight_rollouts = 256
 
 [orchestrator.mixture]
 service_time_alpha = 0.2
+success_rate_alpha = 0.2
 max_supply_multiplier = 2.0
 require_complete_groups = true
 max_group_replacements = 8

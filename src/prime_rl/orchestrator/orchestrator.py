@@ -336,6 +336,7 @@ class Orchestrator:
                 batch_size=config.batch_size,
                 max_inflight=config.max_inflight_rollouts,
                 service_time_alpha=config.mixture.service_time_alpha,
+                success_rate_alpha=config.mixture.success_rate_alpha,
                 max_supply_multiplier=config.mixture.max_supply_multiplier,
             )
             if config.batch_size is not None
@@ -746,8 +747,12 @@ class Orchestrator:
                     self.train_sink.mixture.inventory_limits[env.name]
                 )
                 payload[f"curriculum/supply_limit/{env.name}"] = float(
+                    self.train_sink.mixture.effective_supply_limits[env.name]
+                )
+                payload[f"curriculum/max_supply_limit/{env.name}"] = float(
                     self.train_sink.mixture.supply_limits[env.name]
                 )
+                payload[f"curriculum/success_rate/{env.name}"] = self.train_sink.mixture.success_rate[env.name]
                 payload[f"curriculum/service_seconds/{env.name}"] = self.train_sink.mixture.service_seconds[env.name]
                 payload[f"curriculum/tokens_per_rollout/{env.name}"] = self.train_sink.mixture.tokens_per_rollout[
                     env.name

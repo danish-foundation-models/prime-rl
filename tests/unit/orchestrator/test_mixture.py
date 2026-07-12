@@ -84,6 +84,31 @@ def test_unobserved_environment_inherits_slowest_observed_service_time():
     assert planner.tokens_per_rollout == {"fast": 200, "unseen": 200}
 
 
+def test_failures_reduce_only_generate_ahead_headroom():
+    planner = MixturePlanner(
+        ratios={"healthy": 0.75, "failing": 0.25},
+        group_sizes={"healthy": 4, "failing": 4},
+        batch_size=8,
+        max_inflight=32,
+        service_time_alpha=0.2,
+        success_rate_alpha=0.5,
+        max_supply_multiplier=2,
+    )
+
+    for _ in range(4):
+        planner.observe_completion(
+            "failing",
+            service_seconds=1,
+            tokens_per_rollout=0,
+            success=False,
+        )
+
+    assert planner.inventory_limits["failing"] == 8
+    assert planner.supply_limits["failing"] == 16
+    assert planner.effective_supply_limits["failing"] == 8
+    assert planner.effective_supply_limits["healthy"] == 48
+
+
 def test_dispatcher_lifecycle_metrics_are_dense_and_drained():
     metrics = DispatcherMetrics()
     metrics.record_launch(kind="train", env_name="slow", n=4)

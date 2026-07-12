@@ -422,11 +422,7 @@ class RolloutDispatcher:
             return
         now = time.monotonic()
         for group_id, group in self.groups.items():
-            if (
-                group.kind != "train"
-                or group.emitted != group.target_rollouts - 1
-                or group.rollouts_to_schedule > 0
-            ):
+            if group.kind != "train" or group.emitted != group.target_rollouts - 1 or group.rollouts_to_schedule > 0:
                 continue
             outstanding = [meta for meta in self.inflight.values() if meta.group_id == group_id]
             if not outstanding or any(meta.is_replacement for meta in outstanding):
@@ -436,12 +432,8 @@ class RolloutDispatcher:
                 continue
             if self._request_group_replacement(group):
                 get_logger().info(
-                    "Hedging rollout tail | group=%s env=%s completed=%d/%d age=%.1fs",
-                    str(group_id)[:8],
-                    group.env_name,
-                    group.emitted,
-                    group.target_rollouts,
-                    now - oldest,
+                    f"Hedging rollout tail | group={str(group_id)[:8]} env={group.env_name} "
+                    f"completed={group.emitted}/{group.target_rollouts} age={now - oldest:.1f}s"
                 )
             return
 
@@ -608,20 +600,23 @@ class RolloutDispatcher:
                 r.capture_error(exc)
             is_synth_exception = True
 
-        self.metrics.record_completion(kind=meta.kind, env_name=meta.env_name, n=len(rollouts))
-        if meta.kind == "train" and self.train_source.mixture is not None and meta.started_at:
-            self.train_source.mixture.observe_completion(
-                meta.env_name,
-                service_seconds=time.monotonic() - meta.started_at,
-                tokens_per_rollout=sum(rollout.num_total_tokens for rollout in rollouts) / len(rollouts),
-            )
-
         for r in rollouts:
             if not r.has_error and r.num_turns == 0:
                 # Empty trajectory: promote to an explicit error so the sink
                 # treats it like any other failure
                 r.errors.append(vf.Error(type="EmptyTrajectory", message="Rollout returned with no trajectory steps"))
                 get_logger().warning(f"Empty trajectory in group {meta.group_id} ({meta.env_name})")
+
+        self.metrics.record_completion(kind=meta.kind, env_name=meta.env_name, n=len(rollouts))
+        if meta.kind == "train" and self.train_source.mixture is not None and meta.started_at:
+            self.train_source.mixture.observe_completion(
+                meta.env_name,
+                service_seconds=time.monotonic() - meta.started_at,
+                tokens_per_rollout=sum(rollout.num_total_tokens for rollout in rollouts) / len(rollouts),
+                success=all(not rollout.has_error for rollout in rollouts),
+            )
+
+        for r in rollouts:
             if r.has_error:
                 self.metrics.record_error(kind=meta.kind, env_name=meta.env_name)
                 if not is_synth_exception:
@@ -641,13 +636,9 @@ class RolloutDispatcher:
                         continue
                     if self._request_group_replacement(group):
                         get_logger().info(
-                            "Replacing failed group member | group=%s env=%s completed=%d/%d replacement=%d/%d",
-                            str(meta.group_id)[:8],
-                            meta.env_name,
-                            group.emitted,
-                            group.target_rollouts,
-                            group.replacements_started,
-                            self.max_group_replacements,
+                            f"Replacing failed group member | group={str(meta.group_id)[:8]} env={meta.env_name} "
+                            f"completed={group.emitted}/{group.target_rollouts} "
+                            f"replacement={group.replacements_started}/{self.max_group_replacements}"
                         )
                         continue
                     await self._abandon_group(meta, group, r)

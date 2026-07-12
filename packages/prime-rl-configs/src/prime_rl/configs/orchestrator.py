@@ -189,12 +189,7 @@ class EnvConfig(vf.EnvServerConfig):
     @property
     def env_id(self) -> str:
         """The topology, taskset, or legacy environment identifier."""
-        return (
-            (self.topology.id if self.topology is not None else None)
-            or self.taskset.id
-            or self.id
-            or ""
-        )
+        return (self.topology.id if self.topology is not None else None) or self.taskset.id or self.id or ""
 
     @property
     def resolved_name(self) -> str:
@@ -441,6 +436,9 @@ WeightBroadcastConfig: TypeAlias = Annotated[
 class RolloutMixtureConfig(BaseConfig):
     service_time_alpha: float | None = Field(None, gt=0, le=1)
     """EWMA weight for service-time-aware dispatch. None preserves ratio-based dispatch."""
+
+    success_rate_alpha: float | None = Field(None, gt=0, le=1)
+    """EWMA weight that reduces generate-ahead headroom for failing environments."""
 
     max_supply_multiplier: float = Field(1.0, ge=1)
     """Maximum completed-plus-in-flight supply relative to each environment's inventory limit."""
