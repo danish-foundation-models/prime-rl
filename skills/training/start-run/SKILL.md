@@ -87,7 +87,8 @@ If no matching toolkit is installed, select the prebuilt FlashAttention backend
 with `VLLM_ATTENTION_BACKEND = "FLASH_ATTN"` instead.
 
 For v1 environments on the `ucloud` runtime, load the sandbox and relay credentials
-before launching `rl`. SDK 0.4.0 or newer is required: model calls use its OpenAI
+before launching `rl`. Verify `UCLOUD_SANDBOX_URL` is set; without it, every dispatched
+sandbox rollout fails immediately. SDK 0.4.0 or newer is required: model calls use its OpenAI
 relay and task/state calls use its general HTTP tunnel. A live rollout showing a
 reward is the control-plane smoke check; a trainer `Step` line confirms the complete
 two-GPU path. Set a short, environment-specific `runtime.name_prefix` so active
