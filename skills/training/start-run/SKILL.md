@@ -119,6 +119,13 @@ the task sandbox.
 Keep mini-swe-agent's uv bootstrap off uCloud's 64 MB `/tmp` by setting the harness
 environment's `TMPDIR` and `UV_CACHE_DIR` to disk-backed paths under the task workdir.
 `prepare_uv_script` creates configured cache directories before installing.
+The v1 mini-swe-agent harness pins both LiteLLM and FastAPI in its PEP 723 program;
+keep those pins compatible when changing the mini-swe-agent version. A mini-swe-agent
+import smoke under Python 3.10 catches missing optional LiteLLM imports before launch.
+
+For sandbox-heavy runs, set `runtime.request_timeout_seconds` high enough for uploads
+and control-plane calls under load (120 seconds is the established curriculum value).
+The runtime reports the exception type even when an SDK timeout has an empty message.
 
 Training can instead build missing images just in time with
 `taskset.build_missing_images = true`. Use a single async env worker
@@ -133,6 +140,10 @@ multi-turn history need a larger budget than short tool tasks: use an 8K complet
 allowance with at least a 16K total context when thinking is enabled. A small harness
 `max_steps` is useful for topology checks but can terminate valid workflows before they
 earn reward.
+When Qwen serves the user simulator, disable thinking through
+`user_args.extra_body.chat_template_kwargs.enable_thinking` and set an explicit
+`user_args.max_tokens`; otherwise hidden reasoning can exhaust the response budget and
+produce an invalid empty user message.
 
 - Config: `InferenceConfig` (`packages/prime-rl-configs/src/prime_rl/configs/inference.py`)
 - Entrypoint: `src/prime_rl/entrypoints/inference.py`

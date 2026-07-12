@@ -28,7 +28,7 @@ max_completion_tokens = 1024
 [[orchestrator.train.env]]
 name = "general-agent-ucloud"
 taskset = { id = "general-agent-v1", task = { tools = { colocated = true } } }
-harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, labels = { experiment = "general-agent-smoke" } } }
+harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, request_timeout_seconds = 120, labels = { experiment = "general-agent-smoke" } } }
 
 [trainer]
 

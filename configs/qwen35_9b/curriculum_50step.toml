@@ -36,14 +36,14 @@ name = "general-agent"
 ratio = 0.45
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "general-agent-v1", task = { tools = { colocated = true } } }
-harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, name_prefix = "general-agent", labels = { experiment = "curriculum-50step", environment = "general-agent" } } }
+harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, request_timeout_seconds = 120, name_prefix = "general-agent", labels = { experiment = "curriculum-50step", environment = "general-agent" } } }
 
 [[orchestrator.train.env]]
 name = "tmax"
 ratio = 0.25
 sampling = { max_completion_tokens = 8192 }
 pool = { type = "static", num_workers = 1 }
-harness = { id = "mini-swe-agent", env = { TMPDIR = "/home/user/.cache/tmp", UV_CACHE_DIR = "/home/user/.cache/uv" }, runtime = { type = "ucloud", image = "ubuntu:22.04", network = "bridge", ttl_seconds = 7200, start_timeout_seconds = 1800, name_prefix = "tmax", labels = { experiment = "curriculum-50step", environment = "tmax" } } }
+harness = { id = "mini-swe-agent", env = { TMPDIR = "/home/user/.cache/tmp", UV_CACHE_DIR = "/home/user/.cache/uv" }, runtime = { type = "ucloud", image = "ubuntu:22.04", network = "bridge", ttl_seconds = 7200, request_timeout_seconds = 120, start_timeout_seconds = 1800, name_prefix = "tmax", labels = { experiment = "curriculum-50step", environment = "tmax" } } }
 
 [orchestrator.train.env.taskset]
 id = "tmax-v1"
@@ -59,42 +59,42 @@ name = "tau2-library"
 ratio = 0.0333333333
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "tau2-synth-v1", domain = "library" }
-harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 200 }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", user_args = { temperature = 0, max_tokens = 1024, extra_body = { chat_template_kwargs = { enable_thinking = false } } }, max_steps = 200 }
 
 [[orchestrator.train.env]]
 name = "tau2-fitness-gym"
 ratio = 0.0333333333
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "tau2-synth-v1", domain = "fitness_gym" }
-harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 200 }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", user_args = { temperature = 0, max_tokens = 1024, extra_body = { chat_template_kwargs = { enable_thinking = false } } }, max_steps = 200 }
 
 [[orchestrator.train.env]]
 name = "tau2-tech-support"
 ratio = 0.0333333333
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "tau2-synth-v1", domain = "tech_support" }
-harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 200 }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", user_args = { temperature = 0, max_tokens = 1024, extra_body = { chat_template_kwargs = { enable_thinking = false } } }, max_steps = 200 }
 
 [[orchestrator.train.env]]
 name = "tau2-cloud-incident-response"
 ratio = 0.0333333333
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "tau2-synth-v1", domain = "cloud_incident_response" }
-harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 200 }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", user_args = { temperature = 0, max_tokens = 1024, extra_body = { chat_template_kwargs = { enable_thinking = false } } }, max_steps = 200 }
 
 [[orchestrator.train.env]]
 name = "tau2-daily-planner"
 ratio = 0.0333333333
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "tau2-synth-v1", domain = "daily_planner" }
-harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 200 }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", user_args = { temperature = 0, max_tokens = 1024, extra_body = { chat_template_kwargs = { enable_thinking = false } } }, max_steps = 200 }
 
 [[orchestrator.train.env]]
 name = "tau2-ev-charging-support"
 ratio = 0.0333333335
 sampling = { max_completion_tokens = 8192 }
 taskset = { id = "tau2-synth-v1", domain = "ev_charging_support" }
-harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", max_steps = 200 }
+harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_base_url = "http://127.0.0.1:8000/v1", user_api_key_var = "TAU2_USER_API_KEY", user_args = { temperature = 0, max_tokens = 1024, extra_body = { chat_template_kwargs = { enable_thinking = false } } }, max_steps = 200 }
 
 [[orchestrator.train.env]]
 name = "reasoning-gym"

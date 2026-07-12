@@ -28,7 +28,7 @@ max_completion_tokens = 8192
 [[orchestrator.train.env]]
 name = "tmax-ucloud"
 pool = { type = "static", num_workers = 1 }
-harness = { id = "mini-swe-agent", env = { TMPDIR = "/home/user/.cache/tmp", UV_CACHE_DIR = "/home/user/.cache/uv" }, runtime = { type = "ucloud", image = "ubuntu:22.04", network = "bridge", ttl_seconds = 7200, start_timeout_seconds = 1800, labels = { experiment = "tmax-smoke" } } }
+harness = { id = "mini-swe-agent", env = { TMPDIR = "/home/user/.cache/tmp", UV_CACHE_DIR = "/home/user/.cache/uv" }, runtime = { type = "ucloud", image = "ubuntu:22.04", network = "bridge", ttl_seconds = 7200, request_timeout_seconds = 120, start_timeout_seconds = 1800, labels = { experiment = "tmax-smoke" } } }
 
 [orchestrator.train.env.taskset]
 id = "tmax-v1"

@@ -29,7 +29,7 @@ max_completion_tokens = 1024
 name = "general-agent"
 ratio = 0.5
 taskset = { id = "general-agent-v1", task = { tools = { colocated = true } } }
-harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, labels = { experiment = "curriculum-smoke" } } }
+harness = { id = "null", runtime = { type = "ucloud", image = "python:3.12-slim", network = "bridge", ttl_seconds = 3600, request_timeout_seconds = 120, labels = { experiment = "curriculum-smoke" } } }
 
 [[orchestrator.train.env]]
 name = "tau2-synth-library"
