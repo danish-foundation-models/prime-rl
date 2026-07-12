@@ -94,6 +94,10 @@ reward is the control-plane smoke check; a trainer `Step` line confirms the comp
 two-GPU path. Set a short, environment-specific `runtime.name_prefix` so active
 sandboxes are identifiable in UCloud; the runtime appends the unique rollout ID.
 
+When the config enables `[wandb]`, verify authentication before the expensive subprocesses
+start: `WANDB_API_KEY` must be set or `wandb status` must report a configured API key. Use
+`wandb.offline = true` explicitly when an offline run is intended.
+
 TMax Harbor exports include complete Docker build contexts, but their published image
 references may be private. For a manual prebuild or image debugging, build only the
 selected contexts:
