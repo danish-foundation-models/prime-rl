@@ -16,7 +16,7 @@ name = "Qwen/Qwen3.5-9B"
 batch_size = 128
 group_size = 8
 pool_size = 64
-max_inflight_rollouts = 512
+max_inflight_rollouts = 256
 
 [orchestrator.renderer]
 name = "qwen3.5"
