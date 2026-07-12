@@ -158,7 +158,7 @@ class EnvConfig(vf.EnvServerConfig):
     """ZMQ address of an external env server (e.g. ``tcp://host:5000``). When set, the orchestrator connects to this server instead of spawning one; when None, a subprocess env server is spawned automatically. The ``pool`` sizes the spawned server."""
 
     ratio: float = Field(1.0, gt=0)
-    """Sampling weight for this environment in the buffer. Relative weights are normalized to probabilities across envs (e.g. [1, 1] and [0.5, 0.5] are equivalent). Defaults to 1, i.e. equal weight per env."""
+    """Target share of rollout-batched optimizer input. Relative weights are normalized across environments; token-batched runs use it as a rollout launch weight."""
 
     @model_serializer(mode="wrap")
     def serialize_env(self, handler):

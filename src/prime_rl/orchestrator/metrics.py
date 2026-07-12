@@ -321,8 +321,8 @@ class EvalMetrics(RolloutMetrics):
 
 
 class TrainRollouts:
-    """A list of train rollouts (everything that came back, errored + filtered included). ``effective``
-    is the clean subset (a view of the same traces); ``metrics`` builds ``TrainMetrics`` over them."""
+    """A list of train rollouts selected for a batch. ``effective`` is the clean subset
+    (a view of the same traces); ``metrics`` builds ``TrainMetrics`` over them."""
 
     def __init__(self, rollouts: list[Rollout] | None = None) -> None:
         self.rollouts = rollouts if rollouts is not None else []

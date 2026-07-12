@@ -45,6 +45,7 @@ from prime_rl.orchestrator.eval_sink import EvalSink
 from prime_rl.orchestrator.eval_source import EvalSource
 from prime_rl.orchestrator.filters import setup_filters
 from prime_rl.orchestrator.inference_metrics import InferenceMetricsCollector
+from prime_rl.orchestrator.mixture import MixturePlanner
 from prime_rl.orchestrator.patches import (
     monkey_patch_chat_completion_logprobs,
     monkey_patch_oai_iterable_types,
@@ -327,7 +328,34 @@ class Orchestrator:
         else:
             get_logger().info("Training from scratch")
 
-        self.train_source = TrainSource(self.train_envs, seed=42)
+        assert config.max_inflight_rollouts is not None, "max_inflight_rollouts must be resolved before dispatcher init"
+        mixture = (
+            MixturePlanner(
+                ratios={env.name: env.config.ratio for env in self.train_envs},
+                group_sizes={env.name: env.config.group_size for env in self.train_envs},
+                batch_size=config.batch_size,
+                max_inflight=config.max_inflight_rollouts,
+            )
+            if config.batch_size is not None
+            else None
+        )
+        self.train_sink = TrainSink(
+            config,
+            tokenizer=self.tokenizer,
+            train_envs=self.train_envs,
+            mm_token_type_ids_mapping=self.mm_token_type_ids_mapping,
+            batch_size=config.batch_size,
+            token_batch_size=config.token_batch_size,
+            pre_filters=pre_filters,
+            post_filters=post_filters,
+            mixture=mixture,
+        )
+        self.train_source = TrainSource(
+            self.train_envs,
+            seed=42,
+            mixture=mixture,
+            pending_by_env=self.train_sink.untrained_inventory_by_env if mixture is not None else None,
+        )
         self.eval_source: EvalSource | None = (
             EvalSource(
                 self.eval_envs,
@@ -338,7 +366,6 @@ class Orchestrator:
             else None
         )
 
-        assert config.max_inflight_rollouts is not None, "max_inflight_rollouts must be resolved before dispatcher init"
         log_interval = config.log.interval
         wandb_enabled = config.wandb is not None
         self.dispatcher = RolloutDispatcher(
@@ -351,16 +378,6 @@ class Orchestrator:
             max_inflight_rollouts=config.max_inflight_rollouts,
             tasks_per_minute=config.tasks_per_minute,
             max_off_policy_steps=config.max_off_policy_steps,
-        )
-        self.train_sink = TrainSink(
-            config,
-            tokenizer=self.tokenizer,
-            train_envs=self.train_envs,
-            mm_token_type_ids_mapping=self.mm_token_type_ids_mapping,
-            batch_size=config.batch_size,
-            token_batch_size=config.token_batch_size,
-            pre_filters=pre_filters,
-            post_filters=post_filters,
         )
         self.eval_sink = EvalSink(eval_envs=self.eval_envs) if self.eval_envs is not None else None
         self.watcher = WeightWatcher(

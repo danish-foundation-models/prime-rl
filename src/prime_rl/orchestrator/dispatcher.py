@@ -374,7 +374,14 @@ class RolloutDispatcher:
         else:
             assert self.eval_source is not None
             source = self.eval_source
-        example = source.next_example(self.available_permits)
+        if kind == "train":
+            counts = self.inflight_by_env
+            example = source.next_example(
+                self.available_permits,
+                {env.name: counts.get(("train", env.name), 0) for env in self.train_envs},
+            )
+        else:
+            example = source.next_example(self.available_permits)
         if example is None:
             return None
 
