@@ -4,6 +4,12 @@ output_dir = "outputs/qwen35-9b-curriculum-50step-v2"
 max_steps = 50
 seq_len = 32768
 
+[wandb]
+project = "qwen35-9b-curriculum"
+name = "curriculum-50step-v2-feedback-256"
+group = "curriculum-feedback"
+tags = ["qwen3.5-9b", "curriculum", "ucloud", "max-inflight-256"]
+
 [deployment]
 num_train_gpus = 1
 num_infer_gpus = 1

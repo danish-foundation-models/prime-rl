@@ -401,6 +401,17 @@ class Orchestrator:
                     eval_envs={e.name for e in self.eval_envs} if self.eval_envs is not None else set(),
                 ),
                 *list(self.watcher.gauges().keys()),
+                *[f"dispatcher/inflight/train/{env.name}" for env in self.train_envs],
+                *(
+                    [f"dispatcher/inflight/eval/{env.name}" for env in self.eval_envs]
+                    if self.eval_envs is not None
+                    else []
+                ),
+                *[
+                    f"curriculum/{metric}/{env.name}"
+                    for metric in ("target_share", "inventory_limit", "inventory", "batch_ready")
+                    for env in self.train_envs
+                ],
                 "event_loop_lag/min",
                 "event_loop_lag/mean",
                 "event_loop_lag/median",
@@ -678,6 +689,7 @@ class Orchestrator:
         train_batch, train_target, _train_unit = self.train_sink.batch_progress()
         train_buffered = self.train_sink.buffered_count()
         train_batch_by_env = self.train_sink.pending_batch_by_env()
+        train_inventory_by_env = self.train_sink.untrained_inventory_by_env()
         eval_batches = self.eval_sink.batch_progress() if self.eval_sink is not None else []
         multi_train = len(self.train_envs) > 1
         multi_eval = self.eval_envs is not None and len(self.eval_envs) > 1
@@ -712,6 +724,18 @@ class Orchestrator:
         body = train_batch_part + eval_batch_part + "; " + inflight_part
 
         payload: dict[str, float] = {**disp_gauges, **disp_drain, **watcher_gauges}
+        for env in self.train_envs:
+            payload[f"dispatcher/inflight/train/{env.name}"] = float(inflight_by_env.get(("train", env.name), 0))
+            payload[f"curriculum/inventory/{env.name}"] = float(train_inventory_by_env.get(env.name, 0))
+            payload[f"curriculum/batch_ready/{env.name}"] = float(train_batch_by_env.get(env.name, 0))
+            if self.train_sink.mixture is not None:
+                payload[f"curriculum/target_share/{env.name}"] = self.train_sink.mixture.weights[env.name]
+                payload[f"curriculum/inventory_limit/{env.name}"] = float(
+                    self.train_sink.mixture.inventory_limits[env.name]
+                )
+        if self.eval_envs is not None:
+            for env in self.eval_envs:
+                payload[f"dispatcher/inflight/eval/{env.name}"] = float(inflight_by_env.get(("eval", env.name), 0))
         if lag_stats.n > 0:
             payload["event_loop_lag/min"] = lag_stats.min
             payload["event_loop_lag/mean"] = lag_stats.mean

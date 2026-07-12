@@ -1,5 +1,6 @@
 from collections import Counter
 
+from prime_rl.orchestrator.dispatcher import DispatcherMetrics
 from prime_rl.orchestrator.mixture import MixturePlanner
 
 
@@ -34,3 +35,19 @@ def test_inventory_feedback_stops_overfilled_environment():
     )
 
     assert eligible == ["slow"]
+
+
+def test_dispatcher_lifecycle_metrics_are_dense_and_drained():
+    metrics = DispatcherMetrics()
+    metrics.record_launch(kind="train", env_name="slow", n=4)
+    metrics.record_completion(kind="train", env_name="slow", n=3)
+    metrics.record_error(kind="train", env_name="slow")
+
+    first = metrics.drained(train_envs={"fast", "slow"}, eval_envs=set())
+    second = metrics.drained(train_envs={"fast", "slow"}, eval_envs=set())
+
+    assert first["dispatcher/launched/train"] == 4
+    assert first["dispatcher/completed/slow"] == 3
+    assert first["dispatcher/errored/slow"] == 1
+    assert second["dispatcher/launched/train"] == 0
+    assert second["dispatcher/completed/slow"] == 0

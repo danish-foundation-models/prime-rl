@@ -68,6 +68,18 @@ class DispatcherMetrics:
     errored_by_kind_env: dict[tuple[Literal["train", "eval"], str], int] = field(
         default_factory=lambda: defaultdict(int)
     )
+    launched_by_kind_env: dict[tuple[Literal["train", "eval"], str], int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+    completed_by_kind_env: dict[tuple[Literal["train", "eval"], str], int] = field(
+        default_factory=lambda: defaultdict(int)
+    )
+
+    def record_launch(self, *, kind: Literal["train", "eval"], env_name: str, n: int) -> None:
+        self.launched_by_kind_env[(kind, env_name)] += n
+
+    def record_completion(self, *, kind: Literal["train", "eval"], env_name: str, n: int) -> None:
+        self.completed_by_kind_env[(kind, env_name)] += n
 
     def record_cancellation(self, *, kind: Literal["train", "eval"], env_name: str, n: int = 1) -> None:
         self.cancelled_by_kind_env[(kind, env_name)] += n
@@ -82,17 +94,29 @@ class DispatcherMetrics:
         out: dict[str, float] = {}
         for kind in ("train", "eval"):
             envs = train_envs if kind == "train" else eval_envs
+            launched_total = sum(self.launched_by_kind_env.get((kind, e), 0) for e in envs)
+            completed_total = sum(self.completed_by_kind_env.get((kind, e), 0) for e in envs)
             cancelled_total = sum(self.cancelled_by_kind_env.get((kind, e), 0) for e in envs)
             errored_total = sum(self.errored_by_kind_env.get((kind, e), 0) for e in envs)
+            out[f"dispatcher/launched/{kind}"] = float(launched_total)
+            out[f"dispatcher/completed/{kind}"] = float(completed_total)
             out[f"dispatcher/cancelled/{kind}"] = float(cancelled_total)
             out[f"dispatcher/errored/{kind}"] = float(errored_total)
         for env in train_envs | eval_envs:
+            out[f"dispatcher/launched/{env}"] = float(
+                self.launched_by_kind_env.get(("train", env), 0) + self.launched_by_kind_env.get(("eval", env), 0)
+            )
+            out[f"dispatcher/completed/{env}"] = float(
+                self.completed_by_kind_env.get(("train", env), 0) + self.completed_by_kind_env.get(("eval", env), 0)
+            )
             out[f"dispatcher/cancelled/{env}"] = float(
                 self.cancelled_by_kind_env.get(("train", env), 0) + self.cancelled_by_kind_env.get(("eval", env), 0)
             )
             out[f"dispatcher/errored/{env}"] = float(
                 self.errored_by_kind_env.get(("train", env), 0) + self.errored_by_kind_env.get(("eval", env), 0)
             )
+        self.launched_by_kind_env.clear()
+        self.completed_by_kind_env.clear()
         self.cancelled_by_kind_env.clear()
         self.errored_by_kind_env.clear()
         return out
@@ -102,12 +126,18 @@ class DispatcherMetrics:
         """Full set of keys ``drained`` may emit; used by the periodic
         logger for ``wandb.define_metric``."""
         keys = [
+            "dispatcher/launched/train",
+            "dispatcher/launched/eval",
+            "dispatcher/completed/train",
+            "dispatcher/completed/eval",
             "dispatcher/cancelled/train",
             "dispatcher/cancelled/eval",
             "dispatcher/errored/train",
             "dispatcher/errored/eval",
         ]
         for env in train_envs | eval_envs:
+            keys.append(f"dispatcher/launched/{env}")
+            keys.append(f"dispatcher/completed/{env}")
             keys.append(f"dispatcher/cancelled/{env}")
             keys.append(f"dispatcher/errored/{env}")
         return keys
@@ -478,6 +508,7 @@ class RolloutDispatcher:
             client_config=client,
             eval_step=group.eval_step,
         )
+        self.metrics.record_launch(kind=group.kind, env_name=group.env_name, n=permits)
         return True
 
     async def acquire(self, n: int) -> None:
@@ -520,6 +551,8 @@ class RolloutDispatcher:
             for r in rollouts:
                 r.capture_error(exc)
             is_synth_exception = True
+
+        self.metrics.record_completion(kind=meta.kind, env_name=meta.env_name, n=len(rollouts))
 
         for r in rollouts:
             if not r.has_error and r.num_turns == 0:
