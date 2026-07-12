@@ -2,7 +2,7 @@
 
 output_dir = "outputs/qwen35-9b-curriculum-50step-v2"
 max_steps = 50
-seq_len = 32768
+seq_len = 65536
 
 [wandb]
 project = "qwen35-9b-curriculum"
@@ -109,7 +109,7 @@ harness = { id = "tau2-synth-v1", user_model = "openai/Qwen/Qwen3.5-9B", user_ba
 [[orchestrator.train.env]]
 name = "reasoning-gym"
 ratio = 0.10
-sampling = { max_completion_tokens = 1024 }
+sampling = { max_completion_tokens = 8192 }
 taskset = { id = "reasoning-gym-v1", gym = "arc_1d", size = 2000, seed = 0 }
 harness = { id = "null", runtime = { type = "subprocess" } }
 
@@ -129,7 +129,7 @@ enable_prefix_caching = true
 CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
 
 [inference.model]
-max_model_len = 32768
+max_model_len = 65536
 
 [inference.parallel]
 dp = 1
