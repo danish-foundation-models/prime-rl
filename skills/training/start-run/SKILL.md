@@ -126,6 +126,8 @@ import smoke under Python 3.10 catches missing optional LiteLLM imports before l
 For sandbox-heavy runs, set `runtime.request_timeout_seconds` high enough for uploads
 and control-plane calls under load (120 seconds is the established curriculum value).
 The runtime reports the exception type even when an SDK timeout has an empty message.
+Transient relay long-poll failures are retried by the runtime and reported as
+`relay_poll_retries_count`; non-retryable relay responses still fail immediately.
 
 Training can instead build missing images just in time with
 `taskset.build_missing_images = true`. Use a single async env worker
