@@ -138,6 +138,11 @@ enable a service-time EWMA, a bounded future-supply multiplier, and complete-gro
 admission. Monitor
 `curriculum/service_seconds/*`, `curriculum/tokens_per_rollout/*`, inventory,
 supply limits, and per-environment in-flight counts together.
+For strict GRPO cohorts, set `max_group_replacements` to keep successful members
+while replacing failed attempts from the same prompt and policy. A bounded
+`group_hedge_after_seconds` duplicates only an old final member; the first success
+completes the group and cancels its late sibling. Monitor
+`dispatcher/replacements/*` alongside group completion and error rates.
 
 Training can instead build missing images just in time with
 `taskset.build_missing_images = true`. Use a single async env worker

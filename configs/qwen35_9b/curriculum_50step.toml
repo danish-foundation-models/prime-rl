@@ -28,6 +28,8 @@ max_inflight_rollouts = 256
 service_time_alpha = 0.2
 max_supply_multiplier = 2.0
 require_complete_groups = true
+max_group_replacements = 8
+group_hedge_after_seconds = 300
 
 [orchestrator.renderer]
 name = "qwen3.5"

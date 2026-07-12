@@ -3,10 +3,9 @@
 - Capacity (``max_inflight_rollouts``) is shared across train + eval.
   A group-scoring task that runs N rollouts in one call reserves N permits.
 - Optional rate limiting via ``AsyncLimiter(tasks_per_minute, 60)``.
-- Emit-everything invariant: every dispatched rollout eventually reaches
-  ``out_q`` exactly once as a ``Rollout``. Failures
-  (env error, empty trajectory, task exception, off-policy cancel) carry
-  ``trace.error`` set; the train sink applies the configured group policy.
+- Every ordinary dispatched rollout reaches ``out_q`` once. When bounded
+  complete-group replacement is configured, failed attempts stay out of the
+  sink and late hedged siblings are cancelled after the group fills.
 - ``DispatcherMode.PREFER_TRAIN`` / ``PREFER_EVAL`` controls which kind to
   schedule next. Transitions are level-triggered (driven by the eval
   source's emptiness), so in-flight rollouts of the opposite kind drain
@@ -75,6 +74,7 @@ class DispatcherMetrics:
     completed_by_kind_env: dict[tuple[Literal["train", "eval"], str], int] = field(
         default_factory=lambda: defaultdict(int)
     )
+    replacements_by_env: dict[str, int] = field(default_factory=lambda: defaultdict(int))
 
     def record_launch(self, *, kind: Literal["train", "eval"], env_name: str, n: int) -> None:
         self.launched_by_kind_env[(kind, env_name)] += n
@@ -87,6 +87,9 @@ class DispatcherMetrics:
 
     def record_error(self, *, kind: Literal["train", "eval"], env_name: str) -> None:
         self.errored_by_kind_env[(kind, env_name)] += 1
+
+    def record_replacement(self, *, env_name: str) -> None:
+        self.replacements_by_env[env_name] += 1
 
     def drained(self, *, train_envs: set[str], eval_envs: set[str]) -> dict[str, float]:
         """Return per-tick counters and clear them. Emits the full pre-
@@ -116,10 +119,12 @@ class DispatcherMetrics:
             out[f"dispatcher/errored/{env}"] = float(
                 self.errored_by_kind_env.get(("train", env), 0) + self.errored_by_kind_env.get(("eval", env), 0)
             )
+            out[f"dispatcher/replacements/{env}"] = float(self.replacements_by_env.get(env, 0))
         self.launched_by_kind_env.clear()
         self.completed_by_kind_env.clear()
         self.cancelled_by_kind_env.clear()
         self.errored_by_kind_env.clear()
+        self.replacements_by_env.clear()
         return out
 
     @staticmethod
@@ -141,6 +146,7 @@ class DispatcherMetrics:
             keys.append(f"dispatcher/completed/{env}")
             keys.append(f"dispatcher/cancelled/{env}")
             keys.append(f"dispatcher/errored/{env}")
+            keys.append(f"dispatcher/replacements/{env}")
         return keys
 
 
@@ -163,6 +169,8 @@ class RolloutDispatcher:
         max_inflight_rollouts: int,
         tasks_per_minute: float | None,
         max_off_policy_steps: int,
+        max_group_replacements: int = 0,
+        group_hedge_after_seconds: float | None = None,
     ) -> None:
         self.policy = policy
         self.train_envs = train_envs
@@ -173,6 +181,8 @@ class RolloutDispatcher:
         self.train_source = train_source
         self.eval_source = eval_source
         self.max_off_policy_steps = max_off_policy_steps
+        self.max_group_replacements = max_group_replacements
+        self.group_hedge_after_seconds = group_hedge_after_seconds
 
         self.max_inflight = max_inflight_rollouts
         self.inflight_permits = 0
@@ -381,6 +391,9 @@ class RolloutDispatcher:
         if envs is None:
             return False
 
+        if kind == "train":
+            self._queue_tail_hedge()
+
         for gid, group in list(self.groups.items()):
             if group.kind != kind or group.rollouts_to_schedule <= 0:
                 continue
@@ -395,6 +408,42 @@ class RolloutDispatcher:
         gid = uuid.uuid4()
         self.groups[gid] = fresh
         return await self.schedule_group_rollout(gid, fresh)
+
+    def _request_group_replacement(self, group: GroupState) -> bool:
+        if group.replacements_started >= self.max_group_replacements:
+            return False
+        group.replacements_started += 1
+        group.replacements_pending += 1
+        group.rollouts_to_schedule += 1
+        return True
+
+    def _queue_tail_hedge(self) -> None:
+        if self.group_hedge_after_seconds is None or self.max_group_replacements == 0:
+            return
+        now = time.monotonic()
+        for group_id, group in self.groups.items():
+            if (
+                group.kind != "train"
+                or group.emitted != group.target_rollouts - 1
+                or group.rollouts_to_schedule > 0
+            ):
+                continue
+            outstanding = [meta for meta in self.inflight.values() if meta.group_id == group_id]
+            if not outstanding or any(meta.is_replacement for meta in outstanding):
+                continue
+            oldest = min(meta.started_at for meta in outstanding)
+            if now - oldest < self.group_hedge_after_seconds:
+                continue
+            if self._request_group_replacement(group):
+                get_logger().info(
+                    "Hedging rollout tail | group=%s env=%s completed=%d/%d age=%.1fs",
+                    str(group_id)[:8],
+                    group.env_name,
+                    group.emitted,
+                    group.target_rollouts,
+                    now - oldest,
+                )
+            return
 
     def next_fresh_group(self, kind: RolloutKind, envs) -> GroupState | None:
         """Pop the next example from the corresponding source and wrap it in
@@ -466,6 +515,7 @@ class RolloutDispatcher:
         if env_collection is None:
             return False
         env = env_collection.get(group.env_name)
+        is_replacement = group.replacements_pending > 0
         # Frozen-sourced train rollouts hit a frozen pool; salting per policy
         # version would invalidate its prefix cache every weight update for
         # no reason.
@@ -490,6 +540,8 @@ class RolloutDispatcher:
         else:
             permits = 1
             group.rollouts_to_schedule -= 1
+            if is_replacement:
+                group.replacements_pending -= 1
             await self.acquire(permits)
             task = asyncio.create_task(
                 env.run_rollout(
@@ -507,10 +559,13 @@ class RolloutDispatcher:
             policy_version=group.policy_version_at_start,
             rollout_count=permits,
             started_at=time.monotonic(),
+            is_replacement=is_replacement,
             client_config=client,
             eval_step=group.eval_step,
         )
         self.metrics.record_launch(kind=group.kind, env_name=group.env_name, n=permits)
+        if is_replacement:
+            self.metrics.record_replacement(env_name=group.env_name)
         return True
 
     async def acquire(self, n: int) -> None:
@@ -525,9 +580,8 @@ class RolloutDispatcher:
         self.inflight_permits -= n
 
     async def handle_completed_rollout(self, task: asyncio.Task) -> None:
-        """Emit every dispatched rollout exactly once to ``out_q``. Task
-        exceptions synthesize ``meta.rollout_count`` error markers so the
-        sink's count-to-``group_size`` finalization still triggers.
+        """Emit completed rollouts, or replace failed complete-group members.
+        Task exceptions synthesize error rollouts before the same policy is applied.
         Cancelled tasks (popped by ``drop_group``) raise ``CancelledError``
         and are discarded — ``drop_group`` already emitted their markers.
         """
@@ -574,7 +628,63 @@ class RolloutDispatcher:
                     get_logger().warning(
                         f"Rollout failed in group {meta.group_id} ({meta.env_name}) — {r.error.type}: {r.error.message}"
                     )
+                can_replace = (
+                    meta.kind == "train"
+                    and group is not None
+                    and self.max_group_replacements > 0
+                    and not self.train_envs.get(meta.env_name).requires_group_scoring
+                )
+                if can_replace:
+                    missing = group.target_rollouts - group.emitted
+                    outstanding = self._group_outstanding(meta.group_id, group)
+                    if outstanding >= missing:
+                        continue
+                    if self._request_group_replacement(group):
+                        get_logger().info(
+                            "Replacing failed group member | group=%s env=%s completed=%d/%d replacement=%d/%d",
+                            str(meta.group_id)[:8],
+                            meta.env_name,
+                            group.emitted,
+                            group.target_rollouts,
+                            group.replacements_started,
+                            self.max_group_replacements,
+                        )
+                        continue
+                    await self._abandon_group(meta, group, r)
+                    return
             await self.emit_rollout(meta, group, r)
+
+    def _group_outstanding(self, group_id: uuid.UUID, group: GroupState) -> int:
+        return group.rollouts_to_schedule + sum(
+            item.rollout_count for item in self.inflight.values() if item.group_id == group_id
+        )
+
+    async def _cancel_group_remainder(self, group_id: uuid.UUID) -> int:
+        claimed: list[tuple[asyncio.Task, InflightRollout]] = []
+        for task, meta in list(self.inflight.items()):
+            if meta.group_id != group_id:
+                continue
+            del self.inflight[task]
+            self.release(meta.rollout_count)
+            self.metrics.record_cancellation(kind=meta.kind, env_name=meta.env_name, n=meta.rollout_count)
+            claimed.append((task, meta))
+        if claimed:
+            await safe_cancel_all([task for task, _ in claimed])
+        return sum(meta.rollout_count for _, meta in claimed)
+
+    async def _abandon_group(self, meta: InflightRollout, group: GroupState, failure: Rollout) -> None:
+        self.groups.pop(meta.group_id, None)
+        await self._cancel_group_remainder(meta.group_id)
+        missing = group.target_rollouts - group.emitted
+        for index in range(missing):
+            rollout = failure
+            if index > 0:
+                rollout = Rollout(
+                    task=vf.TraceTask(type="Task", data=vf.TaskData(idx=group.task_idx, prompt=None)),
+                    errors=[vf.Error(type="ReplacementLimit", message="group replacement limit exhausted")],
+                    stop_condition="error",
+                )
+            await self.emit_rollout(meta, group, rollout)
 
     async def emit_rollout(self, meta: InflightRollout, group: GroupState | None, rollout: Rollout) -> None:
         """Stamp prime-rl metadata onto the completed rollout and put it on ``out_q``.
@@ -587,6 +697,7 @@ class RolloutDispatcher:
             group.emitted += 1
             if group.emitted >= group.target_rollouts:
                 self.groups.pop(meta.group_id, None)
+                await self._cancel_group_remainder(meta.group_id)
 
         rollout.kind = meta.kind
         rollout.env_name = meta.env_name

@@ -380,6 +380,8 @@ class Orchestrator:
             max_inflight_rollouts=config.max_inflight_rollouts,
             tasks_per_minute=config.tasks_per_minute,
             max_off_policy_steps=config.max_off_policy_steps,
+            max_group_replacements=config.mixture.max_group_replacements,
+            group_hedge_after_seconds=config.mixture.group_hedge_after_seconds,
         )
         self.eval_sink = EvalSink(eval_envs=self.eval_envs) if self.eval_envs is not None else None
         self.watcher = WeightWatcher(

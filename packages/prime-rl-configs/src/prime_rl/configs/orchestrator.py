@@ -448,6 +448,12 @@ class RolloutMixtureConfig(BaseConfig):
     require_complete_groups: bool = False
     """Drop a whole optimizer group when any member fails instead of admitting survivors."""
 
+    max_group_replacements: int = Field(0, ge=0)
+    """Maximum failed or hedged members launched for one group. Zero disables replacement."""
+
+    group_hedge_after_seconds: float | None = Field(None, gt=0)
+    """When a group is one member short, duplicate its oldest outstanding member after this age."""
+
 
 class OrchestratorConfig(BaseConfig):
     algo: AlgoConfig = GRPOAlgoConfig()

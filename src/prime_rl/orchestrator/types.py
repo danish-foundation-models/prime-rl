@@ -49,6 +49,7 @@ class InflightRollout:
     policy_version: int
     rollout_count: int
     started_at: float = 0.0
+    is_replacement: bool = False
     client_config: vf.ClientConfig | None = None
     off_policy_steps: int = 0
     eval_step: int | None = None
@@ -65,6 +66,8 @@ class GroupState:
     rollouts_to_schedule: int
     target_rollouts: int
     emitted: int = 0
+    replacements_started: int = 0
+    replacements_pending: int = 0
     eval_step: int | None = None
     pinned_client: vf.ClientConfig | None = None
     policy_version_at_start: int = 0
