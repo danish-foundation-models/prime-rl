@@ -855,6 +855,21 @@ nvtx = [
 ]
 
 [[package]]
+name = "cyber-forge-v1"
+version = "0.1.0"
+source = { editable = "deps/research-environments/environments/cyber_forge_v1" }
+dependencies = [
+    { name = "verifiers" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "ucloud-sandboxes-sdk", extras = ["async"], marker = "extra == 'ucloud'", git = "https://github.com/rlrs/ucloud-sandboxes-sdk.git?rev=dabc395" },
+    { name = "verifiers", specifier = ">=0.2.0" },
+]
+provides-extras = ["ucloud"]
+
+[[package]]
 name = "cycler"
 version = "0.12.1"
 source = { registry = "https://pypi.org/simple" }
@@ -4022,6 +4037,7 @@ envs = [
     { name = "browsecomp-v1" },
     { name = "code-golf-v1" },
     { name = "color-codeword-v1" },
+    { name = "cyber-forge-v1" },
     { name = "deepdive-v1" },
     { name = "deepwiki-v1" },
     { name = "forth-lang-v1" },
@@ -4125,6 +4141,7 @@ requires-dist = [
     { name = "browsecomp-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/browsecomp_v1" },
     { name = "code-golf-v1", marker = "extra == 'envs'", editable = "deps/verifiers/environments/code_golf_v1" },
     { name = "color-codeword-v1", marker = "extra == 'envs'", editable = "deps/verifiers/environments/color_codeword_v1" },
+    { name = "cyber-forge-v1", marker = "extra == 'envs'", editable = "deps/research-environments/environments/cyber_forge_v1" },
     { name = "datasets", specifier = ">=4.0.0" },
     { name = "deep-ep", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_ep-1.2.1+29d31c0-cp312-cp312-linux_x86_64.whl" },
     { name = "deep-gemm", marker = "platform_machine == 'x86_64' and extra == 'disagg'", url = "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.5.0/deep_gemm-2.5.0+891d57b-cp312-cp312-linux_x86_64.whl" },

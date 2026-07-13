@@ -1,0 +1,59 @@
+# Two-GPU topology smoke for generated Cyber Forge tasks.
+# The stock image runs as container root and is for adapter validation only; use the
+# non-root immutable image profile documented in the environment README for production.
+# EdgeFleet and BuildGrid are excluded because their systems tasks require native tools.
+
+output_dir = "outputs/qwen35-9b-cyber-forge-ucloud-smoke"
+max_steps = 1
+seq_len = 16384
+
+[deployment]
+num_train_gpus = 1
+num_infer_gpus = 1
+gpus_per_node = 2
+
+[model]
+name = "Qwen/Qwen3.5-9B"
+
+[orchestrator]
+batch_size = 2
+group_size = 2
+pool_size = 1
+max_inflight_rollouts = 2
+
+[orchestrator.renderer]
+name = "qwen3.5"
+enable_thinking = true
+
+[orchestrator.train.sampling]
+max_completion_tokens = 8192
+
+[[orchestrator.train.env]]
+name = "cyber-forge"
+pool = { type = "static", num_workers = 1 }
+topology = { id = "cyber-forge-v1", taskset = { id = "cyber-forge-v1", seed = 7, start_index = 0, num_tasks = 12, difficulty_min = 1, difficulty_max = 3, scales = ["micro", "standard"], world_packs = ["tenantdesk-saas-v1", "cloudship-delivery-v1", "northstar-branch-v1"] }, planner = { model = "Qwen/Qwen3.5-9B", trainable = false, sampling = { max_tokens = 1024 } }, operator = { trainable = true, harness = { id = "default", env = { TMPDIR = "/workspace/tmp", UV_CACHE_DIR = "/workspace/uv-cache" }, runtime = { type = "ucloud", image = "python:3.12-slim", workdir = "/workspace/cyber-forge", network = "bridge", cpu = 1.0, memory = 2.0, disk = 4.0, ttl_seconds = 3600, request_timeout_seconds = 120, start_timeout_seconds = 1800, name_prefix = "cyber-forge", labels = { experiment = "cyber-forge-smoke", environment = "cyber-forge", security_profile = "debug-root" } } } } }
+
+[trainer]
+
+[trainer.model.ac]
+freq = 1
+
+[trainer.optim]
+lr = 3e-6
+
+[inference]
+gpu_memory_utilization = 0.8
+enable_prefix_caching = true
+
+[inference.env_vars]
+CUDA_HOME = "/opt/easybuild/ubuntu-24.04/amd/software/CUDA/12.8.0"
+
+[inference.model]
+max_model_len = 16384
+
+[inference.parallel]
+dp = 1
+tp = 1
+
+[inference.vllm_extra]
+language_model_only = true
