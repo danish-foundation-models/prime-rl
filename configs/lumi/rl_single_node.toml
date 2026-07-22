@@ -12,7 +12,7 @@ num_train_gpus = 1
 num_infer_gpus = 1
 
 [trainer.model]
-attn = "sdpa"
+attn = "flash_attention_2"
 
 [orchestrator]
 batch_size = 128

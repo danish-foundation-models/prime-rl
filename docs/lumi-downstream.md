@@ -23,14 +23,15 @@ The integration branch currently carries:
 - immutable-image LUMI submit wrappers and Slurm templates;
 - project-local cache, metadata, and artifact placement;
 - ROCm GPU visibility and NVML-tolerant launch behavior;
+- the ROCm-safe fp32 lm-head inference path;
 - serialized Hugging Face snapshot downloads for the shared model cache;
 - a small regular-worker router because the operational image does not provide
   `vllm-router`;
 - UCloud image preparation, capacity prewarming, and cleanup orchestration.
 
 The integration branch does not carry the old writable-overlay builder,
-historical smoke/run configs, gradient diagnostics, or speculative model
-compatibility patches.
+historical smoke/run configs, gradient diagnostics, packed-SDPA support, or
+speculative model compatibility patches. LUMI configs use FlashAttention.
 
 ## Refresh procedure
 

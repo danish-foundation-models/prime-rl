@@ -5,7 +5,7 @@ max_steps = 100
 
 [model]
 name = "PrimeIntellect/Qwen3-0.6B"
-attn = "sdpa"
+attn = "flash_attention_2"
 
 [data]
 name = "willcb/R1-reverse-wikipedia-paragraphs-v1-1000"
