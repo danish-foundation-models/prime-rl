@@ -62,6 +62,7 @@ from prime_rl.orchestrator.types import (
     Rollout,
     TrainBatch,
 )
+from prime_rl.orchestrator.ucloud_capacity import prepare_ucloud_capacity
 from prime_rl.orchestrator.utils import (
     get_weight_dir,
     intercept_vf_logging,
@@ -207,6 +208,8 @@ class Orchestrator:
         config_dir.mkdir(parents=True, exist_ok=True)
         with open(config_dir / "orch.toml", "wb") as f:
             tomli_w.dump(to_toml_dict(config), f)
+
+        await prepare_ucloud_capacity(config)
 
         get_logger().info(f"Initializing tokenizer ({config.tokenizer})")
         self.tokenizer = setup_tokenizer(config.tokenizer)
