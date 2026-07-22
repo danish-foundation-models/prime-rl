@@ -29,6 +29,7 @@ def _ucloud_labels(config_path: Path) -> list[str]:
         for env in envs:
             if not isinstance(env, dict):
                 continue
+            labels.extend(_ucloud_labels_from_env(env))
             args = env.get("args", {})
             if not isinstance(args, dict):
                 continue
@@ -42,6 +43,24 @@ def _ucloud_labels(config_path: Path) -> list[str]:
                 labels.extend(str(label) for label in raw_labels)
 
     return sorted(set(labels))
+
+
+def _ucloud_labels_from_env(env: dict[str, Any]) -> list[str]:
+    labels: list[str] = []
+    runtime = env.get("runtime")
+    harness = env.get("harness")
+    if isinstance(harness, dict):
+        runtime = harness.get("runtime", runtime)
+    if not isinstance(runtime, dict):
+        return labels
+    if str(runtime.get("type") or "").lower() != "ucloud":
+        return labels
+    raw_labels = runtime.get("labels") or []
+    if isinstance(raw_labels, str):
+        raw_labels = [raw_labels]
+    if isinstance(raw_labels, list):
+        labels.extend(str(label) for label in raw_labels)
+    return labels
 
 
 def _sandbox_id(record: dict[str, Any]) -> str | None:
@@ -70,6 +89,39 @@ def _main() -> int:
         default=[],
         help="UCloud label to clean. Can be provided multiple times.",
     )
+    parser.add_argument(
+        "--sandbox-id",
+        action="append",
+        default=[],
+        help="UCloud sandbox ID to delete directly. Can be provided multiple times.",
+    )
+    parser.add_argument(
+        "--sandbox-ids-file",
+        type=Path,
+        help="File containing UCloud sandbox IDs to delete directly, one per line.",
+    )
+    parser.add_argument(
+        "--prepared-capacity-id",
+        action="append",
+        default=[],
+        help="UCloud prepared-capacity ID to delete. Can be provided multiple times.",
+    )
+    parser.add_argument(
+        "--prepared-capacity-ids-file",
+        type=Path,
+        help="File containing UCloud prepared-capacity IDs to delete, one per line.",
+    )
+    parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=30.0,
+        help="Per-request timeout for UCloud API calls.",
+    )
+    parser.add_argument(
+        "--allow-list-failure",
+        action="store_true",
+        help="Return success if direct cleanup works but list_sandboxes fails.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="List without deleting.")
     args = parser.parse_args()
 
@@ -80,7 +132,6 @@ def _main() -> int:
     labels = sorted(set(labels))
     if not labels:
         print("No UCloud labels found to clean.", file=sys.stderr)
-        return 0
 
     try:
         from ucloud_sandboxes_sdk import SandboxClient
@@ -103,19 +154,81 @@ def _main() -> int:
         )
         return 1
 
-    client = SandboxClient(base_url, headers={"Authorization": f"Bearer {token}"})
+    client = SandboxClient(
+        base_url,
+        timeout_seconds=args.request_timeout_seconds,
+        api_token=token,
+    )
 
     total = 0
+    sandbox_ids = list(args.sandbox_id)
+    if args.sandbox_ids_file and args.sandbox_ids_file.exists():
+        sandbox_ids.extend(
+            line.strip()
+            for line in args.sandbox_ids_file.read_text().splitlines()
+            if line.strip()
+        )
+    sandbox_ids = sorted(set(sandbox_ids))
+    if sandbox_ids:
+        print(f"Found {len(sandbox_ids)} explicit UCloud sandbox ID(s) to clean")
+        for sandbox_id in sandbox_ids:
+            total += 1
+            if args.dry_run:
+                print(f"would delete sandbox {sandbox_id}")
+                continue
+            print(f"deleting sandbox {sandbox_id}")
+            try:
+                client.delete_sandbox(sandbox_id)
+            except Exception as exc:
+                print(f"failed to delete sandbox {sandbox_id}: {exc}", file=sys.stderr)
+
+    prepared_capacity_ids = list(args.prepared_capacity_id)
+    if args.prepared_capacity_ids_file and args.prepared_capacity_ids_file.exists():
+        prepared_capacity_ids.extend(
+            line.strip()
+            for line in args.prepared_capacity_ids_file.read_text().splitlines()
+            if line.strip()
+        )
+    prepared_capacity_ids = sorted(set(prepared_capacity_ids))
+    if prepared_capacity_ids:
+        print(
+            f"Found {len(prepared_capacity_ids)} explicit UCloud prepared-capacity ID(s) "
+            "to clean"
+        )
+        for prepare_id in prepared_capacity_ids:
+            total += 1
+            if args.dry_run:
+                print(f"would delete prepared capacity {prepare_id}")
+                continue
+            print(f"deleting prepared capacity {prepare_id}")
+            try:
+                client.delete_prepared_capacity(prepare_id)
+            except Exception as exc:
+                print(
+                    f"failed to delete prepared capacity {prepare_id}: {exc}",
+                    file=sys.stderr,
+                )
+
     if labels:
         label_set = set(labels)
         targets: list[str] = []
-        for record in client.list_sandboxes():
-            if not isinstance(record, dict):
-                continue
-            sandbox_id = _sandbox_id(record)
-            sandbox_labels = _sandbox_labels(record)
-            if sandbox_id and any(sandbox_labels.get(label) == "true" for label in label_set):
-                targets.append(sandbox_id)
+        try:
+            records = client.list_sandboxes()
+        except Exception as exc:
+            print(f"failed to list UCloud sandboxes by label: {exc}", file=sys.stderr)
+            if args.allow_list_failure:
+                print(f"Total matched UCloud resource(s): {total}")
+                return 0
+            return 1
+
+        for record in records:
+            if isinstance(record, dict):
+                sandbox_id = _sandbox_id(record)
+                sandbox_labels = _sandbox_labels(record)
+                if sandbox_id and any(
+                    sandbox_labels.get(label) == "true" for label in label_set
+                ):
+                    targets.append(sandbox_id)
 
         print(f"Found {len(targets)} UCloud sandbox(es) for labels: {', '.join(labels)}")
         for sandbox_id in targets:
