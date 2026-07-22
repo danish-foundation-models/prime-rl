@@ -68,6 +68,58 @@ from prime_rl.utils.utils import format_time
 from prime_rl.utils.vlm import get_language_model, get_vision_encoder, is_vlm_architecture
 
 
+def _snapshot_download_max_workers() -> int:
+    value = os.environ.get("PRIME_RL_HF_SNAPSHOT_MAX_WORKERS")
+    if value is None:
+        return 8
+    try:
+        return max(1, int(value))
+    except ValueError:
+        get_logger().warning(f"Invalid PRIME_RL_HF_SNAPSHOT_MAX_WORKERS={value!r}; using 8")
+        return 8
+
+
+def _resolve_model_snapshot(model_name: str) -> Path:
+    if Path(model_name).exists():
+        return Path(model_name)
+
+    dist_ready = torch.distributed.is_available() and torch.distributed.is_initialized()
+    if not dist_ready:
+        return Path(
+            snapshot_download(
+                repo_id=model_name,
+                repo_type="model",
+                max_workers=_snapshot_download_max_workers(),
+            )
+        )
+
+    world = get_world()
+    leader_error: Exception | None = None
+    if world.is_master:
+        try:
+            snapshot_path = Path(
+                snapshot_download(
+                    repo_id=model_name,
+                    repo_type="model",
+                    max_workers=_snapshot_download_max_workers(),
+                )
+            )
+        except Exception as exc:
+            leader_error = exc
+    try:
+        torch.distributed.barrier()
+    except Exception:
+        if leader_error is not None:
+            raise leader_error
+        raise
+    if leader_error is not None:
+        raise leader_error
+    if world.is_master:
+        return snapshot_path
+
+    return Path(snapshot_download(repo_id=model_name, repo_type="model", local_files_only=True))
+
+
 def pre_download_model(model_name: str) -> None:
     """Pre-download model from HuggingFace Hub so all nodes have cached weights before training."""
     if Path(model_name).exists():
@@ -75,7 +127,7 @@ def pre_download_model(model_name: str) -> None:
         return
     get_logger().info(f"Pre-downloading model {model_name}")
     t0 = time.perf_counter()
-    path = snapshot_download(repo_id=model_name, repo_type="model")
+    path = _resolve_model_snapshot(model_name)
     get_logger().debug(
         f"Finished pre-downloading model {model_name} to {path} in {format_time(time.perf_counter() - t0)}"
     )
@@ -921,7 +973,7 @@ def load_dcp_from_hf(model: nn.Module, config: ModelConfig, parallel_dims: Paral
         return
 
     if not Path(config.name).exists():
-        snapshot_path = Path(snapshot_download(repo_id=config.name, repo_type="model"))
+        snapshot_path = _resolve_model_snapshot(config.name)
     else:
         logger.info(
             f"Loading model weights from path {config.name}, skipping snapshot download. If this is not expected, please remove the directory {config.name} and run again"

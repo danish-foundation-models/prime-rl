@@ -23,6 +23,7 @@ The integration branch currently carries:
 - immutable-image LUMI submit wrappers and Slurm templates;
 - project-local cache, metadata, and artifact placement;
 - ROCm GPU visibility and NVML-tolerant launch behavior;
+- serialized Hugging Face snapshot downloads for the shared model cache;
 - a small regular-worker router because the operational image does not provide
   `vllm-router`;
 - UCloud image preparation, capacity prewarming, and cleanup orchestration.
@@ -61,4 +62,3 @@ classify it in its own repository first, then update the PRIME-RL pin as a
 separate commit. The current integration uses upstream's pins for `renderers`,
 `research-environments`, and `verifiers`; their existing local work is not part
 of this branch.
-
