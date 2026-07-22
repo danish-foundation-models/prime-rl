@@ -1,0 +1,70 @@
+#!/bin/bash
+
+#SBATCH --job-name={{ job_name }}
+#SBATCH --account={{ account or "project_465002751" }}
+#SBATCH --partition={{ partition }}
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=56
+#SBATCH --gpus-per-node={{ gpus_per_node }}
+#SBATCH --mem=0
+#SBATCH --time=02:00:00
+#SBATCH --exclusive=user
+#SBATCH --hint=nomultithread
+#SBATCH --output={{ output_dir }}/job_%j.log
+#SBATCH --error={{ output_dir }}/job_%j.err
+
+set -euo pipefail
+
+PROJECT_DIR={{ project_dir }}
+CONFIG_PATH={{ config_path }}
+
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
+UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
+XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$LUMI_ROOT/.cache}
+WANDB_CACHE_DIR=${PRIME_RL_WANDB_CACHE_DIR:-$LUMI_ROOT/.cache/wandb}
+WANDB_CONFIG_DIR=${PRIME_RL_WANDB_CONFIG_DIR:-$LUMI_ROOT/.cache/wandb-config}
+MPLCONFIGDIR=${PRIME_RL_MPLCONFIGDIR:-$LUMI_ROOT/.cache/matplotlib}
+TMPDIR=${PRIME_RL_TMPDIR:-$LUMI_ROOT/tmp/$SLURM_JOB_ID}
+
+if [[ ! -f "$SIF" ]]; then
+  echo "FATAL: SIF not found: $SIF" >&2
+  exit 1
+fi
+
+mkdir -p {{ output_dir }}
+mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR" "$MPLCONFIGDIR" "$TMPDIR"
+export PROJECT_DIR SIF LUMI_ROOT
+PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
+export PRIME_RL_METADATA_DIR
+
+SING_BIND_ARGS=(
+  -B "$PROJECT_DIR:/workdir"
+  -B /scratch/project_465002751:/scratch/project_465002751
+)
+
+RANK_CMD="
+set -euo pipefail
+export PATH=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:\$PATH
+export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:$PRIME_RL_METADATA_DIR
+export PYTHONNOUSERSITE=1
+if [[ -n \"\${ROCR_VISIBLE_DEVICES:-}\" && -z \"\${HIP_VISIBLE_DEVICES:-}\" ]]; then
+  export HIP_VISIBLE_DEVICES=\"\${ROCR_VISIBLE_DEVICES}\"
+fi
+unset ROCR_VISIBLE_DEVICES
+export HF_HOME=\"$HF_HOME\"
+export UV_CACHE_DIR=\"$UV_CACHE_DIR\"
+export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\"
+export WANDB_CACHE_DIR=\"$WANDB_CACHE_DIR\"
+export WANDB_CONFIG_DIR=\"$WANDB_CONFIG_DIR\"
+export MPLCONFIGDIR=\"$MPLCONFIGDIR\"
+export TMPDIR=\"$TMPDIR\"
+export TRITON_CACHE_DIR=\"$TMPDIR/triton\"
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+cd /workdir
+python -m torch.distributed.run --nproc-per-node=1 -m prime_rl.trainer.sft.train @ \"$CONFIG_PATH\"
+"
+
+singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"

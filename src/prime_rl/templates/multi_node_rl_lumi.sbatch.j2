@@ -1,0 +1,655 @@
+#!/bin/bash
+
+#SBATCH --job-name={{ job_name }}
+#SBATCH --nodes={{ num_train_nodes + num_infer_nodes }}
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=56
+#SBATCH --gpus-per-node={{ gpus_per_node }}
+#SBATCH --partition={{ partition }}
+#SBATCH --account={{ account or "project_465002751" }}
+{%- if time %}
+#SBATCH --time={{ time }}
+{%- else %}
+#SBATCH --time=24:00:00
+{%- endif %}
+{%- if nodelist %}
+#SBATCH --nodelist={{ nodelist }}
+{%- endif %}
+{%- if exclude %}
+#SBATCH --exclude={{ exclude }}
+{%- endif %}
+#SBATCH --mem=0
+#SBATCH --exclusive=user
+#SBATCH --hint=nomultithread
+#SBATCH --output={{ output_dir }}/job_%j.log
+#SBATCH --error={{ output_dir }}/job_%j.log
+
+# Exit immediately on any failed command so a crash anywhere releases the
+# allocation instead of leaving zombie processes holding nodes.
+set -e
+
+# Configs
+export NUM_TRAIN_NODES={{ num_train_nodes }}
+export NUM_INFER_NODES={{ num_infer_nodes }}
+export NODES_PER_INFER_REPLICA={{ nodes_per_infer_replica }}
+export NUM_INFER_REPLICAS={{ num_infer_replicas }}
+export GPUS_PER_NODE={{ gpus_per_node }}
+{% if num_infer_nodes > 0 -%}
+export ROUTER_PORT={{ router.port }}
+export INFERENCE_TP={{ inference_tp }}
+export INFERENCE_DP_LOCAL=$((GPUS_PER_NODE / INFERENCE_TP))
+export INFERENCE_DATA_PARALLEL_RPC_PORT={{ inference_data_parallel_rpc_port }}
+{% if is_disaggregated -%}
+export NUM_PREFILL_NODES={{ num_prefill_nodes }}
+export NUM_DECODE_NODES={{ num_decode_nodes }}
+export NUM_PREFILL_REPLICAS={{ num_prefill_replicas }}
+export NUM_DECODE_REPLICAS={{ num_decode_replicas }}
+export NODES_PER_PREFILL_REPLICA=$((NUM_PREFILL_NODES / NUM_PREFILL_REPLICAS))
+export NODES_PER_DECODE_REPLICA=$((NUM_DECODE_NODES / NUM_DECODE_REPLICAS))
+export PREFILL_PORT={{ prefill_port }}
+export DECODE_PORT={{ decode_port }}
+{%- if router.type == "llm-d" %}
+export DECODE_SIDECAR_PORT={{ router.decode_sidecar_port }}
+{%- endif %}
+{%- else -%}
+export BACKEND_PORT={{ backend_port }}
+export INFERENCE_ENABLE_EXPERT_PARALLEL={{ "1" if inference_enable_expert_parallel else "0" }}
+{%- endif %}
+{%- endif %}
+
+# Paths
+export PROJECT_DIR={{ project_dir }}
+export CONFIG_DIR={{ config_dir }}
+export OUTPUT_DIR={{ output_dir }}
+export ORCHESTRATOR_OUTPUT_DIR={{ orchestrator_output_dir }}
+mkdir -p $OUTPUT_DIR/logs/trainer $OUTPUT_DIR/logs/inference
+rm -f $OUTPUT_DIR/logs/inference/*.log
+ln -sfn trainer/node_0.log $OUTPUT_DIR/logs/trainer.log
+ln -sfn inference/node_0.log $OUTPUT_DIR/logs/inference.log
+
+# General
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export PYTHONUNBUFFERED=1
+export OMP_NUM_THREADS=1
+export TRITON_CACHE_DIR=/tmp/triton-cache-$USER-$SLURM_JOB_ID
+
+export WANDB_SHARED_MODE=1
+export WANDB_SHARED_RUN_ID=$(python3 -c "import uuid; print(uuid.uuid4().hex)")
+
+# Networking
+HOSTNAMES=( $( scontrol show hostnames $SLURM_JOB_NODELIST ) )
+TRAIN_HOSTS=( ${HOSTNAMES[@]:$NUM_INFER_NODES:$SLURM_JOB_NUM_NODES} )
+export HOSTNAMES_STR="${HOSTNAMES[*]}"
+
+{% if num_infer_nodes > 0 -%}
+INFER_HOSTS=( ${HOSTNAMES[@]:0:$NUM_INFER_NODES} )
+
+# Build per-replica router URLs, admin URLs, and backend args for the router
+INFER_URLS=""
+ADMIN_URLS=""
+ALL_ROUTER_ARGS=""
+{% if is_disaggregated -%}
+for ((r=0; r<NUM_INFER_REPLICAS; r++)); do
+    replica_base=$((r * NODES_PER_INFER_REPLICA))
+    router_host="${INFER_HOSTS[$replica_base]}"
+    INFER_URLS="${INFER_URLS:+$INFER_URLS }http://${router_host}:${ROUTER_PORT}/v1"
+
+    REPLICA_ROUTER_ARGS=""
+    # External-LB: one prefill/decode endpoint per DP rank (PORT + k) on each node.
+    for ((p=0; p<NUM_PREFILL_NODES; p++)); do
+        node_idx=$((replica_base + p))
+        host="${INFER_HOSTS[$node_idx]}"
+        for ((k=0; k<INFERENCE_DP_LOCAL; k++)); do
+            ADMIN_URLS="${ADMIN_URLS:+$ADMIN_URLS }http://${host}:$((PREFILL_PORT + k))/v1"
+            REPLICA_ROUTER_ARGS="$REPLICA_ROUTER_ARGS --prefill http://${host}:$((PREFILL_PORT + k))"
+        done
+    done
+    for ((d=0; d<NUM_DECODE_NODES; d++)); do
+        node_idx=$((replica_base + NUM_PREFILL_NODES + d))
+        host="${INFER_HOSTS[$node_idx]}"
+        for ((k=0; k<INFERENCE_DP_LOCAL; k++)); do
+            ADMIN_URLS="${ADMIN_URLS:+$ADMIN_URLS }http://${host}:$((DECODE_PORT + k))/v1"
+            REPLICA_ROUTER_ARGS="$REPLICA_ROUTER_ARGS --decode http://${host}:$((DECODE_PORT + k))"
+        done
+    done
+    ALL_ROUTER_ARGS="${ALL_ROUTER_ARGS:+$ALL_ROUTER_ARGS|}$REPLICA_ROUTER_ARGS"
+done
+{%- else -%}
+for ((r=0; r<NUM_INFER_REPLICAS; r++)); do
+    head_idx=$((r * NODES_PER_INFER_REPLICA))
+    router_host="${INFER_HOSTS[$head_idx]}"
+    INFER_URLS="${INFER_URLS:+$INFER_URLS }http://${router_host}:${ROUTER_PORT}/v1"
+
+    REPLICA_ROUTER_ARGS=""
+    for ((n=0; n<NODES_PER_INFER_REPLICA; n++)); do
+        node_idx=$((head_idx + n))
+        host="${INFER_HOSTS[$node_idx]}"
+        # External-LB: one endpoint per DP rank (BACKEND_PORT + dp_local) on each node.
+        for ((k=0; k<INFERENCE_DP_LOCAL; k++)); do
+            ADMIN_URLS="${ADMIN_URLS:+$ADMIN_URLS }http://${host}:$((BACKEND_PORT + k))/v1"
+            REPLICA_ROUTER_ARGS="$REPLICA_ROUTER_ARGS http://${host}:$((BACKEND_PORT + k))"
+        done
+    done
+    ALL_ROUTER_ARGS="${ALL_ROUTER_ARGS:+$ALL_ROUTER_ARGS|}$REPLICA_ROUTER_ARGS"
+done
+{%- endif %}
+export INFER_URLS
+export ADMIN_URLS
+export ALL_ROUTER_ARGS
+echo "INFER_HOSTS=${INFER_HOSTS[*]}"
+echo "INFER_URLS=${INFER_URLS}"
+echo "ADMIN_URLS=${ADMIN_URLS}"
+{%- endif %}
+
+echo "HOSTNAMES=${HOSTNAMES[*]}"
+echo "TRAIN_HOSTS=${TRAIN_HOSTS[*]}"
+
+export MASTER_ADDR="${HOSTNAMES[$NUM_INFER_NODES]}"
+export MASTER_PORT=29500
+echo "MASTER_ADDR=${MASTER_ADDR}"
+echo "MASTER_PORT=${MASTER_PORT}"
+
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+HOST_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache}
+CONTAINER_CACHE_DIR=$HOST_CACHE_DIR
+HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
+UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$CONTAINER_CACHE_DIR/uv}
+XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$CONTAINER_CACHE_DIR}
+WANDB_CACHE_DIR=${PRIME_RL_WANDB_CACHE_DIR:-$CONTAINER_CACHE_DIR/wandb}
+WANDB_CONFIG_DIR=${PRIME_RL_WANDB_CONFIG_DIR:-$CONTAINER_CACHE_DIR/wandb-config}
+MPLCONFIGDIR=${PRIME_RL_MPLCONFIGDIR:-$CONTAINER_CACHE_DIR/matplotlib}
+TMPDIR=${PRIME_RL_TMPDIR:-$LUMI_ROOT/tmp/$SLURM_JOB_ID}
+POST_ROOT=${POST_ROOT:-$LUMI_ROOT/post}
+export POST_ROOT
+export PRIME_RL_RUNTIME_HF_HOME=$HF_HOME
+export PRIME_RL_RUNTIME_UV_CACHE_DIR=$UV_CACHE_DIR
+export PRIME_RL_RUNTIME_XDG_CACHE_HOME=$XDG_CACHE_HOME
+export PRIME_RL_RUNTIME_WANDB_CACHE_DIR=$WANDB_CACHE_DIR
+export PRIME_RL_RUNTIME_WANDB_CONFIG_DIR=$WANDB_CONFIG_DIR
+export PRIME_RL_RUNTIME_MPLCONFIGDIR=$MPLCONFIGDIR
+export PRIME_RL_RUNTIME_TMPDIR=$TMPDIR
+RCCL_NET_SO_SRC=${RCCL_NET_SO_SRC:-}
+LIBFABRIC_SO=${LIBFABRIC_SO:-}
+LIBCXI_SO=${LIBCXI_SO:-}
+AWS_OFI_RCCL_LIBDIR=${AWS_OFI_RCCL_LIBDIR:-${AWS_OFI_NCCL_LIBDIR:-}}
+NCCL_NET_PLUGIN_NAME=${NCCL_NET_PLUGIN_NAME:-}
+NCCL_NET_BACKEND=${NCCL_NET_BACKEND:-}
+
+if [[ ! -f "$SIF" ]]; then
+  echo "FATAL: SIF not found: $SIF" >&2
+  exit 1
+fi
+
+mkdir -p "$HF_HOME" "$HOST_CACHE_DIR/uv" "$HOST_CACHE_DIR/wandb" "$HOST_CACHE_DIR/wandb-config" "$HOST_CACHE_DIR/matplotlib" "$TMPDIR"
+export PROJECT_DIR SIF LUMI_ROOT
+PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
+export PRIME_RL_METADATA_DIR
+
+SING_BIND_ARGS=(
+  -B "$PROJECT_DIR:/workdir"
+  -B /scratch/project_465002751:/scratch/project_465002751
+)
+if [[ -f "$RCCL_NET_SO_SRC" ]]; then
+  SING_BIND_ARGS+=(
+    -B "$RCCL_NET_SO_SRC:/lib/librccl-net.so"
+    -B "$RCCL_NET_SO_SRC:/usr/lib/librccl-net.so"
+    -B "$RCCL_NET_SO_SRC:/usr/lib/x86_64-linux-gnu/librccl-net.so"
+  )
+fi
+if [[ -f "$LIBFABRIC_SO" ]]; then
+  SING_BIND_ARGS+=(
+    -B "$LIBFABRIC_SO:/lib/x86_64-linux-gnu/libfabric.so.1"
+    -B "$LIBFABRIC_SO:/usr/lib/libfabric.so.1"
+    -B "$LIBFABRIC_SO:/usr/lib/x86_64-linux-gnu/libfabric.so.1"
+  )
+fi
+if [[ -f "$LIBCXI_SO" ]]; then
+  SING_BIND_ARGS+=(
+    -B "$LIBCXI_SO:/lib/libcxi.so.1"
+    -B "$LIBCXI_SO:/usr/lib/libcxi.so.1"
+    -B "$LIBCXI_SO:/usr/lib/x86_64-linux-gnu/libcxi.so.1"
+  )
+fi
+export HF_HOME UV_CACHE_DIR XDG_CACHE_HOME WANDB_CACHE_DIR WANDB_CONFIG_DIR MPLCONFIGDIR TMPDIR
+if [[ "${PRIME_RL_HF_HUB_OFFLINE:-0}" = "1" ]]; then
+  export HF_HUB_OFFLINE=1
+  export HF_DATASETS_OFFLINE=1
+fi
+
+load_dotenv_for_cleanup() {
+  set +u
+  set -a
+  for ENV_FILE in "$POST_ROOT/.env" "$PROJECT_DIR/.env"; do
+    if [[ -f "$ENV_FILE" ]]; then
+      source "$ENV_FILE"
+    fi
+  done
+  set +a
+  set -u
+}
+
+cleanup_remote_sandboxes() {
+  status=$?
+  load_dotenv_for_cleanup
+  CLEANUP_CONFIG_PATH="$CONFIG_DIR/rl.toml"
+  if [[ ! -f "$CLEANUP_CONFIG_PATH" ]]; then
+    CLEANUP_CONFIG_PATH="$CONFIG_DIR/orchestrator.toml"
+  fi
+  if [[ -n "${UCLOUD_SANDBOX_API_URL:-}" && -n "${UCLOUD_SANDBOX_API_TOKEN:-}" && -f "$CLEANUP_CONFIG_PATH" ]]; then
+    echo "+ Cleaning UCloud sandboxes for $CLEANUP_CONFIG_PATH"
+    CLEANUP_SANDBOX_IDS_PATH="$OUTPUT_DIR/ucloud_sandbox_ids.txt"
+    CLEANUP_PREPARED_IDS_PATH="$OUTPUT_DIR/ucloud_prepared_capacity_ids.txt"
+    {
+      find "$OUTPUT_DIR/logs" -type f -name '*.log' -exec grep -hEo 'rollout_[0-9a-f]+' {} + 2>/dev/null || true
+      find "$OUTPUT_DIR/logs" -type f -name '*.log' -exec sed -nE 's/.*ucloud: sandbox ([0-9a-f]+) up.*/\1/p' {} + 2>/dev/null || true
+    } | sort -u > "$CLEANUP_SANDBOX_IDS_PATH" || true
+    grep -hEo 'prepare_id=[^,)]+' "$OUTPUT_DIR/logs/orchestrator.log" 2>/dev/null \
+      | sed 's/^prepare_id=//' | sort -u > "$CLEANUP_PREPARED_IDS_PATH" || true
+    singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
+      set -euo pipefail
+      export PATH="$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:$PATH"
+      source /workdir/scripts/lumi_runtime_env.sh
+      prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR"
+      python /workdir/scripts/cleanup_ucloud_sandboxes.py \
+        --config "$1" \
+        --sandbox-ids-file "$2" \
+        --prepared-capacity-ids-file "$3" \
+        --allow-list-failure
+    ' cleanup-ucloud "$CLEANUP_CONFIG_PATH" "$CLEANUP_SANDBOX_IDS_PATH" "$CLEANUP_PREPARED_IDS_PATH" || true
+  fi
+  exit "$status"
+}
+trap cleanup_remote_sandboxes EXIT
+
+{% if pre_run_command %}
+# Pre-run command
+{{ pre_run_command }}
+{% endif %}
+
+# Cleanup stale node-local state from prior jobs. Orphan python/torchrun/vllm
+# processes and vLLM/torch IPC files under /dev/shm and /tmp can survive SLURM
+# termination and cause the next launch to hang (e.g. decode engines stuck at
+# "Waiting for READY message from DP Coordinator"). Harmless on clean nodes.
+#
+# `bash -s` with a heredoc on stdin keeps the script body out of every bash
+# / srun argv — otherwise `pkill -f "[v]llm"` self-matches the cleanup procs
+# because the surviving literal `vllm` strings below appear in the cmdline.
+srun bash -s <<'CLEANUP_SH'
+    pkill -9 -f "[p]ython.*prime_rl" 2>/dev/null
+    pkill -9 -f "[t]orchrun" 2>/dev/null
+    pkill -9 -f "[v]llm-router" 2>/dev/null
+    # llm-d router procs (EPP + Envoy + decode pd-sidecar) left over from a prior run.
+    pkill -9 -f "[e]pp.*pool-name" 2>/dev/null
+    pkill -9 -f "[e]nvoy.*envoy.yaml" 2>/dev/null
+    pkill -9 -f "[p]d-sidecar" 2>/dev/null
+    pkill -9 -f "[v]llm" 2>/dev/null
+    pkill -9 -f "[p]rime_rl" 2>/dev/null
+    # Also match prctl-set process names (kernel comm) like "vllm::router"
+    # which pkill -f does not see because -f only matches the cmdline.
+    pkill -9 "vllm" 2>/dev/null
+    pkill -9 "vllm::.*" 2>/dev/null
+    # Mooncake store (master + client) left over from a prior offload run. -x matches
+    # the exact process name, so it never hits the worktree path (e.g. mooncake-baby).
+    pkill -9 -x mooncake_master 2>/dev/null
+    pkill -9 -x mooncake_client 2>/dev/null
+    sleep 2
+    rm -rf /dev/shm/vllm-* /dev/shm/vllm_* /tmp/vllm-* /tmp/vllm_* /tmp/torch-* /tmp/torchelastic_* 2>/dev/null
+    procs=$(ps -eo comm,args | grep -E "python|torchrun|vllm|vllm::|mooncake_|[e]pp |envoy|pd-sidecar" | grep -v grep | wc -l)
+    gpu=$(rocm-smi --showmeminfo vram 2>/dev/null | awk "/GPU\\[[0-9]+\\]/ {sum+=\$NF} END {print sum}")
+    echo "[node-cleanup] $(hostname) procs=$procs gpu_mem=${gpu:-unknown}"
+CLEANUP_SH
+
+# Run RL
+# --kill-on-bad-exit=1 propagates a non-zero exit on any node to all other
+# tasks so a crashed component terminates the SLURM job instead of leaving the
+# surviving ranks holding nodes.
+srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
+    # pipefail ensures `cmd | tee log` propagates `cmd` failures, and the
+    # wait/cleanup block at the end of this script surfaces background
+    # process crashes (router, orchestrator) as task failures.
+    set -o pipefail
+
+    export PROJECT_DIR=/workdir
+    cd $PROJECT_DIR
+    set -a
+    for ENV_FILE in "$POST_ROOT/.env" .env; do
+      if [[ -f "$ENV_FILE" ]]; then
+        source "$ENV_FILE"
+      fi
+    done
+    set +a
+
+    export PATH="$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:$PATH"
+    source /workdir/scripts/lumi_runtime_env.sh
+    prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR"
+    export PYTHONNOUSERSITE=1
+    if [[ -n "${ROCR_VISIBLE_DEVICES:-}" && -z "${HIP_VISIBLE_DEVICES:-}" ]]; then
+      export HIP_VISIBLE_DEVICES="${ROCR_VISIBLE_DEVICES}"
+    fi
+    if [[ -n "${HIP_VISIBLE_DEVICES:-}" && -z "${ROCR_VISIBLE_DEVICES:-}" ]]; then
+      export ROCR_VISIBLE_DEVICES="${HIP_VISIBLE_DEVICES}"
+    fi
+    if [[ -n "${SSL_CERT_FILE:-}" && ! -f "${SSL_CERT_FILE}" ]]; then
+      unset SSL_CERT_FILE
+    fi
+    if [[ -n "${SSL_CERT_DIR:-}" && ! -d "${SSL_CERT_DIR}" ]]; then
+      unset SSL_CERT_DIR
+    fi
+    export HF_HOME="$PRIME_RL_RUNTIME_HF_HOME"
+    export UV_CACHE_DIR="$PRIME_RL_RUNTIME_UV_CACHE_DIR"
+    export XDG_CACHE_HOME="$PRIME_RL_RUNTIME_XDG_CACHE_HOME"
+    export WANDB_CACHE_DIR="$PRIME_RL_RUNTIME_WANDB_CACHE_DIR"
+    export WANDB_CONFIG_DIR="$PRIME_RL_RUNTIME_WANDB_CONFIG_DIR"
+    export MPLCONFIGDIR="$PRIME_RL_RUNTIME_MPLCONFIGDIR"
+    export TMPDIR="$PRIME_RL_RUNTIME_TMPDIR/$SLURM_PROCID"
+    export TRITON_CACHE_DIR="$TMPDIR/triton"
+    mkdir -p "$TMPDIR" "$TRITON_CACHE_DIR"
+    export WANDB_MODE=online
+    export UV_NO_SYNC=1
+    uv() {
+        if [ "${1:-}" = "run" ]; then shift; fi
+        command "$@"
+    }
+
+    # Higher ulimit
+    ulimit -n 65536
+    export GIT_LFS_SKIP_SMUDGE=1
+    export VF_INTERCEPTION_HOST=${VF_INTERCEPTION_HOST:-$(hostname -f 2>/dev/null || hostname)}
+    export FI_PROVIDER=${FI_PROVIDER:-cxi}
+    export FI_PROVIDER_NAME=${FI_PROVIDER_NAME:-cxi}
+    export FI_CXI_DISABLE_HMEM=${FI_CXI_DISABLE_HMEM:-1}
+    export FI_CXI_DISABLE_HMEM_FLAG=${FI_CXI_DISABLE_HMEM_FLAG:-1}
+    export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-hsn0}
+    export GLOO_IFNAME=${GLOO_IFNAME:-hsn0}
+    export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-hsn0,hsn1,hsn2,hsn3}
+    export NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL:-3}
+    export NCCL_MIN_NCHANNELS=${NCCL_MIN_NCHANNELS:-4}
+    export NCCL_MAX_NCHANNELS=${NCCL_MAX_NCHANNELS:-4}
+    export NCCL_NCHANNELS_PER_NET_PEER=${NCCL_NCHANNELS_PER_NET_PEER:-4}
+    export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
+    export NCCL_DEBUG_SUBSYS=${NCCL_DEBUG_SUBSYS:-INIT,NET}
+    export TORCH_NCCL_ASYNC_ERROR_HANDLING=${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}
+    if [[ -d "$AWS_OFI_RCCL_LIBDIR" ]]; then
+      export LD_LIBRARY_PATH="$AWS_OFI_RCCL_LIBDIR:${LD_LIBRARY_PATH:-}"
+    fi
+    if [[ -n "$NCCL_NET_PLUGIN_NAME" ]]; then
+      export NCCL_NET_PLUGIN="$NCCL_NET_PLUGIN_NAME"
+    else
+      unset NCCL_NET_PLUGIN
+    fi
+    if [[ -n "$NCCL_NET_BACKEND" ]]; then
+      export NCCL_NET="$NCCL_NET_BACKEND"
+    else
+      unset NCCL_NET
+    fi
+
+{% if num_infer_nodes > 0 -%}
+
+RUN_DONE_FILE="$OUTPUT_DIR/.run_complete_$SLURM_JOB_ID"
+if [ "$SLURM_PROCID" -lt "$NUM_INFER_NODES" ]; then
+    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
+    INFER_NODE_RANK=$SLURM_PROCID
+    export VLLM_WORKER_MULTIPROC_METHOD=spawn
+    LOCAL_IP=$(hostname -I | awk "{print \$1}")
+
+{%- if kv_offload %}
+    ulimit -l unlimited
+{%- endif %}
+{%- if kv_offload_mooncake %}
+{% include "_mooncake_store.sh.j2" %}
+{%- endif %}
+
+    REPLICA_IDX=$((INFER_NODE_RANK / NODES_PER_INFER_REPLICA))
+    RANK_IN_REPLICA=$((INFER_NODE_RANK % NODES_PER_INFER_REPLICA))
+
+    echo "INFER_NODE_RANK=$INFER_NODE_RANK REPLICA=$REPLICA_IDX RANK_IN_REPLICA=$RANK_IN_REPLICA LOCAL_IP=$LOCAL_IP" \
+        | tee $OUTPUT_DIR/logs/inference/node_${INFER_NODE_RANK}.log
+
+    CONFIG_PATH="$CONFIG_DIR/inference.toml"
+{% include '_launch_rank.sh.j2' %}
+{% include '_launch_router.sh.j2' %}
+
+{% if is_disaggregated -%}
+    # PD disaggregated: NIXL KV transfer + role-based inference
+    read -ra HOSTNAMES <<< "$HOSTNAMES_STR"
+{%- if use_deep_gemm %}
+    export VLLM_USE_DEEP_GEMM=1
+    export VLLM_MOE_USE_DEEP_GEMM=1
+{%- endif %}
+
+    # Bind gloo to the interface that owns LOCAL_IP (the rendezvous IP) — NIC
+    # names vary across clusters (bond0, eth0, ...). If the lookup fails, leave
+    # GLOO_SOCKET_IFNAME unset so gloo falls back to its own detection.
+    GLOO_IFNAME=$(ip -o -4 addr show to "$LOCAL_IP" 2>/dev/null | awk "{print \$2; exit}")
+    if [ -n "$GLOO_IFNAME" ]; then export GLOO_SOCKET_IFNAME=$GLOO_IFNAME; fi
+    export VLLM_ENGINE_READY_TIMEOUT_S=4200
+    export UCX_TLS=all
+    # Enumerate RDMA NICs for UCX/NIXL from sysfs (ibv_devices is not on the job
+    # PATH). Prefer InfiniBand ports and fall back to RoCE: "all" would also pick
+    # up non-functional devices (e.g. an Ethernet bond UCX cannot open), which
+    # fails NIXL backend creation. Hosts without RDMA devices keep "all" (TCP).
+    rdma_ports() {
+        for port in /sys/class/infiniband/*/ports/*; do
+            [ "$(cat "$port/link_layer" 2>/dev/null)" = "$1" ] || continue
+            grep -q ACTIVE "$port/state" 2>/dev/null || continue
+            dev=${port%/ports/*}
+            echo "$(basename "$dev"):$(basename "$port")"
+        done | paste -sd,
+    }
+    UCX_NET_DEVICES=$(rdma_ports InfiniBand)
+    [ -n "$UCX_NET_DEVICES" ] || UCX_NET_DEVICES=$(rdma_ports Ethernet)
+    export UCX_NET_DEVICES=${UCX_NET_DEVICES:-all}
+    export LD_LIBRARY_PATH="$PROJECT_DIR/third_party/ucx/lib:$PROJECT_DIR/third_party/ucx/lib/ucx:${LD_LIBRARY_PATH:-}"
+    export VLLM_NIXL_SIDE_CHANNEL_HOST=$LOCAL_IP
+    export VLLM_NIXL_SIDE_CHANNEL_PORT=5600
+
+    # The kv_transfer_config (NIXL transfer + any KV offload connector) is built in
+    # InferenceConfig.to_vllm() from the per-node config, so it is no longer assembled here.
+
+    DECODE_COMPILE_CFG='"'"'{"cudagraph_mode":"FULL_DECODE_ONLY"}'"'"'
+
+    REPLICA_BASE=$((REPLICA_IDX * NODES_PER_INFER_REPLICA))
+
+    if [ "$RANK_IN_REPLICA" -lt "$NUM_PREFILL_NODES" ]; then
+        ROLE="prefill"
+        SUB_REPLICA=$((RANK_IN_REPLICA / NODES_PER_PREFILL_REPLICA))
+        ROLE_RANK=$((RANK_IN_REPLICA % NODES_PER_PREFILL_REPLICA))
+        DP=$((NODES_PER_PREFILL_REPLICA * INFERENCE_DP_LOCAL))
+        PORT=$PREFILL_PORT
+        START_RANK=$((ROLE_RANK * INFERENCE_DP_LOCAL))
+        HEAD_HOST="${HOSTNAMES[$((REPLICA_BASE + SUB_REPLICA * NODES_PER_PREFILL_REPLICA))]}"
+{% for key, value in prefill_env_overrides.items() %}
+        export {{ key }}="{{ value }}"
+{% endfor %}
+        ROLE_EXTRA="\"all2all_backend\": \"deepep_high_throughput\"{{ prefill_vllm_extra_json }}"
+    else
+        export UCX_NET_DEVICES=mlx5_0:1
+        ROLE="decode"
+        RANK_IN_DECODE=$((RANK_IN_REPLICA - NUM_PREFILL_NODES))
+        SUB_REPLICA=$((RANK_IN_DECODE / NODES_PER_DECODE_REPLICA))
+        ROLE_RANK=$((RANK_IN_DECODE % NODES_PER_DECODE_REPLICA))
+        DP=$((NODES_PER_DECODE_REPLICA * INFERENCE_DP_LOCAL))
+        PORT=$DECODE_PORT
+        START_RANK=$((ROLE_RANK * INFERENCE_DP_LOCAL))
+        HEAD_HOST="${HOSTNAMES[$((REPLICA_BASE + NUM_PREFILL_NODES + SUB_REPLICA * NODES_PER_DECODE_REPLICA))]}"
+{% for key, value in decode_env_overrides.items() %}
+        export {{ key }}="{{ value }}"
+{% endfor %}
+        ROLE_EXTRA="\"all2all_backend\": \"deepep_low_latency\", \"compilation_config\": $DECODE_COMPILE_CFG{{ decode_vllm_extra_json }}"
+    fi
+
+    echo "ROLE=$ROLE REPLICA=$REPLICA_IDX SUB_REPLICA=$SUB_REPLICA ROLE_RANK=$ROLE_RANK DP=$DP PORT=$PORT" \
+        | tee -a $OUTPUT_DIR/logs/inference/node_${INFER_NODE_RANK}.log
+
+    # Start the router on the first node of each replica (PD mode, external LB across per-rank endpoints)
+    if [ "$RANK_IN_REPLICA" -eq 0 ]; then
+        REPLICA_ROUTER_ARGS=$(echo "$ALL_ROUTER_ARGS" | cut -d"|" -f$((REPLICA_IDX + 1)))
+        launch_router pd "$REPLICA_ROUTER_ARGS" "$ROUTER_PORT" "{{ router.policy }}" "$OUTPUT_DIR/logs/inference/router_${REPLICA_IDX}.log" "$REPLICA_IDX" "$REPLICA_BASE"
+    fi
+{%- if router.type == "llm-d" %}
+    # pd-sidecar on each decode node: EPP routes decode -> sidecar (DECODE_SIDECAR_PORT
+    # + rank) -> vLLM decode (DECODE_PORT + rank) after orchestrating remote prefill.
+    # Every decode node fronts its own local ranks, so launch on each (not just the
+    # replica head), or decode nodes beyond the head get advertised but unserved endpoints.
+    if [ "$ROLE" = "decode" ]; then
+        SIDECAR_LOG="$OUTPUT_DIR/logs/inference/sidecar_${INFER_NODE_RANK}.log"
+        echo "Starting pd-sidecar on $LOCAL_IP:$DECODE_SIDECAR_PORT(+rank) -> vLLM $DECODE_PORT(+rank)" | tee $SIDECAR_LOG
+        export PATH="$PROJECT_DIR/third_party/llmd/bin:$PATH"
+        pd-sidecar \
+            --port $DECODE_SIDECAR_PORT \
+            --vllm-port $DECODE_PORT \
+            --kv-connector nixlv2 \
+            --secure-proxy=false \
+            --enable-ssrf-protection=false \
+            --inference-pool prime-rl \
+            --data-parallel-size $INFERENCE_DP_LOCAL \
+            >> $SIDECAR_LOG 2>&1 &
+    fi
+{%- endif %}
+
+    # External-LB: one vLLM API server per local DP rank (PORT + k), each pinned to its TP
+    # slice of GPUs with a unique NIXL side-channel port. Each role is its own external-LB DP
+    # group rooted on the role-replica head (HEAD_HOST); the router balances across the per-rank
+    # endpoints. The kv_transfer_config is built in InferenceConfig.to_vllm() from the config.
+    if [ "$ROLE_RANK" -eq 0 ]; then DP_ADDR=$LOCAL_IP; else DP_ADDR=$HEAD_HOST; fi
+    for k in $(seq 0 $((INFERENCE_DP_LOCAL - 1))); do
+        GLOBAL_RANK=$((START_RANK + k))
+        RANK_GPUS=$(seq -s, $((k * INFERENCE_TP)) $((k * INFERENCE_TP + INFERENCE_TP - 1)))
+        RANK_EXTRA="{\"data_parallel_address\": \"$DP_ADDR\", \"data_parallel_rank\": $GLOBAL_RANK, $ROLE_EXTRA}"
+        launch_inference_rank "$((PORT + k))" "$RANK_GPUS" "$DP" "$INFERENCE_DATA_PARALLEL_RPC_PORT" "$RANK_EXTRA" "$((5600 + k))" "$(rank_log "$INFER_NODE_RANK" "$k")"
+    done
+{%- else -%}
+    # Start the router on the first node of each replica
+    if [ "$RANK_IN_REPLICA" -eq 0 ]; then
+        REPLICA_ROUTER_ARGS=$(echo "$ALL_ROUTER_ARGS" | cut -d"|" -f$((REPLICA_IDX + 1)))
+        launch_router regular "$REPLICA_ROUTER_ARGS" "$ROUTER_PORT" "{{ router.policy }}" "$OUTPUT_DIR/logs/inference/router_${REPLICA_IDX}.log" "$REPLICA_IDX" "$((REPLICA_IDX * NODES_PER_INFER_REPLICA))" "$NODES_PER_INFER_REPLICA"
+    fi
+
+    # External-LB: one vLLM API server per DP rank on this node (BACKEND_PORT + d),
+    # each pinned to its TP slice of GPUs; the router balances across the per-rank
+    # endpoints. For MoE the ranks form one external-LB DP group (EP all2all spans
+    # them) rooted on the replica-head DP coordinator. data_parallel_address is
+    # per-node, not per-rank: every rank on the head reaches the coordinator via the
+    # head LOCAL_IP, ranks on other nodes via the head hostname (matches the P/D path).
+    read -ra HOSTNAMES <<< "$HOSTNAMES_STR"
+    REPLICA_HEAD_HOST="${HOSTNAMES[$((REPLICA_IDX * NODES_PER_INFER_REPLICA))]}"
+    INFER_GROUP_DP=$((NODES_PER_INFER_REPLICA * INFERENCE_DP_LOCAL))
+    if [ "$RANK_IN_REPLICA" -eq 0 ]; then DP_ADDR="$LOCAL_IP"; else DP_ADDR="$REPLICA_HEAD_HOST"; fi
+    for ((d=0; d<INFERENCE_DP_LOCAL; d++)); do
+        RANK_GPUS=$(seq -s, $((d * INFERENCE_TP)) $((d * INFERENCE_TP + INFERENCE_TP - 1)))
+        RANK_LOG=$(rank_log "$INFER_NODE_RANK" "$d")
+        if [ "$INFERENCE_ENABLE_EXPERT_PARALLEL" -eq 1 ]; then
+            if [ "$INFER_GROUP_DP" -gt 1 ]; then
+                GLOBAL_DP_RANK=$((RANK_IN_REPLICA * INFERENCE_DP_LOCAL + d))
+                RANK_EXTRA="{\"data_parallel_rank\": $GLOBAL_DP_RANK, \"data_parallel_address\": \"$DP_ADDR\"}"
+                launch_inference_rank "$((BACKEND_PORT + d))" "$RANK_GPUS" "$INFER_GROUP_DP" "$INFERENCE_DATA_PARALLEL_RPC_PORT" "$RANK_EXTRA" "" "$RANK_LOG"
+            else
+                # Single-node/single-DP MoE replica: keep EP enabled but do not
+                # pass external-LB DP fields, which vLLM rejects when dp == 1.
+                launch_inference_rank "$((BACKEND_PORT + d))" "$RANK_GPUS" 1 "" "" "" "$RANK_LOG"
+            fi
+        else
+            # Dense: independent single-engine servers (no DP linkage).
+            launch_inference_rank "$((BACKEND_PORT + d))" "$RANK_GPUS" 1 "" "" "" "$RANK_LOG"
+        fi
+        sleep "${INFERENCE_RANK_STARTUP_STAGGER_SECONDS:-3}"
+    done
+
+    # A successful trainer exit cannot trigger srun --kill-on-bad-exit. Watch
+    # the shared completion sentinel so inference nodes also leave cleanly.
+    (
+        while [ ! -f "$RUN_DONE_FILE" ]; do sleep 5; done
+        echo "[$(hostname)] trainer completed - stopping inference"
+    ) &
+{%- endif %}
+
+else
+    TRAIN_NODE_RANK=$((SLURM_PROCID - NUM_INFER_NODES))
+{%- else %}
+    TRAIN_NODE_RANK=$SLURM_PROCID
+{%- endif %}
+
+    if [[ "${PRIME_RL_HF_HUB_OFFLINE:-0}" = "1" ]]; then
+        export HF_HUB_OFFLINE=1
+    fi
+
+    # This is required for compilation to work correctly
+    export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
+    echo $HOSTNAMES_STR | tee $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log
+
+    WANDB_SHARED_LABEL=trainer uv run torchrun \
+        --role=trainer \
+        --nnodes=$NUM_TRAIN_NODES \
+        --nproc-per-node=$GPUS_PER_NODE \
+        --node-rank=$TRAIN_NODE_RANK \
+        --rdzv-endpoint=$MASTER_ADDR:$MASTER_PORT \
+        --rdzv-id=job_$SLURM_JOB_ID \
+        --log-dir=$OUTPUT_DIR/logs/trainer/torchrun \
+        --tee=3 \
+        --redirects=3 \
+        --local-ranks-filter={{ ranks_filter }} \
+        -m prime_rl.trainer.rl.train \
+        @ $CONFIG_DIR/trainer.toml \
+        2>&1 | sed -u 's/^\[[a-zA-Z]*[0-9]*\]://' | tee -a $OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log &
+    TRAINER_PID=$!
+{% if num_infer_nodes > 0 %}    fi{% endif %}
+{% if num_infer_nodes > 0 %}
+# Launch the orchestrator on one node. Default is trainer rank 0 (SLURM_PROCID ==
+# NUM_INFER_NODES). With orchestrator_on_inference it moves to the last inference node
+# (a decode node) to keep its rollout buffer + env workers off host-RAM-saturated
+# trainer nodes. Top-level (after the role if/else) so the wait -n teardown covers it.
+{% if orchestrator_on_inference %}ORCH_PROCID=$((NUM_INFER_NODES - 1)){% else %}ORCH_PROCID=$NUM_INFER_NODES{% endif %}
+if [ "$SLURM_PROCID" -eq "$ORCH_PROCID" ]; then
+    ORCHESTRATOR_ARGS="@ $CONFIG_DIR/orchestrator.toml"
+    ORCHESTRATOR_ARGS="$ORCHESTRATOR_ARGS --model.client.base-url $INFER_URLS"
+    ORCHESTRATOR_ARGS="$ORCHESTRATOR_ARGS --model.client.admin-base-url $ADMIN_URLS"
+    {% if use_nccl_broadcast %}ORCHESTRATOR_ARGS="$ORCHESTRATOR_ARGS --weight_broadcast.host $MASTER_ADDR"
+    {% endif %}WANDB_SHARED_LABEL=orchestrator uv run orchestrator $ORCHESTRATOR_ARGS \
+        2>&1 | tee $OUTPUT_DIR/logs/orchestrator.log &
+    ORCHESTRATOR_PID=$!
+fi
+{% endif %}
+
+# Wait for the first background job to exit and propagate its exit code. This
+# turns background process crashes (router, orchestrator) into task failures
+# that --kill-on-bad-exit=1 can broadcast to the other nodes so the whole job
+# tears down instead of leaving zombies holding the allocation.
+wait -n
+EXIT_CODE=$?
+{% if num_infer_nodes > 0 and not orchestrator_on_inference %}# A successful orchestrator exit means rollout production is complete, but the
+# co-located trainer can still be applying the final optimizer step. Keep the
+# task alive until that trainer exits so normal completion does not kill it.
+if [ "$EXIT_CODE" -eq 0 ] && [ "$SLURM_PROCID" -eq "$ORCH_PROCID" ] \
+        && ! kill -0 "$ORCHESTRATOR_PID" 2>/dev/null; then
+    echo "[$(hostname)] orchestrator completed - waiting for the trainer to finish"
+    wait "$TRAINER_PID"
+    EXIT_CODE=$?
+fi
+{% endif %}{% if num_infer_nodes > 0 %}# Trainer rank 0 owns successful cross-node completion. The job-specific name
+# prevents a stale sentinel from an earlier run from stopping new inference.
+if [ "$EXIT_CODE" -eq 0 ] && [ "$SLURM_PROCID" -eq "$NUM_INFER_NODES" ] \
+        && ! kill -0 "$TRAINER_PID" 2>/dev/null; then
+    touch "$RUN_DONE_FILE"
+fi
+{% endif %}REMAINING_PIDS=$(jobs -p)
+{%- if cleanup_grace_period %}
+# Cross-node teardown is driven by `srun --kill-on-bad-exit=1`, which reaps peer
+# tasks only once a task *exits* non-zero. So on a non-zero exit (crash, SIGTERM,
+# wall-time) we stay alive for the grace period and signal nothing: this lets an
+# in-flight trainer checkpoint on this node finish, and — because the task has
+# not exited yet — keeps --kill-on-bad-exit from reaping checkpointing trainers
+# on peer nodes. We then propagate the exit code so the allocation tears down. A
+# clean (zero) exit cannot trip --kill-on-bad-exit, so we tear down immediately.
+if [ "$EXIT_CODE" -ne 0 ]; then
+    echo "[$(hostname)] component exited with code $EXIT_CODE - waiting up to {{ cleanup_grace_period }}s for in-flight checkpoints to flush before teardown"
+    sleep {{ cleanup_grace_period }}
+fi
+{%- endif %}
+echo "[$(hostname)] tearing down (exit code $EXIT_CODE) - terminating remaining processes"
+for pid in $REMAINING_PIDS; do
+    kill -TERM $pid 2>/dev/null || true
+done
+exit $EXIT_CODE
+'

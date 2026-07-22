@@ -15,7 +15,14 @@ def disable_nccl_p2p_if_unavailable() -> None:
     Uses pynvml to check physical GPU topology, which works regardless of
     CUDA_VISIBLE_DEVICES restrictions on the current process.
     """
-    pynvml.nvmlInit()
+    try:
+        pynvml.nvmlInit()
+    except pynvml.NVMLError as exc:
+        get_logger().warning(
+            f"Unable to inspect NVLink topology with NVML ({exc}); leaving NCCL P2P/SHM settings unchanged."
+        )
+        return
+
     try:
         n = pynvml.nvmlDeviceGetCount()
         if n < 2:
@@ -38,5 +45,12 @@ def disable_nccl_p2p_if_unavailable() -> None:
                 "No NVLink detected, disabling NCCL P2P and SHM transports. "
                 "Override by setting NCCL_P2P_DISABLE=0 and NCCL_SHM_DISABLE=0 explicitly."
             )
+    except pynvml.NVMLError as exc:
+        get_logger().warning(
+            f"Unable to inspect NVLink topology with NVML ({exc}); leaving NCCL P2P/SHM settings unchanged."
+        )
     finally:
-        pynvml.nvmlShutdown()
+        try:
+            pynvml.nvmlShutdown()
+        except pynvml.NVMLError:
+            pass

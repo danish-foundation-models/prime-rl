@@ -1,0 +1,42 @@
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training/lumi-rl-single-node"
+max_steps = 5
+seq_len = 2048
+
+[model]
+name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
+
+[deployment]
+type = "single_node"
+gpus_per_node = 8
+num_train_gpus = 1
+num_infer_gpus = 1
+
+[trainer.model]
+attn = "sdpa"
+
+[orchestrator]
+batch_size = 128
+group_size = 16
+
+[orchestrator.train.sampling]
+max_completion_tokens = 128
+
+[[orchestrator.train.env]]
+id = "reverse-text"
+
+[trainer.optim]
+lr = 3e-6
+
+[ckpt]
+
+[inference]
+
+[orchestrator.renderer]
+name = "default"
+
+[slurm]
+job_name = "prime-rl-rl-lumi"
+account = "project_465002751"
+project_dir = "."
+partition = "standard-g"
+template_path = "src/prime_rl/templates/lumi/single_node_rl_lumi.sbatch.j2"

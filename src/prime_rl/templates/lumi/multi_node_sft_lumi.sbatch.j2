@@ -1,0 +1,154 @@
+#!/bin/bash
+
+#SBATCH --job-name={{ job_name }}
+#SBATCH --nodes={{ num_nodes }}
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=56
+#SBATCH --gpus-per-node={{ gpus_per_node }}
+#SBATCH --partition={{ partition }}
+#SBATCH --account={{ account or "project_465002751" }}
+{%- if time %}
+#SBATCH --time={{ time }}
+{%- else %}
+#SBATCH --time=24:00:00
+{%- endif %}
+{%- if nodelist %}
+#SBATCH --nodelist={{ nodelist }}
+{%- endif %}
+{%- if exclude %}
+#SBATCH --exclude={{ exclude }}
+{%- endif %}
+#SBATCH --mem=0
+#SBATCH --exclusive=user
+#SBATCH --hint=nomultithread
+#SBATCH --output={{ output_dir }}/job_%j.log
+#SBATCH --error={{ output_dir }}/job_%j.log
+
+set -euo pipefail
+
+export PROJECT_DIR={{ project_dir }}
+export CONFIG_PATH={{ config_path }}
+export OUTPUT_DIR={{ output_dir }}
+export NUM_NODES={{ num_nodes }}
+export GPUS_PER_NODE={{ gpus_per_node }}
+
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
+UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
+XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$LUMI_ROOT/.cache}
+WANDB_CACHE_DIR=${PRIME_RL_WANDB_CACHE_DIR:-$LUMI_ROOT/.cache/wandb}
+WANDB_CONFIG_DIR=${PRIME_RL_WANDB_CONFIG_DIR:-$LUMI_ROOT/.cache/wandb-config}
+MPLCONFIGDIR=${PRIME_RL_MPLCONFIGDIR:-$LUMI_ROOT/.cache/matplotlib}
+TMPDIR=${PRIME_RL_TMPDIR:-$LUMI_ROOT/tmp/$SLURM_JOB_ID}
+POST_ROOT=${POST_ROOT:-$LUMI_ROOT/post}
+export PRIME_RL_RUNTIME_HF_HOME=$HF_HOME
+export PRIME_RL_RUNTIME_UV_CACHE_DIR=$UV_CACHE_DIR
+export PRIME_RL_RUNTIME_XDG_CACHE_HOME=$XDG_CACHE_HOME
+export PRIME_RL_RUNTIME_WANDB_CACHE_DIR=$WANDB_CACHE_DIR
+export PRIME_RL_RUNTIME_WANDB_CONFIG_DIR=$WANDB_CONFIG_DIR
+export PRIME_RL_RUNTIME_MPLCONFIGDIR=$MPLCONFIGDIR
+export PRIME_RL_RUNTIME_TMPDIR=$TMPDIR
+
+[[ -f "$SIF" ]] || {
+  echo "FATAL: SIF not found: $SIF" >&2
+  exit 1
+}
+
+mkdir -p "$OUTPUT_DIR/logs/trainer" "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" \
+  "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR" "$MPLCONFIGDIR" "$TMPDIR"
+ln -sfn trainer/node_0.log "$OUTPUT_DIR/logs/trainer.log"
+
+export SIF LUMI_ROOT
+PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
+export PRIME_RL_METADATA_DIR HF_HOME UV_CACHE_DIR XDG_CACHE_HOME
+export WANDB_CACHE_DIR WANDB_CONFIG_DIR MPLCONFIGDIR TMPDIR POST_ROOT
+
+SING_BIND_ARGS=(
+  -B "$PROJECT_DIR:/workdir"
+  -B /scratch/project_465002751:/scratch/project_465002751
+)
+
+HOSTNAMES=( $(scontrol show hostnames "$SLURM_JOB_NODELIST") )
+export HOSTNAMES_STR="${HOSTNAMES[*]}"
+export MASTER_ADDR=${HOSTNAMES[0]}
+export MASTER_PORT=29500
+echo "HOSTNAMES=${HOSTNAMES[*]}"
+echo "MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT"
+
+{% if pre_run_command %}
+{{ pre_run_command }}
+{% endif %}
+
+srun bash -s <<'CLEANUP_SH'
+  pkill -9 -f "[p]ython.*prime_rl" 2>/dev/null || true
+  pkill -9 -f "[t]orchrun" 2>/dev/null || true
+  pkill -9 -f "[p]rime_rl" 2>/dev/null || true
+  rm -rf /dev/shm/vllm-* /dev/shm/vllm_* /tmp/torch-* /tmp/torchelastic_* 2>/dev/null || true
+CLEANUP_SH
+
+srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
+  set -euo pipefail
+  set -o pipefail
+
+  export PROJECT_DIR=/workdir
+  cd $PROJECT_DIR
+  set -a
+  for ENV_FILE in "$POST_ROOT/.env" /workdir/.env; do
+    [[ -f "$ENV_FILE" ]] && source "$ENV_FILE"
+  done
+  set +a
+
+  export PATH="$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:$PATH"
+  export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:$PRIME_RL_METADATA_DIR
+  export PYTHONNOUSERSITE=1
+  export HF_HOME=$PRIME_RL_RUNTIME_HF_HOME
+  export UV_CACHE_DIR=$PRIME_RL_RUNTIME_UV_CACHE_DIR
+  export XDG_CACHE_HOME=$PRIME_RL_RUNTIME_XDG_CACHE_HOME
+  export WANDB_CACHE_DIR=$PRIME_RL_RUNTIME_WANDB_CACHE_DIR
+  export WANDB_CONFIG_DIR=$PRIME_RL_RUNTIME_WANDB_CONFIG_DIR
+  export MPLCONFIGDIR=$PRIME_RL_RUNTIME_MPLCONFIGDIR
+  export TMPDIR="$PRIME_RL_RUNTIME_TMPDIR/$SLURM_PROCID"
+  export TRITON_CACHE_DIR="$TMPDIR/triton"
+  mkdir -p "$TMPDIR" "$TRITON_CACHE_DIR"
+
+  if [[ -n "${ROCR_VISIBLE_DEVICES:-}" && -z "${HIP_VISIBLE_DEVICES:-}" ]]; then
+    export HIP_VISIBLE_DEVICES=$ROCR_VISIBLE_DEVICES
+  fi
+  if [[ -n "${HIP_VISIBLE_DEVICES:-}" && -z "${ROCR_VISIBLE_DEVICES:-}" ]]; then
+    export ROCR_VISIBLE_DEVICES=$HIP_VISIBLE_DEVICES
+  fi
+
+  export FI_PROVIDER=${FI_PROVIDER:-cxi}
+  export FI_PROVIDER_NAME=${FI_PROVIDER_NAME:-cxi}
+  export FI_CXI_DISABLE_HMEM=${FI_CXI_DISABLE_HMEM:-1}
+  export FI_CXI_DISABLE_HMEM_FLAG=${FI_CXI_DISABLE_HMEM_FLAG:-1}
+  export GLOO_SOCKET_IFNAME=${GLOO_SOCKET_IFNAME:-hsn0}
+  export NCCL_SOCKET_IFNAME=${NCCL_SOCKET_IFNAME:-hsn0,hsn1,hsn2,hsn3}
+  export NCCL_NET_GDR_LEVEL=${NCCL_NET_GDR_LEVEL:-3}
+  export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
+  export TORCH_NCCL_ASYNC_ERROR_HANDLING=${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}
+  export PYTORCH_ALLOC_CONF=expandable_segments:True
+  ulimit -n 65536
+
+{% for key, value in trainer_env_vars.items() %}
+  export {{ key }}="{{ value }}"
+{% endfor %}
+
+  TRAIN_NODE_RANK=$SLURM_PROCID
+  echo "$HOSTNAMES_STR" | tee "$OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log"
+  /opt/venv/bin/torchrun \
+    --role=trainer \
+    --nnodes=$NUM_NODES \
+    --nproc-per-node=$GPUS_PER_NODE \
+    --node-rank=$TRAIN_NODE_RANK \
+    --rdzv-endpoint=$MASTER_ADDR:$MASTER_PORT \
+    --rdzv-id=job_$SLURM_JOB_ID \
+    --log-dir=$OUTPUT_DIR/logs/trainer/torchrun \
+    --tee=3 \
+    --redirects=3 \
+    --local-ranks-filter={{ ranks_filter }} \
+    -m prime_rl.trainer.sft.train \
+    @ "$CONFIG_PATH" \
+    2>&1 | sed -u "s/^\\[[a-zA-Z]*[0-9]*\\]://" | tee -a "$OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log"
+'

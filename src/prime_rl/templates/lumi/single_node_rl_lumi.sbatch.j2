@@ -1,0 +1,118 @@
+#!/bin/bash
+
+#SBATCH --job-name={{ job_name }}
+#SBATCH --account={{ account or "project_465002751" }}
+#SBATCH --partition={{ partition }}
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=56
+#SBATCH --gpus-per-node={{ gpus_per_node }}
+#SBATCH --mem=0
+{%- if time %}
+#SBATCH --time={{ time }}
+{%- else %}
+#SBATCH --time=24:00:00
+{%- endif %}
+#SBATCH --exclusive=user
+#SBATCH --hint=nomultithread
+#SBATCH --output={{ output_dir }}/job_%j.log
+#SBATCH --error={{ output_dir }}/job_%j.err
+
+set -euo pipefail
+
+PROJECT_DIR={{ project_dir }}
+CONFIG_PATH={{ config_path }}
+
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+HOST_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache}
+CONTAINER_CACHE_DIR=$HOST_CACHE_DIR
+HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
+UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$CONTAINER_CACHE_DIR/uv}
+XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$CONTAINER_CACHE_DIR}
+WANDB_CACHE_DIR=${PRIME_RL_WANDB_CACHE_DIR:-$CONTAINER_CACHE_DIR/wandb}
+WANDB_CONFIG_DIR=${PRIME_RL_WANDB_CONFIG_DIR:-$CONTAINER_CACHE_DIR/wandb-config}
+MPLCONFIGDIR=${PRIME_RL_MPLCONFIGDIR:-$CONTAINER_CACHE_DIR/matplotlib}
+TMPDIR=${PRIME_RL_TMPDIR:-$LUMI_ROOT/tmp/$SLURM_JOB_ID}
+POST_ROOT=${POST_ROOT:-$LUMI_ROOT/post}
+
+if [[ ! -f "$SIF" ]]; then
+  echo "FATAL: SIF not found: $SIF" >&2
+  exit 1
+fi
+
+mkdir -p {{ output_dir }}
+mkdir -p "$HF_HOME" "$HOST_CACHE_DIR/uv" "$HOST_CACHE_DIR/wandb" "$HOST_CACHE_DIR/wandb-config" "$HOST_CACHE_DIR/matplotlib" "$TMPDIR"
+export PROJECT_DIR SIF LUMI_ROOT
+PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
+export PRIME_RL_METADATA_DIR
+
+SING_BIND_ARGS=(
+  -B "$PROJECT_DIR:/workdir"
+  -B /scratch/project_465002751:/scratch/project_465002751
+)
+
+load_dotenv_for_cleanup() {
+  set +u
+  set -a
+  if [[ -f "$POST_ROOT/.env" ]]; then source "$POST_ROOT/.env"; fi
+  if [[ -f "$PROJECT_DIR/.env" ]]; then source "$PROJECT_DIR/.env"; fi
+  set +a
+  set -u
+}
+
+cleanup_remote_sandboxes() {
+  status=$?
+  load_dotenv_for_cleanup
+  if [[ -n "${UCLOUD_SANDBOX_API_URL:-}" && -n "${UCLOUD_SANDBOX_API_TOKEN:-}" && -f "$CONFIG_PATH" ]]; then
+    echo "+ Cleaning UCloud sandboxes for $CONFIG_PATH"
+    singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
+      set -euo pipefail
+      export PATH="$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:$PATH"
+      source /workdir/scripts/lumi_runtime_env.sh
+      prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR"
+      python /workdir/scripts/cleanup_ucloud_sandboxes.py --config "$1"
+    ' cleanup-ucloud "$CONFIG_PATH" || true
+  fi
+  exit "$status"
+}
+trap cleanup_remote_sandboxes EXIT
+
+RANK_CMD="
+set -euo pipefail
+set -a
+if [[ -f $POST_ROOT/.env ]]; then source $POST_ROOT/.env; fi
+if [[ -f /workdir/.env ]]; then source /workdir/.env; fi
+set +a
+export PATH=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:\$PATH
+source /workdir/scripts/lumi_runtime_env.sh
+prime_rl_lumi_export_pythonpath $PRIME_RL_METADATA_DIR
+export PYTHONNOUSERSITE=1
+if [[ -n \"\${ROCR_VISIBLE_DEVICES:-}\" && -z \"\${HIP_VISIBLE_DEVICES:-}\" ]]; then
+  export HIP_VISIBLE_DEVICES=\"\${ROCR_VISIBLE_DEVICES}\"
+fi
+if [[ -n \"\${HIP_VISIBLE_DEVICES:-}\" && -z \"\${ROCR_VISIBLE_DEVICES:-}\" ]]; then
+  export ROCR_VISIBLE_DEVICES=\"\${HIP_VISIBLE_DEVICES}\"
+fi
+if [[ -n \"\${SSL_CERT_FILE:-}\" && ! -f \"\${SSL_CERT_FILE}\" ]]; then
+  unset SSL_CERT_FILE
+fi
+if [[ -n \"\${SSL_CERT_DIR:-}\" && ! -d \"\${SSL_CERT_DIR}\" ]]; then
+  unset SSL_CERT_DIR
+fi
+export HF_HOME=\"$HF_HOME\"
+export UV_CACHE_DIR=\"$UV_CACHE_DIR\"
+export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\"
+export WANDB_CACHE_DIR=\"$WANDB_CACHE_DIR\"
+export WANDB_CONFIG_DIR=\"$WANDB_CONFIG_DIR\"
+export MPLCONFIGDIR=\"$MPLCONFIGDIR\"
+export TMPDIR=\"$TMPDIR\"
+export TRITON_CACHE_DIR=\"$TMPDIR/triton\"
+export WANDB_MODE=online
+export UV_NO_SYNC=1
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+cd /workdir
+rl @ \"$CONFIG_PATH\"
+"
+
+singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"
