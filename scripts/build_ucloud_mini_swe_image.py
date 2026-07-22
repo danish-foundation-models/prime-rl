@@ -12,7 +12,6 @@ import textwrap
 import time
 from pathlib import Path
 
-
 DEFAULT_MINI_VERSION = "2.2.8"
 DEFAULT_UV_IMAGE = "ghcr.io/astral-sh/uv:0.8.17"
 
@@ -223,9 +222,12 @@ def _main() -> int:
         (context / "Dockerfile").write_text(dockerfile)
         client = SandboxClient(
             base_url,
-            headers={"Authorization": f"Bearer {token}"},
+            api_token=token,
             timeout_seconds=max(300, args.timeout_seconds),
         )
+        prepare_builder = getattr(client, "prepare_builder", None)
+        if callable(prepare_builder):
+            prepare_builder(count=1, ttl_seconds=1200)
         image = Image.from_dockerfile(
             name=image_id,
             tag=args.tag,

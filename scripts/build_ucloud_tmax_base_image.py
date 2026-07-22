@@ -9,10 +9,9 @@ import textwrap
 import time
 from pathlib import Path
 
-
 DEFAULT_BASE_IMAGE = "ucloud-sandbox-registry:5000/prime-rl/mini-swe-python311:mswe-2.2.8"
-DEFAULT_TAG = "ucloud-sandbox-registry:5000/prime-rl/tmax-mini-base:mswe-2.2.8-r1"
-DEFAULT_IMAGE_ID = "prime-rl-tmax-mini-base-mswe-2-2-8-r1"
+DEFAULT_TAG = "ucloud-sandbox-registry:5000/prime-rl/tmax-mini-base:mswe-2.2.8-r5"
+DEFAULT_IMAGE_ID = "prime-rl-tmax-mini-base-mswe-2-2-8-r5"
 DEFAULT_MINI_VERSION = "2.2.8"
 
 
@@ -56,7 +55,11 @@ def _dockerfile(base_image: str) -> str:
             "python3-venv",
             "rustc",
             "sqlite3",
+            "sudo",
             "tesseract-ocr",
+            "unzip",
+            "wget",
+            "zip",
         ]
     )
     return textwrap.dedent(
@@ -71,9 +74,22 @@ def _dockerfile(base_image: str) -> str:
         RUN set -eux; \\
             apt-get -o Acquire::Retries=3 update -qq; \\
             apt-get -o Acquire::Retries=3 install -y -qq {apt_packages}; \\
-            mkdir -p /logs/agent /mini-swe-agent /home/user /app; \\
+            id user >/dev/null 2>&1 || useradd -m -s /bin/bash user; \\
+            mkdir -p /logs/agent /mini-swe-agent /home/user /app /task /opt/rust /usr/local/go /opt/tmax-python; \\
+            printf '%s\\n' \\
+              'try:' \\
+              '    from scapy.config import conf, Conf' \\
+              'except Exception:' \\
+              '    pass' \\
+              'else:' \\
+              '    conf.ipv6_enabled = False' \\
+              '    Conf.ipv6_enabled = False' \\
+              >/opt/tmax-python/sitecustomize.py; \\
+            printf '%s\\n' 'user ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/90-prime-rl-user; \\
+            chmod 0440 /etc/sudoers.d/90-prime-rl-user; \\
             /usr/local/bin/mini --help >/dev/null; \\
-            chmod -R a+rwX /home/user /app /logs /mini-swe-agent; \\
+            chown -R user:user /home/user /app /logs /mini-swe-agent /task /opt/rust /usr/local/go /opt/tmax-python || true; \\
+            chmod -R a+rwX /home/user /app /logs /mini-swe-agent /task /opt /usr/local; \\
             rm -rf /var/lib/apt/lists/*
         """
     )
@@ -145,7 +161,7 @@ def main() -> int:
         (context / "Dockerfile").write_text(dockerfile)
         client = SandboxClient(
             base_url,
-            headers={"Authorization": f"Bearer {token}"},
+            api_token=token,
             timeout_seconds=max(300, args.timeout_seconds),
         )
         prepare_builder = getattr(client, "prepare_builder", None)
