@@ -74,6 +74,26 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{"model": "Qwen/Qwen3-0.6B", "messages": [{"role": "user", "content": "Hi"}], "max_tokens": 50}'
 ```
 
+On LUMI, launch through `scripts/lumi_submit_rl.sh` or
+`scripts/lumi_submit_sft.sh`. They use the immutable dependency SIF without
+`--rocm` or an overlay, while the checkout remains authoritative on
+`PYTHONPATH`. `scripts/lumi_prepare_runtime.sh` supplies the distribution
+metadata required for vLLM plugin discovery. Set `CONFIG` to select an
+experiment and keep its `output_dir` beneath
+`/scratch/project_465002751/rasmus/artifacts/training`.
+
+Nemotron 3 Super runs on the current LUMI image use Triton 3.7's compiler fix
+for the ROCm SSD chunk-scan kernel. Do not set
+`PRIME_RL_PATCH_VLLM_SSD_CHUNK_SCAN` or enable the old branch-local kernel
+workaround. When the operational image changes, verify its Triton version and
+run a normal TP=8 Nemotron inference smoke before a scale run.
+
+For multi-node LUMI RL, a clean co-located orchestrator exit can precede the
+trainer's final optimizer step. Keep the launcher supervision that waits for
+the trainer in this case; do not treat orchestrator completion as a reason to
+terminate the remaining trainer process. Trainer rank 0 must then publish the
+job-scoped completion sentinel so separate inference nodes tear down cleanly.
+
 - Config: `InferenceConfig` (`packages/prime-rl-configs/src/prime_rl/configs/inference.py`)
 - Entrypoint: `src/prime_rl/entrypoints/inference.py`
 - SLURM: single-node, multi-node, and disaggregated deployments

@@ -1,17 +1,28 @@
-toml_files = ["../../examples/reverse_text/sft.toml"]
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training/lumi-sft-single-node"
+max_steps = 100
 
-output_dir = "/flash/project_465002183/prime-rl/outputs/lumi-sft-single-node"
+[ckpt]
+
+[model]
+name = "PrimeIntellect/Qwen3-0.6B"
+attn = "sdpa"
+
+[data]
+name = "willcb/R1-reverse-wikipedia-paragraphs-v1-1000"
+seq_len = 4096
+batch_size = 32
+
+[optim]
+lr = 2e-5
 
 [deployment]
 type = "single_node"
 gpus_per_node = 8
 num_gpus = 1
 
-[model]
-attn = "sdpa"
-
 [slurm]
 job_name = "prime-rl-sft-lumi"
+account = "project_465002751"
 project_dir = "."
 partition = "standard-g"
 template_path = "src/prime_rl/templates/lumi/single_node_sft_lumi.sbatch.j2"

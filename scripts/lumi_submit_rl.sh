@@ -5,32 +5,71 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 set -a
-for ENV_FILE in "$REPO_DIR/../../.env" "$REPO_DIR/.env"; do
+for ENV_FILE in "$REPO_DIR/../post/.env" "$REPO_DIR/.env"; do
   if [[ -f "$ENV_FILE" ]]; then
     source "$ENV_FILE"
   fi
 done
 set +a
 
-FLASH_PROJECT_ROOT=${FLASH_PROJECT_ROOT:-/flash/project_465002183}
-HF_HOME=${HF_HOME:-$FLASH_PROJECT_ROOT/.cache/huggingface}
-UV_CACHE_DIR=${UV_CACHE_DIR:-$FLASH_PROJECT_ROOT/.cache/uv}
-UV_NO_SYNC=${UV_NO_SYNC:-1}
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
+UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
+XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$LUMI_ROOT/.cache}
+WANDB_CACHE_DIR=${PRIME_RL_WANDB_CACHE_DIR:-$LUMI_ROOT/.cache/wandb}
+WANDB_CONFIG_DIR=${PRIME_RL_WANDB_CONFIG_DIR:-$LUMI_ROOT/.cache/wandb-config}
+MPLCONFIGDIR=${PRIME_RL_MPLCONFIGDIR:-$LUMI_ROOT/.cache/matplotlib}
+TMPDIR=${PRIME_RL_TMPDIR:-$LUMI_ROOT/tmp/submit}
 CONFIG=${CONFIG:-$REPO_DIR/configs/lumi/rl_single_node.toml}
-ORCH_USE_TOKEN_CLIENT=${ORCH_USE_TOKEN_CLIENT:-}
 
-mkdir -p "$HF_HOME" "$UV_CACHE_DIR"
+mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR" "$MPLCONFIGDIR" "$TMPDIR"
 
-export FLASH_PROJECT_ROOT
-export HF_HOME
-export UV_CACHE_DIR
-export UV_NO_SYNC
-export ORCH_USE_TOKEN_CLIENT
+export LUMI_ROOT SIF HF_HOME UV_CACHE_DIR XDG_CACHE_HOME WANDB_CACHE_DIR WANDB_CONFIG_DIR MPLCONFIGDIR TMPDIR
 
-cd "$REPO_DIR"
-ORCH_TOKEN_CLIENT_FLAG=()
-if [[ "$ORCH_USE_TOKEN_CLIENT" == "true" ]]; then
-  ORCH_TOKEN_CLIENT_FLAG=(--orchestrator.use-token-client)
+CONFIG=$(readlink -f "$CONFIG")
+[[ -f "$CONFIG" ]] || {
+  echo "FATAL: config not found: $CONFIG" >&2
+  exit 1
+}
+CONTAINER_CONFIG=$CONFIG
+if [[ "$CONFIG" == "$REPO_DIR/"* ]]; then
+  CONTAINER_CONFIG=/workdir/${CONFIG#"$REPO_DIR/"}
 fi
 
-uv run rl @ "$CONFIG" "${ORCH_TOKEN_CLIENT_FLAG[@]}" "$@"
+USER_DRY_RUN=false
+for arg in "$@"; do
+  if [[ "$arg" == "--dry-run" || "$arg" == "--dry-run=true" ]]; then
+    USER_DRY_RUN=true
+  fi
+done
+
+RENDER_ARGS=("$@")
+if [[ "$USER_DRY_RUN" == false ]]; then
+  RENDER_ARGS+=(--dry-run)
+fi
+
+render_log=$(mktemp "$TMPDIR/prime-rl-render.XXXXXX")
+trap 'rm -f "$render_log"' EXIT
+"$SCRIPT_DIR/lumi_run_in_container.sh" \
+  rl @ "$CONTAINER_CONFIG" \
+  --slurm.project-dir "$REPO_DIR" \
+  "${RENDER_ARGS[@]}" 2>&1 | tee "$render_log"
+
+if [[ "$USER_DRY_RUN" == true ]]; then
+  exit 0
+fi
+
+SBATCH_PATH=$(sed -E 's/\x1B\[[0-9;]*[mK]//g' "$render_log" \
+  | sed -nE 's/^[[:space:]]*sbatch ([^[:space:]]+).*$/\1/p' \
+  | tail -n 1)
+[[ -n "$SBATCH_PATH" && -f "$SBATCH_PATH" ]] || {
+  echo "FATAL: could not find rendered RL sbatch path in launcher output" >&2
+  exit 1
+}
+SBATCH_BIN=${SBATCH_BIN:-sbatch}
+command -v "$SBATCH_BIN" >/dev/null || {
+  echo "FATAL: host sbatch command not found: $SBATCH_BIN" >&2
+  exit 1
+}
+"$SBATCH_BIN" "$SBATCH_PATH"

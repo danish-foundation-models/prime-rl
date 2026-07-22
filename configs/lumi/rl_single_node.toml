@@ -1,7 +1,9 @@
-toml_files = ["../../examples/reverse_text/rl.toml"]
-
-output_dir = "/flash/project_465002183/prime-rl/outputs/lumi-rl-single-node"
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training/lumi-rl-single-node"
 max_steps = 5
+seq_len = 2048
+
+[model]
+name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
 
 [deployment]
 type = "single_node"
@@ -13,13 +15,28 @@ num_infer_gpus = 1
 attn = "sdpa"
 
 [orchestrator]
-use_token_client = false
+batch_size = 128
+group_size = 16
 
-[wandb]
-offline = true
+[orchestrator.train.sampling]
+max_completion_tokens = 128
+
+[[orchestrator.train.env]]
+id = "reverse-text"
+
+[trainer.optim]
+lr = 3e-6
+
+[ckpt]
+
+[inference]
+
+[orchestrator.renderer]
+name = "default"
 
 [slurm]
 job_name = "prime-rl-rl-lumi"
+account = "project_465002751"
 project_dir = "."
 partition = "standard-g"
 template_path = "src/prime_rl/templates/lumi/single_node_rl_lumi.sbatch.j2"

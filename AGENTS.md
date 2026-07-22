@@ -1,5 +1,44 @@
 # AGENTS.md
 
+## LUMI workspace
+
+This checkout is the training runtime for the sibling bench at
+`/scratch/project_465002751/rasmus`. Read the bench `AGENTS.md` before you work
+on LUMI integration.
+
+Start a LUMI task with these checks:
+
+```bash
+cd /scratch/project_465002751/rasmus/prime-rl
+git status --short --branch
+squeue -u "$USER" -o "%.18i %.24j %.10T %.10M %.6D %R"
+```
+
+Use this operational image:
+
+```text
+/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif
+```
+
+Run the image without `--rocm` and without an overlay. Keep PRIME-RL source and
+bundled environments outside the image. The LUMI launchers put live source
+before generated package metadata on `PYTHONPATH`.
+
+Keep outputs under `/scratch/project_465002751/rasmus/artifacts/training`. Keep
+caches under `/scratch/project_465002751/rasmus/.cache`. Set only
+`HF_HOME=/scratch/project_465002751/.cache/huggingface` for Hugging Face cache
+placement.
+
+Dry-run before submission:
+
+```bash
+CONFIG=$PWD/configs/lumi/<config>.toml ./scripts/lumi_submit_sft.sh --dry-run
+CONFIG=$PWD/configs/lumi/<config>.toml ./scripts/lumi_submit_rl.sh --dry-run
+```
+
+Remove `--dry-run` only after you inspect the rendered Slurm script and output
+directory. See `docs/lumi.md` for runtime details.
+
 ## Writing code
 
 - **Minimal try/except**: let errors propagate — silent failures hide bugs. Only catch exceptions for intentional fault tolerance (retries, robustness).
@@ -44,6 +83,11 @@ Namespaces are one honking great idea -- let's do more of those!
 Skills live in `skills/` and are symlinked to `.claude/skills/`. They teach agents how to handle specific workflows (e.g. starting the inference server, writing configs). When you make changes to the codebase, check if any skills need to be updated to stay accurate.
 
 You are responsible for maintaining the skills folder. When a workflow fails and you fix it – whether with help from the user or through trial and error – you must update the skills to make implicit knowledge explicit. You are also responsible for keeping the skills up to date whenever you or anyone else modifies the code.
+
+Also update this `AGENTS.md`, `docs/lumi.md`, or the relevant README when the
+fix changes a repository-wide command, path, runtime rule, or safety check. If
+an instruction disagrees with tested behavior, correct the instruction in the
+same change. Do not leave a known-bad workflow for the next agent to rediscover.
 
 ## Testing
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --job-name={{ job_name }}
-#SBATCH --account=project_465002183
+#SBATCH --account={{ account or "project_465002751" }}
 #SBATCH --partition={{ partition }}
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -19,64 +19,52 @@ set -euo pipefail
 PROJECT_DIR={{ project_dir }}
 CONFIG_PATH={{ config_path }}
 
-BASE_DIR=/pfs/lustref1/appl/local/laifs
-LAIFS_APPL_DIR=/appl/local/laifs
-SIF=${SIF:-$BASE_DIR/containers/lumi-multitorch-u24r70f21m50t210-20260513_121430/lumi-multitorch-full-u24r70f21m50t210-20260513_121430.sif}
-OVERLAY_DIR=${OVERLAY_DIR:-$PROJECT_DIR/overlay_prime_rl_lumi}
-OVERLAY_ENV_NAME=${OVERLAY_ENV_NAME:-prime-rl-lumi}
-SINGULARITY_GPU_ARGS=${SINGULARITY_GPU_ARGS:-}
-FLASH_PROJECT_ROOT=${FLASH_PROJECT_ROOT:-/flash/project_465002183}
-HF_HOME=${HF_HOME:-$FLASH_PROJECT_ROOT/.cache/huggingface}
-UV_CACHE_DIR=${UV_CACHE_DIR:-$FLASH_PROJECT_ROOT/.cache/uv}
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
+UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
+XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$LUMI_ROOT/.cache}
+WANDB_CACHE_DIR=${PRIME_RL_WANDB_CACHE_DIR:-$LUMI_ROOT/.cache/wandb}
+WANDB_CONFIG_DIR=${PRIME_RL_WANDB_CONFIG_DIR:-$LUMI_ROOT/.cache/wandb-config}
+MPLCONFIGDIR=${PRIME_RL_MPLCONFIGDIR:-$LUMI_ROOT/.cache/matplotlib}
+TMPDIR=${PRIME_RL_TMPDIR:-$LUMI_ROOT/tmp/$SLURM_JOB_ID}
 
 if [[ ! -f "$SIF" ]]; then
   echo "FATAL: SIF not found: $SIF" >&2
   exit 1
 fi
 
-if [[ ! -d "$OVERLAY_DIR/venv/$OVERLAY_ENV_NAME" ]]; then
-  echo "FATAL: overlay env not found: $OVERLAY_DIR/venv/$OVERLAY_ENV_NAME" >&2
-  echo "Build it with: ./scripts/build_lumi_overlay_prime_rl.sh" >&2
-  exit 1
-fi
-
 mkdir -p {{ output_dir }}
-mkdir -p "$HF_HOME" "$UV_CACHE_DIR"
+mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR" "$MPLCONFIGDIR" "$TMPDIR"
+export PROJECT_DIR SIF LUMI_ROOT
+PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
+export PRIME_RL_METADATA_DIR
 
 SING_BIND_ARGS=(
-  -B "$BASE_DIR:$LAIFS_APPL_DIR"
-  -B "$OVERLAY_DIR:/overlay"
   -B "$PROJECT_DIR:/workdir"
+  -B /scratch/project_465002751:/scratch/project_465002751
 )
-if [[ -d /flash ]]; then
-  SING_BIND_ARGS+=(-B /flash:/flash)
-fi
-if [[ -e "$FLASH_PROJECT_ROOT" ]]; then
-  FLASH_PROJECT_TARGET="$(readlink -f "$FLASH_PROJECT_ROOT" || true)"
-  if [[ -n "$FLASH_PROJECT_TARGET" && -d "$FLASH_PROJECT_TARGET" ]]; then
-    SING_BIND_ARGS+=(-B "$FLASH_PROJECT_TARGET:$FLASH_PROJECT_TARGET")
-  elif [[ -d "$FLASH_PROJECT_ROOT" ]]; then
-    SING_BIND_ARGS+=(-B "$FLASH_PROJECT_ROOT:$FLASH_PROJECT_ROOT")
-  fi
-fi
-if [[ -d /scratch ]]; then
-  SING_BIND_ARGS+=(-B /scratch:/scratch)
-fi
 
 RANK_CMD="
 set -euo pipefail
-source /overlay/venv/$OVERLAY_ENV_NAME/bin/activate
-OVERLAY_SITE=/overlay/venv/$OVERLAY_ENV_NAME/lib/python3.12/site-packages
-export PYTHONPATH=/workdir/src:\${OVERLAY_SITE}\${PYTHONPATH:+:\$PYTHONPATH}
+export PATH=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:\$PATH
+export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:$PRIME_RL_METADATA_DIR
+export PYTHONNOUSERSITE=1
 if [[ -n \"\${ROCR_VISIBLE_DEVICES:-}\" && -z \"\${HIP_VISIBLE_DEVICES:-}\" ]]; then
   export HIP_VISIBLE_DEVICES=\"\${ROCR_VISIBLE_DEVICES}\"
 fi
 unset ROCR_VISIBLE_DEVICES
 export HF_HOME=\"$HF_HOME\"
 export UV_CACHE_DIR=\"$UV_CACHE_DIR\"
+export XDG_CACHE_HOME=\"$XDG_CACHE_HOME\"
+export WANDB_CACHE_DIR=\"$WANDB_CACHE_DIR\"
+export WANDB_CONFIG_DIR=\"$WANDB_CONFIG_DIR\"
+export MPLCONFIGDIR=\"$MPLCONFIGDIR\"
+export TMPDIR=\"$TMPDIR\"
+export TRITON_CACHE_DIR=\"$TMPDIR/triton\"
 export PYTORCH_ALLOC_CONF=expandable_segments:True
 cd /workdir
 python -m torch.distributed.run --nproc-per-node=1 -m prime_rl.trainer.sft.train @ \"$CONFIG_PATH\"
 "
 
-singularity exec ${SINGULARITY_GPU_ARGS} "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"
+singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"

@@ -26,17 +26,24 @@ launch_inference_rank() {
         --parallel.dp "$dp" --data-parallel-size-local 1 --api-server-count 1)
     [ -n "$rpc" ] && cmd+=(--data-parallel-rpc-port "$rpc")
     [ -n "$extra" ] && cmd+=(--vllm-extra "$extra")
+    echo "[inference-rank] launching port=$port gpus=$gpus dp=$dp rpc=${rpc:-none} extra=${extra:-none}" | tee -a "$log"
     if [ -n "$nixl" ]; then
         (
             unset ROCR_VISIBLE_DEVICES
             export CUDA_VISIBLE_DEVICES="$gpus" HIP_VISIBLE_DEVICES="$gpus" VLLM_NIXL_SIDE_CHANNEL_PORT="$nixl" VLLM_RPC_BASE_PATH="$rpcbase"
             "${cmd[@]}"
+            status=$?
+            echo "[inference-rank] exited status=$status port=$port gpus=$gpus"
+            exit "$status"
         ) 2>&1 | tee -a "$log" &
     else
         (
             unset ROCR_VISIBLE_DEVICES
             export CUDA_VISIBLE_DEVICES="$gpus" HIP_VISIBLE_DEVICES="$gpus" VLLM_RPC_BASE_PATH="$rpcbase"
             "${cmd[@]}"
+            status=$?
+            echo "[inference-rank] exited status=$status port=$port gpus=$gpus"
+            exit "$status"
         ) 2>&1 | tee -a "$log" &
     fi
 }
