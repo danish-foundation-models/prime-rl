@@ -1,9 +1,11 @@
 [submodule "verifiers"]
 	path = deps/verifiers
-	url = git@github.com:PrimeIntellect-ai/verifiers.git
+	url = git@github.com:rlrs/verifiers.git
+	branch = feat/lumi-integration
 [submodule "renderers"]
 	path = deps/renderers
-	url = git@github.com:PrimeIntellect-ai/renderers.git
+	url = git@github.com:rlrs/renderers.git
+	branch = feat/lumi-integration
 [submodule "research-environments"]
 	path = deps/research-environments
 	url = git@github.com:PrimeIntellect-ai/research-environments.git

@@ -51,7 +51,7 @@ Use the submodule commits selected by upstream unless a tested LUMI requirement
 cannot be implemented in PRIME-RL itself. A downstream dependency requires all
 of the following:
 
-- an organization-owned fork with an `upstream` remote;
+- a maintainer-owned fork under `rlrs` with an `upstream` remote;
 - a maintained `feat/lumi-integration` branch based on current upstream;
 - a focused commit series without experiments or generated files;
 - an exact parent submodule pin;
@@ -60,6 +60,19 @@ of the following:
 
 Do not commit dependency work from a detached submodule checkout. Refresh and
 classify it in its own repository first, then update the PRIME-RL pin as a
-separate commit. The current integration uses upstream's pins for `renderers`,
-`research-environments`, and `verifiers`; their existing local work is not part
-of this branch.
+separate commit.
+
+Current downstream dependency pins:
+
+- `renderers` `407d403`: lets the default renderer skip a system-only
+  attribution prefix while continuing to reject malformed prefixes after the
+  first user message. Validated by its two focused default-renderer tests.
+  Remove when upstream provides the same guarded behavior.
+- `verifiers` `cc6454464`: adds the UCloud sandbox runtime and polling-relay
+  interception backend. Validated by the focused sandbox/relay tests, config
+  and import tests, lint, syntax compilation, and no-network construction
+  smoke tests. Remove when verifiers supports a pluggable UCloud provider or
+  equivalent upstream runtime and relay.
+- `research-environments` stays on the upstream pin. The preserved
+  `mini-swe-agent-v2` work is being separated into its own package rather than
+  maintained as a fork of a repository that removed it.
