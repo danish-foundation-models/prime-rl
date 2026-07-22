@@ -530,30 +530,31 @@ def rl(config: RLConfig):
     resuming = config.ckpt is not None and config.ckpt.resume_step is not None
     clean = config.clean_output_dir and not os.environ.get("NEVER_CLEAN_OUTPUT_DIR")
     ckpt_output_dir = config.ckpt.output_dir if config.ckpt else None
-    validate_output_dir(config.output_dir, resuming=resuming, clean=clean, ckpt_output_dir=ckpt_output_dir)
+    if not config.dry_run:
+        validate_output_dir(config.output_dir, resuming=resuming, clean=clean, ckpt_output_dir=ckpt_output_dir)
     config.output_dir.mkdir(parents=True, exist_ok=True)
-    if ckpt_output_dir is not None:
+    if ckpt_output_dir is not None and not config.dry_run:
         ckpt_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Clean stale rollouts and broadcasts. When resuming, anything past the resume
-    # step is stale. When training from scratch, every existing step directory is
-    # stale — without this, a fresh run in a dirty output_dir would pick up rollouts
-    # from a previous run and the orchestrator would see a negative async level.
-    resume_step: int | None = None
-    if resuming:
-        resume_step = config.ckpt.resume_step
-        if resume_step == -1:
-            ckpt_base = ckpt_output_dir if ckpt_output_dir is not None else config.output_dir
-            resume_step = resolve_latest_ckpt_step(get_ckpt_dir(ckpt_base))
-
-    if resume_step is not None:
-        get_logger().info(f"Resuming from step {resume_step}, cleaning future rollouts and broadcasts")
-        clean_future_steps(config.output_dir, resume_step)
-    else:
-        get_logger().info("Training from scratch, cleaning any stale rollouts and broadcasts")
-        clean_future_steps(config.output_dir, -1)
-
     if not config.dry_run:
+        # Clean stale rollouts and broadcasts. When resuming, anything past the resume
+        # step is stale. When training from scratch, every existing step directory is
+        # stale — without this, a fresh run in a dirty output_dir would pick up rollouts
+        # from a previous run and the orchestrator would see a negative async level.
+        resume_step: int | None = None
+        if resuming:
+            resume_step = config.ckpt.resume_step
+            if resume_step == -1:
+                ckpt_base = ckpt_output_dir if ckpt_output_dir is not None else config.output_dir
+                resume_step = resolve_latest_ckpt_step(get_ckpt_dir(ckpt_base))
+
+        if resume_step is not None:
+            get_logger().info(f"Resuming from step {resume_step}, cleaning future rollouts and broadcasts")
+            clean_future_steps(config.output_dir, resume_step)
+        else:
+            get_logger().info("Training from scratch, cleaning any stale rollouts and broadcasts")
+            clean_future_steps(config.output_dir, -1)
+
         from prime_rl.trainer.model import pre_download_model
 
         pre_download_model(config.trainer.model.name)

@@ -54,6 +54,9 @@ CONFIG=$PWD/configs/lumi/rl_single_node.toml ./scripts/lumi_submit_rl.sh
 CONFIG=$PWD/configs/lumi/sft_single_node.toml ./scripts/lumi_submit_sft.sh
 ```
 
+RL dry-runs render configs and Slurm scripts without cleaning checkpoints,
+rollouts, broadcasts, or an external checkpoint directory.
+
 The wrappers invoke the native entry points with `uv run` inside the SIF and
 forward remaining arguments. The container always renders in dry-run mode; if
 the caller did not pass `--dry-run`, the wrapper submits the resulting script
