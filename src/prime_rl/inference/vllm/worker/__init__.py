@@ -8,6 +8,9 @@ from prime_rl.inference.patches import (
     monkey_patch_minimax_m2_for_lora,
     monkey_patch_no_moe_lora,
     monkey_patch_rocm_gfx90a_aiter_legacy_allreduce,
+    monkey_patch_rocm_nemotron_moe_config,
+    monkey_patch_rocm_nemotron_relu2,
+    monkey_patch_rocm_nemotron_router_linear,
     monkey_patch_rocm_sparse_indexer_fallback,
     monkey_patch_rocm_sparse_mla_fallback,
 )
@@ -40,3 +43,12 @@ monkey_patch_rocm_sparse_mla_fallback()
 
 # Install the validated gfx90a TP8 BF16 all-reduce path when explicitly selected.
 monkey_patch_rocm_gfx90a_aiter_legacy_allreduce()
+
+# Skip non-local expert rows in large ReLU-squared activations when selected.
+monkey_patch_rocm_nemotron_relu2()
+
+# Select the measured large-prefill expert-GEMM configuration when selected.
+monkey_patch_rocm_nemotron_moe_config()
+
+# Preserve FP32 router logits while using BF16 MFMA for large prefills.
+monkey_patch_rocm_nemotron_router_linear()
