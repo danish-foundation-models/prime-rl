@@ -7,6 +7,7 @@ from prime_rl.inference.patches import (
     monkey_patch_glm52_gfx90a_mla_bmm,
     monkey_patch_minimax_m2_for_lora,
     monkey_patch_no_moe_lora,
+    monkey_patch_rocm_gfx90a_aiter_legacy_allreduce,
     monkey_patch_rocm_sparse_indexer_fallback,
     monkey_patch_rocm_sparse_mla_fallback,
 )
@@ -36,3 +37,6 @@ monkey_patch_glm52_gfx90a_mla_bmm()
 # and attention backends only when the launcher opts in.
 monkey_patch_rocm_sparse_indexer_fallback()
 monkey_patch_rocm_sparse_mla_fallback()
+
+# Install the validated gfx90a TP8 BF16 all-reduce path when explicitly selected.
+monkey_patch_rocm_gfx90a_aiter_legacy_allreduce()
