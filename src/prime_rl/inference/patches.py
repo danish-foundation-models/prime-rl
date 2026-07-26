@@ -21,6 +21,45 @@ def apply_shared_vllm_patches():
     monkey_patch_kv_xfer_finished_tolerate_freed()
 
 
+def monkey_patch_rocm_gfx90a_aiter_legacy_allreduce():
+    """Enable the validated legacy AITER all-reduce size window on gfx90a."""
+    import os
+    from importlib.metadata import version
+
+    value = os.environ.get("PRIME_ROCM_GFX90A_AITER_LEGACY_ALLREDUCE")
+    if value in (None, "0"):
+        return
+    if value != "1":
+        raise ValueError(
+            "PRIME_ROCM_GFX90A_AITER_LEGACY_ALLREDUCE must be unset, '0', or '1'; "
+            f"got {value!r}"
+        )
+    if torch.version.hip is None:
+        raise RuntimeError(
+            "PRIME_ROCM_GFX90A_AITER_LEGACY_ALLREDUCE requires ROCm"
+        )
+    properties = torch.cuda.get_device_properties(torch.cuda.current_device())
+    architecture = getattr(properties, "gcnArchName", "").split(":")[0]
+    if architecture != "gfx90a":
+        raise RuntimeError(
+            "PRIME_ROCM_GFX90A_AITER_LEGACY_ALLREDUCE requires gfx90a; "
+            f"found {properties.gcnArchName}"
+        )
+    expected_vllm = "0.24.0+lumi_aif_gfx90a_ee0da84"
+    installed_vllm = version("vllm")
+    if installed_vllm != expected_vllm:
+        raise RuntimeError(
+            "PRIME_ROCM_GFX90A_AITER_LEGACY_ALLREDUCE requires vLLM "
+            f"{expected_vllm!r}; found {installed_vllm!r}"
+        )
+
+    from prime_rl.inference.vllm.kernels.rocm_gfx90a_aiter_legacy_allreduce import (
+        install_gfx90a_aiter_legacy_allreduce,
+    )
+
+    install_gfx90a_aiter_legacy_allreduce()
+
+
 def monkey_patch_kv_xfer_finished_tolerate_freed():
     """Tolerate KV-transfer finish notifications for already-freed requests.
 
