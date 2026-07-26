@@ -6,6 +6,9 @@ from prime_rl.inference.patches import (
     monkey_patch_fp32_router_logits,
     monkey_patch_minimax_m2_for_lora,
     monkey_patch_no_moe_lora,
+    monkey_patch_rocm_nemotron_moe_config,
+    monkey_patch_rocm_nemotron_relu2,
+    monkey_patch_rocm_nemotron_router_linear,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,3 +27,12 @@ monkey_patch_fp32_lm_head()
 
 # Install fp32 router logits patch; self-gates on additional_config["fp32_router_logits"]
 monkey_patch_fp32_router_logits()
+
+# Skip non-local expert rows in large ReLU-squared activations when selected.
+monkey_patch_rocm_nemotron_relu2()
+
+# Select the measured large-prefill expert-GEMM configuration when selected.
+monkey_patch_rocm_nemotron_moe_config()
+
+# Preserve FP32 router logits while using BF16 MFMA for large prefills.
+monkey_patch_rocm_nemotron_router_linear()

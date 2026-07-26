@@ -940,6 +940,149 @@ def monkey_patch_fp32_router_logits():
     logger.info("Installed fp32 router logits patch (self-gates on additional_config['fp32_router_logits']).")
 
 
+def _nemotron_prefill_feature_enabled(name: str) -> bool:
+    import os
+
+    value = os.environ.get(name)
+    if value in (None, "0"):
+        return False
+    if value == "1":
+        return True
+    raise ValueError(f"{name} must be unset, '0', or '1'; got {value!r}")
+
+
+def _require_gfx90a_nemotron_prefill(feature: str) -> None:
+    from importlib.metadata import version
+
+    if torch.version.hip is None:
+        raise RuntimeError(f"{feature} requires a ROCm PyTorch build")
+    properties = torch.cuda.get_device_properties(torch.cuda.current_device())
+    architecture = getattr(properties, "gcnArchName", "").split(":")[0]
+    if architecture != "gfx90a":
+        raise RuntimeError(
+            f"{feature} is validated only on gfx90a; found "
+            f"{getattr(properties, 'gcnArchName', None)!r}"
+        )
+    expected = "0.24.0+lumi_aif_gfx90a_ee0da84"
+    installed = version("vllm")
+    if installed != expected:
+        raise RuntimeError(
+            f"{feature} requires vLLM {expected!r}; found {installed!r}"
+        )
+
+
+def monkey_patch_rocm_nemotron_relu2() -> None:
+    """Run ReLU-squared only over rows assigned to this EP rank."""
+
+    feature = "PRIME_ROCM_NEMOTRON_RELU2"
+    if not _nemotron_prefill_feature_enabled(feature):
+        return
+
+    import inspect
+
+    from vllm.logger import init_logger
+    from vllm.model_executor.layers.fused_moe.experts import triton_moe
+    from vllm.model_executor.layers.fused_moe.experts.triton_moe import (
+        TritonExperts,
+    )
+
+    from prime_rl.inference.vllm.kernels.rocm_nemotron_relu2 import (
+        wrap_nemotron_experts_activation,
+    )
+
+    _require_gfx90a_nemotron_prefill(feature)
+    original = TritonExperts.activation
+    parameters = tuple(inspect.signature(original).parameters.values())
+    actual = tuple((parameter.name, parameter.kind) for parameter in parameters)
+    expected = (
+        ("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("activation", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("output", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("input", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("kwargs", inspect.Parameter.VAR_KEYWORD),
+    )
+    if actual != expected:
+        raise RuntimeError(
+            f"{feature} requires TritonExperts.activation{expected}; found {actual}"
+        )
+    if getattr(triton_moe, "_PRIME_NEMOTRON_EP_RELU2_VERSION", None) != 1:
+        raise RuntimeError(
+            f"{feature} requires v1 of the documented vLLM EP activation hook"
+        )
+
+    TritonExperts.activation = wrap_nemotron_experts_activation(original)
+    triton_moe._PRIME_NEMOTRON_EP_RELU2_ENABLED = True
+    init_logger(__name__).warning(
+        "Enabled gfx90a Nemotron-H expert-parallel ReLU-squared."
+    )
+
+
+def monkey_patch_rocm_nemotron_moe_config() -> None:
+    """Select the measured large-prefill expert-GEMM tile over a token range."""
+
+    feature = "PRIME_ROCM_NEMOTRON_MOE_CONFIG"
+    if not _nemotron_prefill_feature_enabled(feature):
+        return
+
+    import inspect
+
+    from vllm.logger import init_logger
+    from vllm.model_executor.layers.fused_moe import fused_moe
+    from vllm.model_executor.layers.fused_moe.experts import triton_moe
+
+    from prime_rl.inference.vllm.kernels.rocm_nemotron_moe_config import (
+        wrap_nemotron_moe_config,
+    )
+
+    _require_gfx90a_nemotron_prefill(feature)
+    original = fused_moe.try_get_optimal_moe_config
+    expected = (
+        "w1_shape",
+        "w2_shape",
+        "top_k",
+        "dtype",
+        "M",
+        "block_shape",
+    )
+    actual = tuple(inspect.signature(original).parameters)
+    if actual != expected:
+        raise RuntimeError(
+            f"{feature} requires try_get_optimal_moe_config{expected}; "
+            f"found {actual}"
+        )
+    if triton_moe.try_get_optimal_moe_config is not original:
+        raise RuntimeError(
+            f"{feature} found a stale TritonExperts MoE selector reference"
+        )
+
+    wrapped = wrap_nemotron_moe_config(original)
+    fused_moe.try_get_optimal_moe_config = wrapped
+    triton_moe.try_get_optimal_moe_config = wrapped
+    init_logger(__name__).warning(
+        "Enabled gfx90a Nemotron-H large-prefill MoE configuration."
+    )
+
+
+def monkey_patch_rocm_nemotron_router_linear() -> None:
+    """Use BF16 MFMA for large router batches while preserving FP32 logits."""
+
+    feature = "PRIME_ROCM_NEMOTRON_ROUTER_LINEAR"
+    if not _nemotron_prefill_feature_enabled(feature):
+        return
+
+    from vllm.logger import init_logger
+
+    from prime_rl.inference.vllm.kernels.rocm_nemotron_router_linear import (
+        install_nemotron_gfx90a_router_linear,
+    )
+
+    _require_gfx90a_nemotron_prefill(feature)
+    install_nemotron_gfx90a_router_linear()
+    init_logger(__name__).warning(
+        "Enabled gfx90a Nemotron-H BF16-to-FP32 router projection."
+    )
+
+
 def monkey_patch_dp_coordinator_startup_timeout():
     """Raise the DP coordinator startup timeout from vLLM's hard-coded 120s.
 
