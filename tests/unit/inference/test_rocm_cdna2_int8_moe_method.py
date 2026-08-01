@@ -154,7 +154,7 @@ def test_moe_method_accepts_exact_glm_tp4_dp16_ep64_contract():
     parallel = FakeParallelConfig(dp_size=16, ep_size=64, sp_size=4)
     moe = FakeMoeConfig(
         num_local_experts=integration.GLM52_EP64_LOCAL_EXPERTS,
-        max_num_tokens=512,
+        max_num_tokens=1024,
         moe_parallel_config=parallel,
     )
     source = FakeFp8MoEMethod(moe)

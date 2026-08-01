@@ -60,9 +60,11 @@ DEFAULT_GFX90A_INT8_MOE_CONFIG = Gfx90aInt8MoeConfig(
     block_m=16,
     block_n=64,
 )
-GLOBAL_EP_MAX_TOKENS = 4 * PREFILL_MAX_TOKENS
+GLOBAL_EP_MAX_TOKENS = 8 * PREFILL_MAX_TOKENS
 GFX90A_INT8_MOE_TOKEN_BUCKETS = (
     *GFX90A_INT8_TOKEN_BUCKETS,
+    4096,
+    8192,
     GLOBAL_EP_MAX_TOKENS,
 )
 # Measured winners over the exact GLM-5.2 EP16, EP32, and EP64 cells.
@@ -123,6 +125,15 @@ GFX90A_INT8_MOE_CONFIGS = {
     ),
     # DP8 tokens are all-gathered across global EP64 before expert dispatch.
     8192: Gfx90aInt8MoeConfig(
+        block_m=128,
+        block_n=256,
+        group_size_m=32,
+        num_warps=8,
+        num_stages=2,
+    ),
+    # DP16 tokens are all-gathered across global EP64 before expert dispatch.
+    # The M=16,384 sweep retained the M=8,192 winner within measurement noise.
+    16384: Gfx90aInt8MoeConfig(
         block_m=128,
         block_n=256,
         group_size_m=32,

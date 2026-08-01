@@ -109,6 +109,15 @@ def test_moe_config_dispatch_uses_only_measured_buckets():
         "num_warps": 8,
         "num_stages": 2,
     }
+    assert select_gfx90a_int8_moe_config(16384).as_vllm_config() == {
+        "BLOCK_SIZE_M": 128,
+        "BLOCK_SIZE_N": 256,
+        "BLOCK_SIZE_K": 32,
+        "GROUP_SIZE_M": 32,
+        "SPLIT_K": 1,
+        "num_warps": 8,
+        "num_stages": 2,
+    }
 
 
 def test_moe_config_table_has_every_measured_decode_and_prefill_m():
@@ -124,6 +133,7 @@ def test_moe_config_table_has_every_measured_decode_and_prefill_m():
         2048,
         4096,
         8192,
+        16384,
     )
 
 
@@ -319,7 +329,7 @@ def test_local_expert_assignment_capacity_falls_back_on_unproven_layouts():
 
 @pytest.mark.parametrize(
     ("num_tokens", "message"),
-    ((0, "positive"), (8193, "gated through M=8192")),
+    ((0, "positive"), (16385, "gated through M=16384")),
 )
 def test_moe_config_dispatch_fails_closed(num_tokens, message):
     with pytest.raises(ValueError, match=message):
