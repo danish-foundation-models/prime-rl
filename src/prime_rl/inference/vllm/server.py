@@ -218,14 +218,27 @@ vllm.entrypoints.openai.api_server.build_app = custom_build_app
 vllm.v1.utils.run_api_server_worker_proc = custom_run_api_server_worker_proc
 
 
+def _run_parsed_server(args: Namespace) -> None:
+    from vllm.entrypoints.cli.serve import run_headless, run_multi_api_server
+    from vllm.entrypoints.openai.api_server import run_server
+    from vllm.entrypoints.openai.dp_supervisor import run_dp_supervisor
+
+    if args.headless or args.api_server_count < 1:
+        run_headless(args)
+    elif args.data_parallel_multi_port_external_lb:
+        run_dp_supervisor(args)
+    elif args.api_server_count > 1:
+        run_multi_api_server(args)
+    else:
+        # Single API server (this process).
+        uvloop.run(run_server(args))
+
+
 # Adapted from vllm/entrypoints/cli/serve.py
 # Only difference we do some config translation (i.e. pass populated namespace
 # to `parse_args`) and additional arg validation
 def server(config: InferenceConfig, vllm_extra: dict[str, Any] | None = None):
     import os
-
-    from vllm.entrypoints.cli.serve import run_headless, run_multi_api_server
-    from vllm.entrypoints.openai.api_server import run_server
 
     # Signal worker processes to disable LoRA on MoE layers when LoRA targets don't include experts
     if config.lora_target_modules and not any("expert" in m for m in config.lora_target_modules):
@@ -245,11 +258,4 @@ def server(config: InferenceConfig, vllm_extra: dict[str, Any] | None = None):
     # Set the worker extension class based on the broadcast backend
     args.worker_extension_cls = WORKER_EXTENSION_CLS[config.weight_broadcast.type]
 
-    if args.headless or args.api_server_count < 1:
-        run_headless(args)
-    else:
-        if args.api_server_count > 1:
-            run_multi_api_server(args)
-        else:
-            # Single API server (this process).
-            uvloop.run(run_server(args))
+    _run_parsed_server(args)
