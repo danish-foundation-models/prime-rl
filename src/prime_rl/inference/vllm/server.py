@@ -6,6 +6,7 @@ import uvloop
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from starlette.datastructures import State
+from vllm.config import ProfilerConfig
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.openai.api_server import init_app_state
 from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
@@ -234,6 +235,16 @@ def _run_parsed_server(args: Namespace) -> None:
         uvloop.run(run_server(args))
 
 
+def _normalize_vllm_extra(key: str, value: Any) -> Any:
+    """Build config objects that vLLM reads directly from the CLI namespace."""
+
+    # EngineArgs converts its nested dictionaries while building VllmConfig,
+    # but the API profile router reads this value before that conversion.
+    if key == "profiler_config" and isinstance(value, dict):
+        return ProfilerConfig(**value)
+    return value
+
+
 # Adapted from vllm/entrypoints/cli/serve.py
 # Only difference we do some config translation (i.e. pass populated namespace
 # to `parse_args`) and additional arg validation
@@ -247,7 +258,7 @@ def server(config: InferenceConfig, vllm_extra: dict[str, Any] | None = None):
     namespace = config.to_vllm()
     if vllm_extra:
         for key, value in vllm_extra.items():
-            setattr(namespace, key, value)
+            setattr(namespace, key, _normalize_vllm_extra(key, value))
 
     parser = FlexibleArgumentParser(description="vLLM OpenAI-Compatible RESTful API server.")
     parser = make_arg_parser(parser)
