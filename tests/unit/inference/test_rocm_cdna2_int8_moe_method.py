@@ -129,12 +129,54 @@ def test_moe_method_accepts_exact_glm_tp8_dp8_ep64_contract():
     assert source.create_calls == 1
 
 
+def test_moe_method_accepts_exact_glm_tp4_dp8_ep32_contract():
+    parallel = FakeParallelConfig(dp_size=8, ep_size=32, sp_size=4)
+    moe = FakeMoeConfig(
+        num_local_experts=integration.GLM52_EP32_LOCAL_EXPERTS,
+        max_num_tokens=512,
+        moe_parallel_config=parallel,
+    )
+    source = FakeFp8MoEMethod(moe)
+    method = integration.Cdna2Int8Fp8MoEMethod(source, reload_mode="none")
+
+    method.create_weights(
+        torch.nn.Module(),
+        integration.GLM52_EP32_LOCAL_EXPERTS,
+        integration.GLM52_HIDDEN_SIZE,
+        integration.GLM52_INTERMEDIATE_SIZE,
+        torch.bfloat16,
+    )
+
+    assert source.create_calls == 1
+
+
+def test_moe_method_accepts_exact_glm_tp4_dp16_ep64_contract():
+    parallel = FakeParallelConfig(dp_size=16, ep_size=64, sp_size=4)
+    moe = FakeMoeConfig(
+        num_local_experts=integration.GLM52_EP64_LOCAL_EXPERTS,
+        max_num_tokens=512,
+        moe_parallel_config=parallel,
+    )
+    source = FakeFp8MoEMethod(moe)
+    method = integration.Cdna2Int8Fp8MoEMethod(source, reload_mode="none")
+
+    method.create_weights(
+        torch.nn.Module(),
+        integration.GLM52_EP64_LOCAL_EXPERTS,
+        integration.GLM52_HIDDEN_SIZE,
+        integration.GLM52_INTERMEDIATE_SIZE,
+        torch.bfloat16,
+    )
+
+    assert source.create_calls == 1
+
+
 @pytest.mark.parametrize("dp_size", [1, 3])
 def test_moe_method_rejects_unmeasured_dp_topologies(dp_size):
     source = FakeFp8MoEMethod(FakeMoeConfig(moe_parallel_config=FakeParallelConfig(dp_size=dp_size)))
     method = integration.Cdna2Int8Fp8MoEMethod(source, reload_mode="none")
 
-    with pytest.raises(ValueError, match="DP8/EP64/local4"):
+    with pytest.raises(ValueError, match="DP16/EP64/local4"):
         method.create_weights(
             torch.nn.Module(),
             integration.GLM52_LOCAL_EXPERTS,
@@ -150,7 +192,7 @@ def test_moe_method_rejects_unmeasured_dp_topologies(dp_size):
     [
         ("tp_size", 8, "MoE-local TP1"),
         ("pcp_size", 2, "PCP1"),
-        ("sp_size", 1, "SP8"),
+        ("sp_size", 1, "requires SP8"),
     ],
 )
 def test_moe_method_rejects_unmeasured_tp_pcp_and_sp_factors(
@@ -179,7 +221,7 @@ def test_moe_method_rejects_unsupported_ep_topology():
     method = integration.Cdna2Int8Fp8MoEMethod(source, reload_mode="none")
 
     source.moe.moe_parallel_config.ep_size = 8
-    with pytest.raises(ValueError, match="DP8/EP64/local4"):
+    with pytest.raises(ValueError, match="DP16/EP64/local4"):
         method.create_weights(
             torch.nn.Module(),
             integration.GLM52_LOCAL_EXPERTS,
@@ -187,6 +229,29 @@ def test_moe_method_rejects_unsupported_ep_topology():
             integration.GLM52_INTERMEDIATE_SIZE,
             torch.bfloat16,
         )
+    assert source.create_calls == 0
+
+
+def test_moe_method_rejects_tp4_ep64_with_tp8_sequence_parallel_factor():
+    parallel = FakeParallelConfig(dp_size=16, ep_size=64, sp_size=8)
+    source = FakeFp8MoEMethod(
+        FakeMoeConfig(
+            num_local_experts=integration.GLM52_EP64_LOCAL_EXPERTS,
+            max_num_tokens=512,
+            moe_parallel_config=parallel,
+        )
+    )
+    method = integration.Cdna2Int8Fp8MoEMethod(source, reload_mode="none")
+
+    with pytest.raises(ValueError, match="requires SP4"):
+        method.create_weights(
+            torch.nn.Module(),
+            integration.GLM52_EP64_LOCAL_EXPERTS,
+            integration.GLM52_HIDDEN_SIZE,
+            integration.GLM52_INTERMEDIATE_SIZE,
+            torch.bfloat16,
+        )
+
     assert source.create_calls == 0
 
 

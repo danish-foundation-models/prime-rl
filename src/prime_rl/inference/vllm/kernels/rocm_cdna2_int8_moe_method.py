@@ -42,19 +42,20 @@ GLM52_EP64_LOCAL_EXPERTS = 4
 GLM52_TOP_K = 8
 GLM52_HIDDEN_SIZE = 6144
 GLM52_INTERMEDIATE_SIZE = 2048
-# With EP enabled vLLM folds launch TP8 x DP x PCP1 into EP, resets the
-# MoE-local TP factor to one, and retains the launch TP factor as SP8.
+# With EP enabled vLLM folds launch TP x DP x PCP1 into EP and resets the
+# MoE-local TP factor to one. The launch TP factor remains as SP.
 GLM52_MOE_TP_SIZE = 1
 GLM52_DP_SIZE = 2
 GLM52_PCP_SIZE = 1
 GLM52_SP_SIZE = 8
-GLM52_SUPPORTED_EP_LAYOUTS = frozenset(
-    {
-        (2, 16, GLM52_LOCAL_EXPERTS),
-        (4, 32, GLM52_EP32_LOCAL_EXPERTS),
-        (8, 64, GLM52_EP64_LOCAL_EXPERTS),
-    }
-)
+GLM52_EP_LAYOUT_SP_SIZE = {
+    (2, 16, GLM52_LOCAL_EXPERTS): 8,
+    (4, 32, GLM52_EP32_LOCAL_EXPERTS): 8,
+    (8, 32, GLM52_EP32_LOCAL_EXPERTS): 4,
+    (8, 64, GLM52_EP64_LOCAL_EXPERTS): 8,
+    (16, 64, GLM52_EP64_LOCAL_EXPERTS): 4,
+}
+GLM52_SUPPORTED_EP_LAYOUTS = frozenset(GLM52_EP_LAYOUT_SP_SIZE)
 
 
 def _require(condition: bool, message: str) -> None:
@@ -144,8 +145,8 @@ class Cdna2Int8Fp8MoEMethod(FusedMoEMethodBase):
         )
         _require(
             layout in GLM52_SUPPORTED_EP_LAYOUTS,
-            "the measured path requires exactly DP2/EP16/local16, "
-            "DP4/EP32/local8, or DP8/EP64/local4; "
+            "the measured path requires DP2/EP16/local16, DP4/EP32/local8, "
+            "DP8/EP32/local8, DP8/EP64/local4, or DP16/EP64/local4; "
             f"got DP{layout[0]}/EP{layout[1]}/local{layout[2]}",
         )
         _require(moe.experts_per_token == GLM52_TOP_K, "the measured path requires top_k=8")
@@ -174,8 +175,9 @@ class Cdna2Int8Fp8MoEMethod(FusedMoEMethodBase):
             "the measured EP path requires PCP1",
         )
         _require(
-            parallel.sp_size == GLM52_SP_SIZE,
-            "the measured TP8 launch requires SP8 in the MoE parallel config",
+            parallel.sp_size == GLM52_EP_LAYOUT_SP_SIZE[layout],
+            f"the measured DP{layout[0]}/EP{layout[1]} launch requires "
+            f"SP{GLM52_EP_LAYOUT_SP_SIZE[layout]} in the MoE parallel config",
         )
         _require(
             moe.max_num_tokens * parallel.dp_size <= GLOBAL_EP_MAX_TOKENS,

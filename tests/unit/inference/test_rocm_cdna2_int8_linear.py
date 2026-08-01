@@ -193,8 +193,14 @@ def test_linear_config_dispatch_uses_only_measured_shapes_and_buckets():
 
 
 def test_linear_config_table_has_every_measured_m_for_every_shape():
-    assert len(GFX90A_INT8_LINEAR_CONFIGS) == 7
+    assert len(GFX90A_INT8_LINEAR_CONFIGS) == 10
     assert all(tuple(configs) == GFX90A_INT8_TOKEN_BUCKETS for configs in GFX90A_INT8_LINEAR_CONFIGS.values())
+
+
+def test_linear_config_dispatch_covers_measured_tp4_shapes():
+    assert select_gfx90a_int8_linear_config(1, 6144, 3072).group_size_m == 8
+    assert select_gfx90a_int8_linear_config(512, 6144, 4096).block_n == 128
+    assert select_gfx90a_int8_linear_config(2048, 6144, 6144).num_warps == 8
 
 
 def test_linear_runtime_contract_rejects_unmeasured_fp16_activations():
