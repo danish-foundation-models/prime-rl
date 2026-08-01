@@ -7,8 +7,20 @@ from __future__ import annotations
 from typing import Literal
 
 import torch
+import vllm.model_executor.layers.fused_moe.modular_kernel as mk
+from vllm.model_executor.layers.fused_moe.activation import MoEActivation
+from vllm.model_executor.layers.fused_moe.config import (
+    FusedMoEParallelConfig,
+    FusedMoEQuantConfig,
+)
 from vllm.model_executor.layers.fused_moe.fused_moe_method_base import (
     FusedMoEMethodBase,
+)
+from vllm.model_executor.layers.fused_moe.prepare_finalize.naive_dp_ep import (
+    MoEPrepareAndFinalizeNaiveDPEPModular,
+)
+from vllm.model_executor.layers.fused_moe.topk_weight_and_reduce import (
+    TopKWeightAndReduceNoOP,
 )
 from vllm.model_executor.utils import replace_parameter
 
@@ -78,6 +90,93 @@ def _get_fp8_moe_method_type() -> type:
     from vllm.model_executor.layers.quantization.fp8 import Fp8MoEMethod
 
     return Fp8MoEMethod
+
+
+class Cdna2Int8Experts(mk.FusedMoEExpertsModular):
+    """Expose the fused gfx90a experts through vLLM's modular MoE path."""
+
+    @property
+    def expects_unquantized_inputs(self) -> bool:
+        return True
+
+    @staticmethod
+    def activation_format() -> mk.FusedMoEActivationFormat:
+        return mk.FusedMoEActivationFormat.Standard
+
+    @staticmethod
+    def _supports_current_device() -> bool:
+        return True
+
+    @staticmethod
+    def _supports_no_act_and_mul() -> bool:
+        return False
+
+    @staticmethod
+    def _supports_quant_scheme(weight_key, activation_key) -> bool:
+        return True
+
+    @staticmethod
+    def _supports_activation(activation: MoEActivation) -> bool:
+        return activation == MoEActivation.SILU
+
+    @staticmethod
+    def _supports_parallel_config(
+        parallel: FusedMoEParallelConfig,
+    ) -> bool:
+        return parallel.use_ep and parallel.all2all_backend == "allgather_reducescatter"
+
+    def finalize_weight_and_reduce_impl(self) -> mk.TopKWeightAndReduce:
+        return TopKWeightAndReduceNoOP()
+
+    def workspace_shapes(
+        self,
+        m: int,
+        n: int,
+        k: int,
+        topk: int,
+        global_num_experts: int,
+        local_num_experts: int,
+        expert_tokens_meta: mk.ExpertTokensMetadata | None,
+        activation: MoEActivation,
+    ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
+        return (m, k), (0,), (m, k)
+
+    def apply(
+        self,
+        output: torch.Tensor,
+        hidden_states: torch.Tensor,
+        w1: torch.Tensor,
+        w2: torch.Tensor,
+        topk_weights: torch.Tensor,
+        topk_ids: torch.Tensor,
+        activation: MoEActivation,
+        global_num_experts: int,
+        expert_map: torch.Tensor | None,
+        a1q_scale: torch.Tensor | None,
+        a2_scale: torch.Tensor | None,
+        workspace13: torch.Tensor,
+        workspace2: torch.Tensor,
+        expert_tokens_meta: mk.ExpertTokensMetadata | None,
+        apply_router_weight_on_input: bool,
+    ) -> None:
+        _require(activation == MoEActivation.SILU, "expected gated SiLU")
+        _require(a1q_scale is None and a2_scale is None, "input quantization must be deferred")
+        _require(expert_map is not None, "the EP path requires an expert_map")
+        _require(not apply_router_weight_on_input, "router weights must be applied by the expert kernel")
+        _require(self.w1_scale is not None and self.w2_scale is not None, "expert scales are required")
+        output.copy_(
+            cdna2_int8_moe_opaque(
+                hidden_states,
+                w1,
+                w2,
+                self.w1_scale,
+                self.w2_scale,
+                topk_weights,
+                topk_ids,
+                expert_map,
+                global_num_experts,
+            )
+        )
 
 
 def _validate_source_method(method: object) -> None:
@@ -337,11 +436,40 @@ class Cdna2Int8Fp8MoEMethod(FusedMoEMethodBase):
             runtime_scale=layer.w2_weight_scale_inv,
         )
 
-    def get_fused_moe_quant_config(self, layer: torch.nn.Module) -> None:
-        return None
+    def get_fused_moe_quant_config(
+        self,
+        layer: torch.nn.Module,
+    ) -> FusedMoEQuantConfig:
+        self._validate_runtime_layer(layer)
+        return FusedMoEQuantConfig.make(
+            weight_dtype=torch.int8,
+            w1_scale=layer.w13_weight_scale_inv,
+            w2_scale=layer.w2_weight_scale_inv,
+        )
 
-    def maybe_make_prepare_finalize(self, routing_tables=None) -> None:
-        return None
+    def maybe_make_prepare_finalize(
+        self,
+        routing_tables=None,
+    ) -> MoEPrepareAndFinalizeNaiveDPEPModular:
+        self._validate_moe_contract()
+        parallel = self.moe.moe_parallel_config
+        return MoEPrepareAndFinalizeNaiveDPEPModular(
+            is_sequence_parallel=parallel.is_sequence_parallel,
+            num_dispatchers=parallel.ep_size,
+        )
+
+    def select_gemm_impl(
+        self,
+        prepare_finalize: mk.FusedMoEPrepareAndFinalizeModular,
+        layer: torch.nn.Module,
+    ) -> Cdna2Int8Experts:
+        self._validate_runtime_layer(layer)
+        _require(
+            isinstance(prepare_finalize, MoEPrepareAndFinalizeNaiveDPEPModular),
+            "CDNA2 INT8 requires naive modular EP prepare/finalize",
+        )
+        _require(self.moe_quant_config is not None, "MoE quant config is not initialized")
+        return Cdna2Int8Experts(self.moe, self.moe_quant_config)
 
     @property
     def supports_eplb(self) -> bool:

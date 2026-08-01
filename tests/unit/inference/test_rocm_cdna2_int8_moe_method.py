@@ -14,6 +14,7 @@ class FakeParallelConfig:
     dp_size: int = integration.GLM52_DP_SIZE
     pcp_size: int = integration.GLM52_PCP_SIZE
     sp_size: int = integration.GLM52_SP_SIZE
+    is_sequence_parallel: bool = True
     all2all_backend: str = "allgather_reducescatter"
     enable_eplb: bool = False
 
@@ -84,7 +85,13 @@ def test_moe_method_accepts_exact_glm_tp8_dp2_ep16_contract_before_weight_creati
     )
     assert source.create_calls == 1
     assert method.supports_internal_mk is False
-    assert method.maybe_make_prepare_finalize() is None
+    prepare_finalize = method.maybe_make_prepare_finalize()
+    assert isinstance(
+        prepare_finalize,
+        integration.MoEPrepareAndFinalizeNaiveDPEPModular,
+    )
+    assert prepare_finalize.is_sequence_parallel is True
+    assert prepare_finalize.num_dispatchers() == 16
 
 
 def test_moe_method_accepts_exact_glm_tp8_dp4_ep32_contract():
