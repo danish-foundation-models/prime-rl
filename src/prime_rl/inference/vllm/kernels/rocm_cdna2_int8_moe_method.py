@@ -38,6 +38,7 @@ GLM52_GLOBAL_EXPERTS = 256
 # Keep the original name as the default/test fixture for the proven DP2 cell.
 GLM52_LOCAL_EXPERTS = 16
 GLM52_EP32_LOCAL_EXPERTS = 8
+GLM52_EP64_LOCAL_EXPERTS = 4
 GLM52_TOP_K = 8
 GLM52_HIDDEN_SIZE = 6144
 GLM52_INTERMEDIATE_SIZE = 2048
@@ -51,6 +52,7 @@ GLM52_SUPPORTED_EP_LAYOUTS = frozenset(
     {
         (2, 16, GLM52_LOCAL_EXPERTS),
         (4, 32, GLM52_EP32_LOCAL_EXPERTS),
+        (8, 64, GLM52_EP64_LOCAL_EXPERTS),
     }
 )
 
@@ -142,8 +144,9 @@ class Cdna2Int8Fp8MoEMethod(FusedMoEMethodBase):
         )
         _require(
             layout in GLM52_SUPPORTED_EP_LAYOUTS,
-            "the measured path requires exactly DP2/EP16/local16 or "
-            f"DP4/EP32/local8; got DP{layout[0]}/EP{layout[1]}/local{layout[2]}",
+            "the measured path requires exactly DP2/EP16/local16, "
+            "DP4/EP32/local8, or DP8/EP64/local4; "
+            f"got DP{layout[0]}/EP{layout[1]}/local{layout[2]}",
         )
         _require(moe.experts_per_token == GLM52_TOP_K, "the measured path requires top_k=8")
         _require(moe.hidden_dim == GLM52_HIDDEN_SIZE, "expected hidden_size=6144")

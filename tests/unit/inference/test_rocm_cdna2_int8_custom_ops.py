@@ -253,7 +253,7 @@ def test_symbolic_dense_and_moe_calls_export_as_opaque_ops(monkeypatch):
         torch.empty((4,), dtype=torch.int32),
     )
     dense_tokens = torch.export.Dim("dense_tokens", min=1, max=2048)
-    moe_tokens = torch.export.Dim("moe_tokens", min=1, max=4096)
+    moe_tokens = torch.export.Dim("moe_tokens", min=1, max=8192)
     exported = torch.export.export(
         Graph(),
         inputs,
