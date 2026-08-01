@@ -605,7 +605,15 @@ async def prefill_logprobs(openai: AsyncOpenAI, model: str, token_ids: list[int]
     + ``prompt_logprobs`` (the prime-rl server-side extension in
     ``inference/vllm/serving_tokens.py``). Returns one logprob per token (0.0 for
     the leading token, which has no preceding context)."""
-    from vllm.entrypoints.serve.disagg.protocol import GenerateResponse
+    new_root = "vllm.entrypoints.scale_out.token_in_token_out"
+    try:
+        from vllm.entrypoints.scale_out.token_in_token_out.protocol import (
+            GenerateResponse,
+        )
+    except ModuleNotFoundError as error:
+        if error.name is None or not new_root.startswith(error.name):
+            raise
+        from vllm.entrypoints.serve.disagg.protocol import GenerateResponse
 
     # `/inference/v1/generate` is mounted at server root, not under `/v1`: pass an
     # absolute URL so the SDK skips the base-url merge. vLLM's `GenerateResponse`

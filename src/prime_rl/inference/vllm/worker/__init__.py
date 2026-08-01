@@ -4,8 +4,11 @@ import os
 from prime_rl.inference.patches import (
     monkey_patch_fp32_lm_head,
     monkey_patch_fp32_router_logits,
+    monkey_patch_glm52_gfx90a_mla_bmm,
     monkey_patch_minimax_m2_for_lora,
     monkey_patch_no_moe_lora,
+    monkey_patch_rocm_sparse_indexer_fallback,
+    monkey_patch_rocm_sparse_mla_fallback,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,3 +27,12 @@ monkey_patch_fp32_lm_head()
 
 # Install fp32 router logits patch; self-gates on additional_config["fp32_router_logits"]
 monkey_patch_fp32_router_logits()
+
+# Install exact-shape GLM-5.2 MLA BMMs only when explicitly selected.
+monkey_patch_glm52_gfx90a_mla_bmm()
+
+# GLM-5.2's sparse attention requires AITER by default on ROCm. AITER does not
+# support LUMI's gfx90a GPUs, so permit explicitly selected non-AITER indexer
+# and attention backends only when the launcher opts in.
+monkey_patch_rocm_sparse_indexer_fallback()
+monkey_patch_rocm_sparse_mla_fallback()

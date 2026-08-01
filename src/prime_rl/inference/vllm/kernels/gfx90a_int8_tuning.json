@@ -1,0 +1,513 @@
+{
+  "schema_version": 1,
+  "license": "Apache-2.0",
+  "name": "glm52_gfx90a_cdna2_int8",
+  "status": "measured",
+  "hardware": {
+    "vendor": "AMD",
+    "architecture": "gfx90a",
+    "device_name": "AMD Instinct MI250X",
+    "measurement_scope": "one idle GCD"
+  },
+  "runtime": {
+    "vllm_distribution": "0.24.0+lumi_aif_gfx90a_ee0da84",
+    "vllm_upstream_commit": "ee0da84ab9e04ac7610e28580af62c365e898389",
+    "torch_version": "2.11.0+rocm7.1",
+    "triton_version": "3.7.1",
+    "rocm_version": "7.1"
+  },
+  "model_contract": {
+    "model_id": "zai-org/GLM-5.2-FP8",
+    "model_type": "glm_moe_dsa",
+    "checkpoint_weight_dtype": "OCP E4M3FN",
+    "checkpoint_weight_block": [
+      128,
+      128
+    ],
+    "activation_scheme": "dynamic",
+    "activation_dtype": "bfloat16",
+    "hidden_size": 6144,
+    "moe_intermediate_size": 2048,
+    "global_experts": 256,
+    "local_experts": 16,
+    "experts_per_token": 8,
+    "shared_experts": 1,
+    "shared_expert_execution": "vllm_moe_runner_external_no_overlap_or_multi_stream",
+    "shared_expert_argument_contract": "both_present_or_both_absent",
+    "expert_activation": "silu",
+    "expert_bias": false
+  },
+  "runtime_representation": {
+    "weight_dtype": "int8",
+    "weight_group": [
+      1,
+      32
+    ],
+    "weight_scale_dtype": "float16",
+    "activation_dtype": "int8",
+    "activation_group_k": 32,
+    "output_dtype": "bfloat16",
+    "reload_mode": "none",
+    "conversion": "one_way_at_initial_model_load"
+  },
+  "topology": {
+    "server_tensor_parallel_size": 8,
+    "server_data_parallel_size": 2,
+    "expert_parallel_size": 16,
+    "moe_parallel_config": {
+      "use_ep": true,
+      "tp_size": 1,
+      "dp_size": 2,
+      "pcp_size": 1,
+      "sp_size": 8,
+      "all2all_backend": "allgather_reducescatter",
+      "enable_eplb": false
+    },
+    "local_scheduler_max_tokens": 2048,
+    "global_ep_max_tokens": 4096
+  },
+  "runtime_options": {
+    "quantization": "prime_cdna2_int8",
+    "moe_backend": "triton",
+    "enable_dbo": false,
+    "use_deep_gemm": false,
+    "required_environment": {
+      "PRIME_ROCM_CDNA2_INT8": "1"
+    },
+    "optional_validation_environment": {
+      "PRIME_ROCM_CDNA2_INT8_AUDIT": "1"
+    }
+  },
+  "dispatch": {
+    "policy": "nearest_measured_token_bucket",
+    "tie_break": "lower_bucket",
+    "dense_token_buckets": [
+      1,
+      8,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048
+    ],
+    "moe_token_buckets": [
+      1,
+      8,
+      32,
+      64,
+      128,
+      256,
+      512,
+      1024,
+      2048,
+      4096
+    ],
+    "reject_above_maximum": true
+  },
+  "benchmark_protocol": {
+    "timer": "triton.testing.do_bench",
+    "screen": {
+      "warmup_ms": 5,
+      "measurement_ms": 15,
+      "quantiles": [
+        0.5,
+        0.95
+      ]
+    },
+    "global_ep_confirmation": {
+      "screen_measurement_ms": 20,
+      "fastest_candidates": 8,
+      "repetitions": 3,
+      "warmup_ms_per_repetition": 50,
+      "measurement_ms_per_repetition": 250,
+      "selection_metric": "median_of_medians"
+    },
+    "m4096_routing": {
+      "construction": "(((token * top_k + route) * 37) % 256)",
+      "tokens": 4096,
+      "top_k": 8,
+      "global_routes": 32768,
+      "local_routes": 2048,
+      "routes_per_local_expert": 128,
+      "unique_experts_per_token": true
+    },
+    "release_requirements": [
+      "independent_dequantized_checkpoint_reference",
+      "stock_fp8_comparator",
+      "production_api_faster_than_stock_fp8",
+      "production_dispatch_within_10_percent_of_fresh_sweep_winner",
+      "warmed_gpu_graph_capture_and_exact_replay",
+      "native_int8_mfma_codegen",
+      "no_fp8_decode_in_matmul_codegen",
+      "full_model_load_audit",
+      "paired_model_quality",
+      "end_to_end_throughput_profile"
+    ]
+  },
+  "correctness_envelopes": {
+    "transcoded_weight_relative_l2_max": 0.01,
+    "dense_output_relative_l2_max": 0.025,
+    "dense_output_cosine_min": 0.999,
+    "moe_production_vs_preallocated_relative_l2_max": 0.002,
+    "moe_production_vs_preallocated_cosine_min": 0.999,
+    "moe_output_vs_stock_fp8_relative_l2_max": 0.06,
+    "moe_output_vs_stock_fp8_cosine_min": 0.999
+  },
+  "candidate_spaces": {
+    "dense_and_standard_moe": {
+      "layouts_block_m_block_n_warps": [
+        [
+          16,
+          64,
+          4
+        ],
+        [
+          32,
+          64,
+          4
+        ],
+        [
+          64,
+          64,
+          4
+        ],
+        [
+          64,
+          64,
+          8
+        ],
+        [
+          128,
+          64,
+          8
+        ],
+        [
+          32,
+          128,
+          4
+        ],
+        [
+          64,
+          128,
+          4
+        ],
+        [
+          64,
+          128,
+          8
+        ],
+        [
+          128,
+          128,
+          8
+        ]
+      ],
+      "block_k": 32,
+      "group_size_m": [
+        1,
+        8
+      ],
+      "num_stages": [
+        1,
+        2
+      ],
+      "moe_split_k": 1
+    },
+    "global_ep_m4096_moe": {
+      "layouts_block_m_block_n_warps": [
+        [
+          16,
+          64,
+          4
+        ],
+        [
+          32,
+          64,
+          4
+        ],
+        [
+          64,
+          64,
+          4
+        ],
+        [
+          64,
+          64,
+          8
+        ],
+        [
+          128,
+          64,
+          8
+        ],
+        [
+          256,
+          64,
+          8
+        ],
+        [
+          32,
+          128,
+          4
+        ],
+        [
+          64,
+          128,
+          4
+        ],
+        [
+          64,
+          128,
+          8
+        ],
+        [
+          128,
+          128,
+          8
+        ],
+        [
+          256,
+          128,
+          8
+        ],
+        [
+          64,
+          256,
+          8
+        ],
+        [
+          128,
+          256,
+          8
+        ],
+        [
+          256,
+          256,
+          8
+        ]
+      ],
+      "block_k": 32,
+      "group_size_m": [
+        1,
+        8,
+        32
+      ],
+      "num_stages": [
+        1,
+        2
+      ],
+      "split_k": 1,
+      "candidate_count": 84
+    }
+  },
+  "launch_configs": {
+    "m16_n64_g8_w4_s2": {
+      "block_m": 16,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 8,
+      "num_warps": 4,
+      "num_stages": 2
+    },
+    "m16_n64_g1_w4_s2": {
+      "block_m": 16,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 1,
+      "num_warps": 4,
+      "num_stages": 2
+    },
+    "m64_n64_g8_w4_s1": {
+      "block_m": 64,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 8,
+      "num_warps": 4,
+      "num_stages": 1
+    },
+    "m64_n64_g1_w4_s2": {
+      "block_m": 64,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 1,
+      "num_warps": 4,
+      "num_stages": 2
+    },
+    "m64_n128_g1_w4_s2": {
+      "block_m": 64,
+      "block_n": 128,
+      "block_k": 32,
+      "group_size_m": 1,
+      "num_warps": 4,
+      "num_stages": 2
+    },
+    "m64_n128_g8_w8_s2": {
+      "block_m": 64,
+      "block_n": 128,
+      "block_k": 32,
+      "group_size_m": 8,
+      "num_warps": 8,
+      "num_stages": 2
+    },
+    "m64_n64_g8_w4_s2": {
+      "block_m": 64,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 8,
+      "num_warps": 4,
+      "num_stages": 2
+    },
+    "m128_n64_g8_w8_s2": {
+      "block_m": 128,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 8,
+      "num_warps": 8,
+      "num_stages": 2
+    },
+    "m128_n64_g1_w8_s2": {
+      "block_m": 128,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 1,
+      "num_warps": 8,
+      "num_stages": 2
+    },
+    "m64_n128_g8_w4_s2": {
+      "block_m": 64,
+      "block_n": 128,
+      "block_k": 32,
+      "group_size_m": 8,
+      "num_warps": 4,
+      "num_stages": 2
+    },
+    "m16_n64_g1_w4_s1": {
+      "block_m": 16,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 1,
+      "num_warps": 4,
+      "num_stages": 1
+    },
+    "m16_n64_g8_w4_s1": {
+      "block_m": 16,
+      "block_n": 64,
+      "block_k": 32,
+      "group_size_m": 8,
+      "num_warps": 4,
+      "num_stages": 1
+    },
+    "m64_n128_g1_w8_s2": {
+      "block_m": 64,
+      "block_n": 128,
+      "block_k": 32,
+      "group_size_m": 1,
+      "num_warps": 8,
+      "num_stages": 2
+    },
+    "m128_n128_g1_w8_s2": {
+      "block_m": 128,
+      "block_n": 128,
+      "block_k": 32,
+      "group_size_m": 1,
+      "num_warps": 8,
+      "num_stages": 2
+    }
+  },
+  "selected_dense": {
+    "2048x2048": {
+      "1": "m16_n64_g8_w4_s2",
+      "8": "m16_n64_g1_w4_s2",
+      "32": "m16_n64_g1_w4_s2",
+      "64": "m16_n64_g1_w4_s2",
+      "128": "m64_n64_g8_w4_s1",
+      "256": "m64_n64_g1_w4_s2",
+      "512": "m64_n128_g1_w4_s2",
+      "1024": "m64_n128_g1_w4_s2",
+      "2048": "m64_n128_g8_w8_s2"
+    },
+    "2624x6144": {
+      "1": "m16_n64_g8_w4_s2",
+      "8": "m16_n64_g1_w4_s2",
+      "32": "m16_n64_g1_w4_s2",
+      "64": "m16_n64_g1_w4_s2",
+      "128": "m64_n64_g8_w4_s1",
+      "256": "m64_n64_g1_w4_s2",
+      "512": "m64_n64_g8_w4_s2",
+      "1024": "m128_n64_g8_w8_s2",
+      "2048": "m128_n64_g1_w8_s2"
+    },
+    "3072x6144": {
+      "1": "m16_n64_g8_w4_s2",
+      "8": "m16_n64_g1_w4_s2",
+      "32": "m16_n64_g1_w4_s2",
+      "64": "m16_n64_g1_w4_s2",
+      "128": "m64_n64_g8_w4_s1",
+      "256": "m64_n64_g1_w4_s2",
+      "512": "m64_n128_g1_w4_s2",
+      "1024": "m64_n128_g8_w8_s2",
+      "2048": "m64_n128_g8_w8_s2"
+    },
+    "4096x2048": {
+      "1": "m16_n64_g8_w4_s2",
+      "8": "m16_n64_g1_w4_s2",
+      "32": "m16_n64_g1_w4_s2",
+      "64": "m64_n64_g8_w4_s1",
+      "128": "m64_n64_g1_w4_s2",
+      "256": "m64_n128_g1_w4_s2",
+      "512": "m64_n128_g1_w4_s2",
+      "1024": "m64_n128_g8_w4_s2",
+      "2048": "m64_n128_g8_w4_s2"
+    },
+    "4096x6144": {
+      "1": "m16_n64_g8_w4_s2",
+      "8": "m16_n64_g1_w4_s2",
+      "32": "m16_n64_g1_w4_s2",
+      "64": "m64_n64_g8_w4_s1",
+      "128": "m64_n64_g1_w4_s2",
+      "256": "m64_n64_g8_w4_s2",
+      "512": "m64_n128_g8_w4_s2",
+      "1024": "m64_n128_g8_w4_s2",
+      "2048": "m64_n128_g8_w8_s2"
+    },
+    "6144x1536": {
+      "1": "m16_n64_g8_w4_s2",
+      "8": "m16_n64_g1_w4_s2",
+      "32": "m16_n64_g1_w4_s2",
+      "64": "m64_n64_g8_w4_s1",
+      "128": "m64_n64_g1_w4_s2",
+      "256": "m64_n128_g1_w4_s2",
+      "512": "m64_n128_g8_w4_s2",
+      "1024": "m64_n128_g8_w4_s2",
+      "2048": "m64_n128_g8_w4_s2"
+    },
+    "6144x2048": {
+      "1": "m16_n64_g8_w4_s2",
+      "8": "m16_n64_g1_w4_s2",
+      "32": "m16_n64_g1_w4_s2",
+      "64": "m64_n64_g8_w4_s1",
+      "128": "m64_n64_g8_w4_s2",
+      "256": "m64_n128_g1_w4_s2",
+      "512": "m64_n128_g8_w4_s2",
+      "1024": "m64_n128_g8_w4_s2",
+      "2048": "m64_n128_g8_w8_s2"
+    }
+  },
+  "selected_moe": {
+    "1": "m16_n64_g1_w4_s2",
+    "8": "m16_n64_g1_w4_s1",
+    "32": "m16_n64_g8_w4_s1",
+    "64": "m16_n64_g8_w4_s1",
+    "128": "m16_n64_g1_w4_s2",
+    "256": "m64_n64_g1_w4_s2",
+    "512": "m64_n128_g1_w8_s2",
+    "1024": "m128_n128_g1_w8_s2",
+    "2048": "m64_n128_g8_w8_s2",
+    "4096": "m64_n128_g8_w8_s2"
+  },
+  "moe_launch_overrides": {
+    "split_k": 1
+  }
+}

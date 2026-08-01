@@ -85,6 +85,12 @@ async def resume(request: Request):
     return {"status": "resumed"}
 
 
+@router.post("/reset_prefix_cache")
+async def reset_prefix_cache(request: Request):
+    await engine_client(request).reset_prefix_cache()
+    return {"status": "ok"}
+
+
 @router.post("/update_weights")
 async def update_weights(request: Request):
     data = await request.json()

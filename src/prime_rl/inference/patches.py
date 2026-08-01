@@ -2,6 +2,93 @@ import torch
 
 from prime_rl.inference.vllm.padded_input_scrub import monkey_patch_vllm_padded_input_scrub
 
+_EXPECTED_SPARSE_VLLM_DISTRIBUTION = "0.24.0+lumi_aif_gfx90a_ee0da84"
+_GLM_SPARSE_MLA_TOPK = 2048
+
+
+def _strict_binary_env(name: str) -> bool:
+    """Read an opt-in without silently accepting a misspelled value."""
+    import os
+
+    value = os.environ.get(name)
+    if value in (None, "0"):
+        return False
+    if value == "1":
+        return True
+    raise ValueError(f"{name} must be unset, '0', or '1'; got {value!r}")
+
+
+def _validate_rocm_sparse_indexer_forward_hip(
+    *,
+    use_fp4_cache: object,
+    q_quant: object,
+) -> None:
+    """Reject inputs outside vLLM's measured ROCm sparse-indexer ABI."""
+
+    if use_fp4_cache:
+        raise NotImplementedError("AMD platform doesn't support fp4 cache yet")
+    if not isinstance(q_quant, torch.Tensor):
+        raise TypeError(
+            "AMD sparse_attn_indexer expects a single FP8 q_quant tensor"
+        )
+
+
+def _installed_vllm_distribution_version() -> str:
+    from importlib.metadata import version
+
+    return version("vllm")
+
+
+def _require_exact_vllm_sparse_patch_abi(
+    feature: str,
+    symbols: tuple[
+        tuple[
+            str,
+            object,
+            tuple[str, ...],
+            dict[str, object],
+        ],
+        ...,
+    ],
+) -> None:
+    """Fail closed when a private vLLM patch boundary has changed."""
+    import inspect
+
+    installed = _installed_vllm_distribution_version()
+    if installed != _EXPECTED_SPARSE_VLLM_DISTRIBUTION:
+        raise RuntimeError(f"{feature} requires vLLM {_EXPECTED_SPARSE_VLLM_DISTRIBUTION!r}; found {installed!r}")
+
+    for symbol_name, symbol, expected_names, expected_defaults in symbols:
+        parameters = tuple(inspect.signature(symbol).parameters.values())
+        actual_names = tuple(parameter.name for parameter in parameters)
+        if actual_names != expected_names:
+            raise RuntimeError(f"{feature} requires {symbol_name}{expected_names}; found parameters {actual_names}")
+        for parameter in parameters:
+            if parameter.kind is not inspect.Parameter.POSITIONAL_OR_KEYWORD:
+                raise RuntimeError(
+                    f"{feature} requires positional-or-keyword parameter "
+                    f"{symbol_name}.{parameter.name}; found {parameter.kind.description}"
+                )
+            expected_default = expected_defaults.get(
+                parameter.name,
+                inspect.Parameter.empty,
+            )
+            if parameter.default != expected_default:
+                raise RuntimeError(
+                    f"{feature} requires default "
+                    f"{symbol_name}.{parameter.name}={expected_default!r}; "
+                    f"found {parameter.default!r}"
+                )
+
+
+def _require_sparse_mla_topk_tokens(topk_tokens: object, source: str) -> int:
+    """Return the static GLM top-k only when metadata is a Python integer."""
+    if type(topk_tokens) is not int or topk_tokens != _GLM_SPARSE_MLA_TOPK:
+        raise ValueError(
+            f"{source} must provide topk_tokens={_GLM_SPARSE_MLA_TOPK} as a Python int, got {topk_tokens!r}"
+        )
+    return topk_tokens
+
 
 def apply_shared_vllm_patches():
     """vLLM general plugin: prime-rl patches that must run in every vLLM process.
@@ -11,6 +98,7 @@ def apply_shared_vllm_patches():
     load failures (``load_plugins_by_group`` logs and continues), so a broken
     entry-point target silently skips ALL of these patches.
     """
+    _install_cdna2_int8_quantization()
     _patch_lora_key_prefix()
     _patch_qwen35_moe_lora_format()
     monkey_patch_nano_v3_reasoning_parser()
@@ -44,6 +132,925 @@ def monkey_patch_online_fp8_parameter_cast():
 
     _per_block_cast_to_fp8._prime_rl_unwraps_parameters = True
     fp8.per_block_cast_to_fp8 = _per_block_cast_to_fp8
+
+
+def _install_cdna2_int8_quantization() -> None:
+    """Register the gfx90a INT8 config before vLLM parses model arguments."""
+
+    import os
+
+    if os.environ.get("PRIME_ROCM_CDNA2_INT8") in (None, "0"):
+        return
+
+    from prime_rl.inference.vllm.kernels.rocm_cdna2_int8_quant_config import (
+        install_cdna2_int8_quantization,
+    )
+
+    install_cdna2_int8_quantization()
+
+
+def _require_rocm_gfx90a(feature: str) -> str:
+    """Fail closed before installing a kernel specialized for CDNA2."""
+
+    if torch.version.hip is None:
+        raise RuntimeError(f"{feature} requires a ROCm PyTorch build")
+    device_index = torch.cuda.current_device()
+    properties = torch.cuda.get_device_properties(device_index)
+    architecture = getattr(properties, "gcnArchName", "").split(":")[0]
+    if architecture != "gfx90a":
+        raise RuntimeError(
+            f"{feature} is validated only on gfx90a; device {device_index} reports {properties.gcnArchName}"
+        )
+    return architecture
+
+
+def _cached_rocm_sparse_indexer_context_lens(context_lens):
+    from vllm.forward_context import (
+        get_forward_context,
+        is_forward_context_available,
+    )
+
+    if not is_forward_context_available():
+        return context_lens.to(device="cpu", non_blocking=False)
+
+    cache = get_forward_context().additional_kwargs.setdefault(
+        "_prime_rl_rocm_sparse_indexer_context_lens_cpu_cache",
+        {},
+    )
+    cache_key = (
+        context_lens.device,
+        context_lens.data_ptr(),
+        tuple(context_lens.shape),
+        tuple(context_lens.stride()),
+        context_lens.storage_offset(),
+        context_lens.dtype,
+    )
+    cached = cache.get(cache_key)
+    if cached is None:
+        cached = (
+            context_lens,
+            context_lens.to(device="cpu", non_blocking=False),
+        )
+        cache[cache_key] = cached
+    return cached[1]
+
+
+def _wrap_rocm_sparse_indexer_bulk_context_lens(original):
+    """Replace per-sequence GPU scalar reads with one synchronous host copy.
+
+    The host copy remains incompatible with full graph capture. This wrapper is
+    only a speed optimization for eager or genuinely breakable piecewise paths.
+    """
+    import functools
+
+    if getattr(original, "_prime_rl_bulk_context_lens", False):
+        return original
+
+    use_forward_context_cache = _strict_binary_env(
+        "PRIME_ROCM_SPARSE_INDEXER_FORWARD_CONTEXT_CACHE"
+    )
+
+    @functools.wraps(original)
+    def _bulk_context_lens(
+        q,
+        kv_cache,
+        weights,
+        context_lens,
+        block_tables,
+        max_model_len,
+    ):
+        if q.shape[1] == 1:
+            if use_forward_context_cache:
+                context_lens = _cached_rocm_sparse_indexer_context_lens(context_lens)
+            else:
+                context_lens = context_lens.to(device="cpu", non_blocking=False)
+        return original(
+            q,
+            kv_cache,
+            weights,
+            context_lens,
+            block_tables,
+            max_model_len,
+        )
+
+    _bulk_context_lens._prime_rl_bulk_context_lens = True
+    return _bulk_context_lens
+
+
+def _rocm_sparse_indexer_triton_decode_from_env():
+    enabled = _strict_binary_env("PRIME_ROCM_SPARSE_INDEXER_TRITON_DECODE")
+    bulk_context_lens = _strict_binary_env(
+        "PRIME_ROCM_SPARSE_INDEXER_BULK_CONTEXT_LENS"
+    )
+    if enabled and bulk_context_lens:
+        raise ValueError(
+            "PRIME_ROCM_SPARSE_INDEXER_TRITON_DECODE keeps context lengths on "
+            "the GPU and cannot be combined with "
+            "PRIME_ROCM_SPARSE_INDEXER_BULK_CONTEXT_LENS"
+        )
+    return enabled
+
+
+def _rocm_sparse_indexer_prefill_k_chunk_from_env():
+    import os
+
+    raw_value = os.environ.get("PRIME_ROCM_SPARSE_INDEXER_PREFILL_K_CHUNK")
+    if raw_value is None:
+        return None
+    try:
+        chunk_size = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("PRIME_ROCM_SPARSE_INDEXER_PREFILL_K_CHUNK must be a positive integer") from exc
+    if chunk_size < 1:
+        raise ValueError("PRIME_ROCM_SPARSE_INDEXER_PREFILL_K_CHUNK must be a positive integer")
+    return chunk_size
+
+
+def _wrap_rocm_sparse_indexer_prefill_k_chunk(original, chunk_size):
+    """Bound the fallback's H x M x N prefill score by slicing K."""
+    import functools
+
+    if chunk_size < 1:
+        raise ValueError("chunk_size must be a positive integer")
+    if getattr(original, "_prime_rl_prefill_k_chunk", None) == chunk_size:
+        return original
+
+    @functools.wraps(original)
+    def _chunked_prefill(
+        q,
+        kv,
+        weights,
+        cu_seqlen_ks,
+        cu_seqlen_ke,
+    ):
+        k_fp8, scale = kv
+        seq_len_kv = k_fp8.shape[0]
+        if seq_len_kv <= chunk_size:
+            return original(q, kv, weights, cu_seqlen_ks, cu_seqlen_ke)
+
+        logits_chunks = []
+        for chunk_start in range(0, seq_len_kv, chunk_size):
+            chunk_end = min(chunk_start + chunk_size, seq_len_kv)
+            chunk_len = chunk_end - chunk_start
+            chunk_starts = (cu_seqlen_ks - chunk_start).clamp(
+                min=0,
+                max=chunk_len,
+            )
+            chunk_ends = (cu_seqlen_ke - chunk_start).clamp(
+                min=0,
+                max=chunk_len,
+            )
+            logits_chunks.append(
+                original(
+                    q,
+                    (
+                        k_fp8[chunk_start:chunk_end],
+                        scale[chunk_start:chunk_end],
+                    ),
+                    weights,
+                    chunk_starts,
+                    chunk_ends,
+                )
+            )
+        return torch.cat(logits_chunks, dim=-1)
+
+    _chunked_prefill._prime_rl_prefill_k_chunk = chunk_size
+    return _chunked_prefill
+
+
+def monkey_patch_rocm_sparse_indexer_fallback():
+    """Allow vLLM's built-in ROCm sparse-indexer fallback without AITER.
+
+    GLM-5.2 uses the DeepSeek-V3.2 sparse-attention indexer. vLLM 0.24's ROCm
+    implementation already contains a gfx90a-compatible fallback: Triton handles
+    index-cache packing and PyTorch handles MQA logits when the optional ``aiter``
+    package is absent. ``SparseAttnIndexer.forward_hip`` nevertheless rejects the
+    call before that implementation can select its fallback.
+
+    Keep this opt-in because the PyTorch logits path is intended for correctness,
+    not throughput. Set ``PRIME_ROCM_SPARSE_INDEXER_FALLBACK=1`` to route the HIP
+    method to the existing ``rocm_aiter_sparse_attn_indexer`` custom op; with AITER
+    disabled, that op selects its own non-AITER implementations.
+
+    ``PRIME_ROCM_SPARSE_INDEXER_BULK_CONTEXT_LENS=1`` optionally replaces the
+    plain-decode fallback's per-sequence GPU scalar reads with one synchronous
+    host copy per indexer layer. Set
+    ``PRIME_ROCM_SPARSE_INDEXER_FORWARD_CONTEXT_CACHE=1`` alongside it to reuse
+    one host copy per unique context-length tensor within each forward. Neither
+    mode is full-graph compatible.
+
+    ``PRIME_ROCM_SPARSE_INDEXER_TRITON_DECODE=1`` instead selects PRIME-RL's
+    fused gfx90a OCP-FP8 paged-MQA kernel for one-token decode. It leaves
+    context lengths and block tables on the GPU and is mutually exclusive with
+    the bulk-host-context mode.
+
+    ``PRIME_ROCM_SPARSE_INDEXER_PREFILL_K_CHUNK=<positive integer>`` bounds the
+    non-AITER prefill fallback's temporary ``H x M x N`` score by slicing its K
+    dimension and concatenating the unchanged upstream results.
+    """
+    import functools
+    import os
+
+    if not _strict_binary_env("PRIME_ROCM_SPARSE_INDEXER_FALLBACK"):
+        return
+
+    from vllm.logger import init_logger
+    from vllm.model_executor.layers.sparse_attn_indexer import SparseAttnIndexer
+    from vllm.platforms import current_platform
+    from vllm.utils.torch_utils import _encode_layer_name, direct_register_custom_op
+    from vllm.v1.attention.ops import rocm_aiter_mla_sparse
+
+    if not current_platform.is_rocm():
+        return
+
+    triton_decode = _rocm_sparse_indexer_triton_decode_from_env()
+    prefill_k_chunk = _rocm_sparse_indexer_prefill_k_chunk_from_env()
+    signature_symbols = [
+        (
+            "SparseAttnIndexer.forward_hip",
+            SparseAttnIndexer.forward_hip,
+            ("self", "hidden_states", "q_quant", "k", "weights"),
+            {},
+        ),
+        (
+            "rocm_aiter_sparse_attn_indexer",
+            rocm_aiter_mla_sparse.rocm_aiter_sparse_attn_indexer,
+            (
+                "hidden_states",
+                "k_cache_prefix",
+                "kv_cache",
+                "q_fp8",
+                "k",
+                "weights",
+                "quant_block_size",
+                "scale_fmt",
+                "topk_tokens",
+                "head_dim",
+                "max_model_len",
+                "total_seq_lens",
+                "topk_indices_buffer",
+                "skip_k_cache_insert",
+            ),
+            {"skip_k_cache_insert": False},
+        ),
+        (
+            "rocm_aiter_sparse_attn_indexer_fake",
+            rocm_aiter_mla_sparse.rocm_aiter_sparse_attn_indexer_fake,
+            (
+                "hidden_states",
+                "k_cache_prefix",
+                "kv_cache",
+                "q_fp8",
+                "k",
+                "weights",
+                "quant_block_size",
+                "scale_fmt",
+                "topk_tokens",
+                "head_dim",
+                "max_model_len",
+                "total_seq_lens",
+                "topk_indices_buffer",
+                "skip_k_cache_insert",
+            ),
+            {"skip_k_cache_insert": False},
+        ),
+    ]
+    if triton_decode:
+        signature_symbols.append(
+            (
+                "rocm_fp8_paged_mqa_logits",
+                rocm_aiter_mla_sparse.rocm_fp8_paged_mqa_logits,
+                (
+                    "q_fp8",
+                    "kv_cache_fp8",
+                    "weights",
+                    "context_lens",
+                    "block_tables",
+                    "schedule_metadata",
+                    "max_model_len",
+                ),
+                {},
+            )
+        )
+    elif _strict_binary_env("PRIME_ROCM_SPARSE_INDEXER_BULK_CONTEXT_LENS"):
+        signature_symbols.append(
+            (
+                "fp8_paged_mqa_logits_torch",
+                rocm_aiter_mla_sparse.fp8_paged_mqa_logits_torch,
+                (
+                    "q",
+                    "kv_cache",
+                    "weights",
+                    "context_lens",
+                    "block_tables",
+                    "max_model_len",
+                ),
+                {},
+            )
+        )
+    if prefill_k_chunk is not None:
+        signature_symbols.append(
+            (
+                "fp8_mqa_logits_torch",
+                rocm_aiter_mla_sparse.fp8_mqa_logits_torch,
+                (
+                    "q",
+                    "kv",
+                    "weights",
+                    "cu_seqlen_ks",
+                    "cu_seqlen_ke",
+                ),
+                {},
+            )
+        )
+    _require_exact_vllm_sparse_patch_abi(
+        "PRIME_ROCM_SPARSE_INDEXER_FALLBACK",
+        tuple(signature_symbols),
+    )
+
+    rocm_aiter_sparse_attn_indexer = rocm_aiter_mla_sparse.rocm_aiter_sparse_attn_indexer
+    rocm_aiter_sparse_attn_indexer_fake = rocm_aiter_mla_sparse.rocm_aiter_sparse_attn_indexer_fake
+    if triton_decode:
+        _require_rocm_gfx90a("PRIME_ROCM_SPARSE_INDEXER_TRITON_DECODE")
+
+        from prime_rl.inference.vllm.kernels.rocm_fp8_paged_mqa import (
+            wrap_fp8_paged_mqa_logits_gfx90a,
+        )
+
+        original_logits = rocm_aiter_mla_sparse.rocm_fp8_paged_mqa_logits
+        rocm_aiter_mla_sparse.rocm_fp8_paged_mqa_logits = wrap_fp8_paged_mqa_logits_gfx90a(original_logits)
+        init_logger(__name__).warning(
+            "Enabled PRIME_ROCM_SPARSE_INDEXER_TRITON_DECODE: using the fused gfx90a OCP-FP8 paged-MQA decode kernel."
+        )
+    elif os.environ.get("PRIME_ROCM_SPARSE_INDEXER_BULK_CONTEXT_LENS") == "1":
+        original_logits = rocm_aiter_mla_sparse.fp8_paged_mqa_logits_torch
+        patched_logits = _wrap_rocm_sparse_indexer_bulk_context_lens(original_logits)
+        rocm_aiter_mla_sparse.fp8_paged_mqa_logits_torch = patched_logits
+        if patched_logits is not original_logits:
+            if _strict_binary_env(
+                "PRIME_ROCM_SPARSE_INDEXER_FORWARD_CONTEXT_CACHE"
+            ):
+                init_logger(__name__).warning(
+                    "Enabled PRIME_ROCM_SPARSE_INDEXER_BULK_CONTEXT_LENS with "
+                    "PRIME_ROCM_SPARSE_INDEXER_FORWARD_CONTEXT_CACHE: copying "
+                    "plain-decode context lengths to host once per unique tensor "
+                    "per forward; eager or breakable piecewise execution only, "
+                    "not full graphs."
+                )
+            else:
+                init_logger(__name__).warning(
+                    "Enabled PRIME_ROCM_SPARSE_INDEXER_BULK_CONTEXT_LENS: copying "
+                    "plain-decode context lengths to host once per indexer layer; "
+                    "eager or breakable piecewise execution only, not full graphs."
+                )
+
+    if prefill_k_chunk is not None:
+        original_prefill = rocm_aiter_mla_sparse.fp8_mqa_logits_torch
+        patched_prefill = _wrap_rocm_sparse_indexer_prefill_k_chunk(
+            original_prefill,
+            prefill_k_chunk,
+        )
+        rocm_aiter_mla_sparse.fp8_mqa_logits_torch = patched_prefill
+        if patched_prefill is not original_prefill:
+            init_logger(__name__).warning(
+                "Enabled PRIME_ROCM_SPARSE_INDEXER_PREFILL_K_CHUNK=%d: "
+                "chunking the non-AITER prefill fallback's K dimension.",
+                prefill_k_chunk,
+            )
+
+    if getattr(SparseAttnIndexer.forward_hip, "_prime_rl_non_aiter_fallback", False):
+        return
+
+    @functools.wraps(rocm_aiter_sparse_attn_indexer)
+    def _bounded_profile_sparse_attn_indexer(
+        hidden_states,
+        k_cache_prefix,
+        kv_cache,
+        q_fp8,
+        k,
+        weights,
+        quant_block_size,
+        scale_fmt,
+        topk_tokens,
+        head_dim,
+        max_model_len,
+        total_seq_lens,
+        topk_indices_buffer,
+        skip_k_cache_insert=False,
+    ):
+        from vllm.forward_context import get_forward_context
+
+        # The gfx90a dummy-profile path sizes its decode workspace as
+        # q_heads * max_num_batched_tokens * max_model_len (128 GiB for this
+        # GLM smoke), although runtime decode rows are bounded by concurrent
+        # sequences times speculative tokens. Preserve the upstream prefill
+        # and transient-workspace accounting, but give its dummy call the real
+        # decode-row bound. Runtime calls retain the original hidden states.
+        attn_metadata = get_forward_context().attn_metadata
+        if not isinstance(attn_metadata, dict):
+            max_decode_tokens = int(os.environ.get("PRIME_ROCM_SPARSE_INDEXER_PROFILE_MAX_DECODE_TOKENS", "1"))
+            if max_decode_tokens < 1:
+                raise ValueError("PRIME_ROCM_SPARSE_INDEXER_PROFILE_MAX_DECODE_TOKENS must be at least 1")
+            hidden_states = hidden_states[:max_decode_tokens]
+
+        return rocm_aiter_sparse_attn_indexer(
+            hidden_states,
+            k_cache_prefix,
+            kv_cache,
+            q_fp8,
+            k,
+            weights,
+            quant_block_size,
+            scale_fmt,
+            topk_tokens,
+            head_dim,
+            max_model_len,
+            total_seq_lens,
+            topk_indices_buffer,
+            skip_k_cache_insert,
+        )
+
+    # vLLM registers this op from AiterOps.register_ops_once(), but that method
+    # is guarded by ``if_aiter_supported`` even though the op implementation
+    # itself has non-AITER paths. Mirror vLLM's registration for this one op.
+    if not hasattr(torch.ops.vllm, "rocm_aiter_sparse_attn_indexer"):
+        direct_register_custom_op(
+            op_name="rocm_aiter_sparse_attn_indexer",
+            op_func=_bounded_profile_sparse_attn_indexer,
+            mutates_args=["topk_indices_buffer"],
+            fake_impl=rocm_aiter_sparse_attn_indexer_fake,
+            dispatch_key=current_platform.dispatch_key,
+        )
+
+    def _patched_forward_hip(self, hidden_states, q_quant, k, weights):
+        _validate_rocm_sparse_indexer_forward_hip(
+            use_fp4_cache=self.use_fp4_cache,
+            q_quant=q_quant,
+        )
+        return torch.ops.vllm.rocm_aiter_sparse_attn_indexer(
+            hidden_states,
+            _encode_layer_name(self.k_cache.prefix),
+            self.k_cache.kv_cache,
+            q_quant,
+            k,
+            weights,
+            self.quant_block_size,
+            self.scale_fmt,
+            self.topk_tokens,
+            self.head_dim,
+            self.max_model_len,
+            self.max_total_seq_len,
+            self.topk_indices_buffer,
+            skip_k_cache_insert=self.skip_k_cache_insert,
+        )
+
+    _patched_forward_hip._prime_rl_non_aiter_fallback = True
+    SparseAttnIndexer.forward_hip = _patched_forward_hip
+    init_logger(__name__).warning(
+        "Enabled PRIME_ROCM_SPARSE_INDEXER_FALLBACK: using vLLM's non-AITER "
+        "ROCm sparse-indexer path; benchmark before production use."
+    )
+
+
+def _rocm_sparse_mla_prefill_q_chunk_from_env():
+    import os
+
+    raw_value = os.environ.get("PRIME_ROCM_SPARSE_MLA_PREFILL_Q_CHUNK")
+    if raw_value is None:
+        return None
+    try:
+        chunk_size = int(raw_value)
+    except ValueError as exc:
+        raise ValueError("PRIME_ROCM_SPARSE_MLA_PREFILL_Q_CHUNK must be a positive integer") from exc
+    if chunk_size < 1:
+        raise ValueError("PRIME_ROCM_SPARSE_MLA_PREFILL_Q_CHUNK must be a positive integer")
+    return chunk_size
+
+
+def _rocm_sparse_mla_backend_from_env():
+    """Return the explicitly selected non-AITER sparse-MLA backend."""
+    import os
+
+    reference_enabled = _strict_binary_env(
+        "PRIME_ROCM_SPARSE_MLA_REFERENCE_FALLBACK"
+    )
+    triton_enabled = _strict_binary_env("PRIME_ROCM_SPARSE_MLA_TRITON")
+    if reference_enabled and triton_enabled:
+        raise ValueError(
+            "PRIME_ROCM_SPARSE_MLA_REFERENCE_FALLBACK and PRIME_ROCM_SPARSE_MLA_TRITON are mutually exclusive"
+        )
+    if triton_enabled:
+        if os.environ.get("PRIME_ROCM_SPARSE_MLA_PREFILL_Q_CHUNK") is not None:
+            raise ValueError(
+                "PRIME_ROCM_SPARSE_MLA_PREFILL_Q_CHUNK only applies to PRIME_ROCM_SPARSE_MLA_REFERENCE_FALLBACK"
+            )
+        return "triton"
+    if reference_enabled:
+        return "reference"
+    return None
+
+
+def _reference_mla_sparse_prefill_output(
+    reference_mla_sparse_prefill,
+    q,
+    kv,
+    indices,
+    scale,
+    kv_lora_rank,
+    q_chunk_size,
+):
+    """Evaluate reference sparse MLA with an optional query-axis memory bound."""
+    if q_chunk_size is None or q.shape[0] <= q_chunk_size:
+        output, _ = reference_mla_sparse_prefill(
+            q,
+            kv,
+            indices,
+            scale,
+            kv_lora_rank,
+        )
+        return output
+
+    output_chunks = []
+    for chunk_start in range(0, q.shape[0], q_chunk_size):
+        chunk_end = min(chunk_start + q_chunk_size, q.shape[0])
+        output, _ = reference_mla_sparse_prefill(
+            q[chunk_start:chunk_end],
+            kv,
+            indices[chunk_start:chunk_end],
+            scale,
+            kv_lora_rank,
+        )
+        output_chunks.append(output)
+    return torch.cat(output_chunks, dim=0)
+
+
+def _rocm_sparse_mla_runtime_mismatches(vllm_config: object) -> tuple[str, ...]:
+    """Validate the complete runtime contract measured for sparse GLM-5.2."""
+
+    from prime_rl.inference.vllm.kernels.rocm_gfx90a_mla_bmm_integration import (
+        glm52_mla_runtime_mismatches,
+    )
+
+    mismatches = list(glm52_mla_runtime_mismatches(vllm_config))
+    parallel_config = getattr(vllm_config, "parallel_config", None)
+    expected_topology = {
+        "data_parallel_size": 2,
+        "pipeline_parallel_size": 1,
+        "enable_expert_parallel": True,
+    }
+    for field, expected in expected_topology.items():
+        actual = getattr(parallel_config, field, None)
+        if actual != expected:
+            mismatches.append(f"{field}={actual!r} (expected {expected!r})")
+
+    cache_config = getattr(vllm_config, "cache_config", None)
+    cache_dtype = getattr(cache_config, "cache_dtype", None)
+    if cache_dtype not in ("auto", "bfloat16"):
+        mismatches.append(f"cache_config.cache_dtype={cache_dtype!r} (expected 'auto' or 'bfloat16')")
+    return tuple(mismatches)
+
+
+def _rocm_sparse_mla_cache_spec_mismatches(kv_cache_spec: object) -> tuple[str, ...]:
+    """Validate the BF16 cache storage consumed by the custom sparse kernel."""
+
+    mismatches = []
+    cache_dtype = getattr(kv_cache_spec, "dtype", None)
+    if cache_dtype is not torch.bfloat16:
+        mismatches.append(f"kv_cache_spec.dtype={cache_dtype!r} (expected torch.bfloat16)")
+    cache_dtype_str = getattr(kv_cache_spec, "cache_dtype_str", None)
+    if cache_dtype_str not in (None, "auto", "bfloat16"):
+        mismatches.append(
+            f"kv_cache_spec.cache_dtype_str={cache_dtype_str!r} "
+            "(expected None, 'auto', or 'bfloat16')"
+        )
+    return tuple(mismatches)
+
+
+def monkey_patch_rocm_sparse_mla_fallback():
+    """Select a non-AITER sparse-MLA attention backend on ROCm.
+
+    vLLM 0.24 unconditionally selects ``ROCM_AITER_MLA_SPARSE`` for sparse MLA
+    models on ROCm. Its indexer has non-AITER implementations, but its metadata
+    builder and attention kernel still import AITER. AITER only supports MI3xx
+    and newer GPUs, so that backend cannot start on LUMI's gfx90a MI250X GPUs.
+
+    Both opt-in backends keep vLLM's paged sparse-index construction and disable
+    only its AITER-specific persistent metadata:
+
+    * ``PRIME_ROCM_SPARSE_MLA_TRITON=1`` selects PRIME-RL's bounded-memory
+      gfx90a BF16 kernel. It consumes the ragged index metadata directly,
+      materializes only a bounded ``M x 2048`` int32 index workspace, and never
+      gathers an ``M x 2048 x 576`` KV tensor.
+    * ``PRIME_ROCM_SPARSE_MLA_REFERENCE_FALLBACK=1`` pads the ragged selected
+      indices and evaluates vLLM's existing PyTorch reference attention. This
+      path is intended for correctness smoke tests, not production throughput.
+
+    The selectors are mutually exclusive.
+
+    ``PRIME_ROCM_SPARSE_MLA_PREFILL_Q_CHUNK=<positive integer>`` optionally
+    bounds the reference kernel's ``sq x topk x dqk`` gather by slicing queries
+    and their selected-token indices along ``sq``. It is only valid with the
+    reference backend. Unset preserves the upstream single-call behavior.
+    """
+    import functools
+
+    backend = _rocm_sparse_mla_backend_from_env()
+    if backend is None:
+        return
+
+    from vllm.logger import init_logger
+    from vllm.platforms import current_platform
+    from vllm.v1.attention.backends.mla import rocm_aiter_mla_sparse
+
+    if not current_platform.is_rocm():
+        return
+
+    if backend == "triton":
+        _require_rocm_gfx90a("PRIME_ROCM_SPARSE_MLA_TRITON")
+
+    prefill_q_chunk = _rocm_sparse_mla_prefill_q_chunk_from_env() if backend == "reference" else None
+    builder_cls = rocm_aiter_mla_sparse.ROCMAiterMLASparseMetadataBuilder
+    impl_cls = rocm_aiter_mla_sparse.ROCMAiterMLASparseImpl
+    _require_exact_vllm_sparse_patch_abi(
+        f"PRIME_ROCM_SPARSE_MLA_{backend.upper()}",
+        (
+            (
+                "ROCMAiterMLASparseMetadataBuilder.__init__",
+                builder_cls.__init__,
+                ("self", "kv_cache_spec", "layer_names", "vllm_config", "device"),
+                {},
+            ),
+            (
+                "ROCMAiterMLASparseMetadataBuilder.build",
+                builder_cls.build,
+                (
+                    "self",
+                    "common_prefix_len",
+                    "common_attn_metadata",
+                    "fast_build",
+                ),
+                {"fast_build": False},
+            ),
+            (
+                "ROCMAiterMLASparseImpl._forward_mla",
+                impl_cls._forward_mla,
+                (
+                    "self",
+                    "layer",
+                    "q",
+                    "kv_c_and_k_pe_cache",
+                    "attn_metadata",
+                ),
+                {},
+            ),
+        ),
+    )
+    installed_backend = getattr(
+        builder_cls.__init__,
+        "_prime_rl_non_aiter_sparse_mla_backend",
+        None,
+    )
+    if installed_backend is not None:
+        if installed_backend != backend:
+            raise RuntimeError(
+                "ROCm sparse-MLA fallback is already installed with backend "
+                f"{installed_backend!r}; cannot switch to {backend!r} in-process"
+            )
+        return
+
+    original_builder_init = builder_cls.__init__
+    original_builder_build = builder_cls.build
+    original_impl_forward_mla = impl_cls._forward_mla
+
+    persistent_metadata_attributes = (
+        "_mla_work_meta_data",
+        "_mla_work_indptr",
+        "_mla_work_info_set",
+        "_mla_reduce_indptr",
+        "_mla_reduce_final_map",
+        "_mla_reduce_partial_map",
+    )
+    generic_builder_attributes = (
+        "kv_cache_spec",
+        "model_config",
+        "model_dtype",
+        "device",
+        "num_heads",
+        "mla_dims",
+        "topk_tokens",
+        "max_model_len_tensor",
+        "dummy_block_table",
+        "req_id_per_token_buffer",
+        "qo_indptr",
+        "paged_kv_last_page_len",
+        "paged_kv_indices",
+        "paged_kv_indptr",
+    )
+
+    def _suppress_aiter_persistent_metadata(builder):
+        for attribute in persistent_metadata_attributes:
+            setattr(builder, attribute, None)
+
+    @functools.wraps(original_builder_init)
+    def _builder_init_without_aiter(
+        self,
+        kv_cache_spec,
+        layer_names,
+        vllm_config,
+        device,
+    ):
+        configured_topk = getattr(
+            getattr(getattr(vllm_config, "model_config", None), "hf_config", None),
+            "index_topk",
+            None,
+        )
+        _require_sparse_mla_topk_tokens(
+            configured_topk,
+            "vllm_config.model_config.hf_config",
+        )
+        runtime_mismatches = _rocm_sparse_mla_runtime_mismatches(vllm_config)
+        runtime_mismatches += _rocm_sparse_mla_cache_spec_mismatches(kv_cache_spec)
+        if runtime_mismatches:
+            raise ValueError(
+                "ROCm sparse MLA requires the exact GLM-5.2 runtime contract: "
+                + "; ".join(runtime_mismatches)
+            )
+
+        try:
+            original_builder_init(
+                self,
+                kv_cache_spec,
+                layer_names,
+                vllm_config,
+                device,
+            )
+        except Exception as exc:
+            missing_generic_state = tuple(
+                attribute for attribute in generic_builder_attributes if not hasattr(self, attribute)
+            )
+            if missing_generic_state:
+                raise
+            if isinstance(exc, ModuleNotFoundError) and exc.name != "aiter":
+                raise
+
+            # The exact upstream ABI initializes this complete generic state
+            # before entering its optional AITER metadata section.
+            self._num_attention_heads = max(16, self.num_heads)
+            if not hasattr(self, "_prev_req_extent"):
+                self._prev_req_extent = 0
+            if not hasattr(self, "_prev_indices_extent"):
+                self._prev_indices_extent = 0
+            if not hasattr(self, "_prev_metadata_key"):
+                self._prev_metadata_key = None
+        _suppress_aiter_persistent_metadata(self)
+        _require_sparse_mla_topk_tokens(
+            self.topk_tokens,
+            "ROCMAiterMLASparseMetadataBuilder",
+        )
+
+    @functools.wraps(original_builder_build)
+    def _build_without_aiter(
+        self,
+        common_prefix_len,
+        common_attn_metadata,
+        fast_build=False,
+    ):
+        _require_sparse_mla_topk_tokens(
+            self.topk_tokens,
+            "ROCMAiterMLASparseMetadataBuilder",
+        )
+        _suppress_aiter_persistent_metadata(self)
+        # Preinstall the exact key checked by vLLM so its build method always
+        # skips the AITER metadata launch while retaining generic sparse state.
+        num_reqs = common_attn_metadata.num_reqs
+        clamped_seq_lens = rocm_aiter_mla_sparse.np.minimum(
+            common_attn_metadata.seq_lens_cpu[:num_reqs].numpy(),
+            self.topk_tokens,
+        )
+        self._prev_metadata_key = (
+            common_attn_metadata.num_actual_tokens,
+            int(common_attn_metadata.max_query_len),
+            self._num_attention_heads,
+            clamped_seq_lens.tobytes(),
+        )
+        return original_builder_build(
+            self,
+            common_prefix_len,
+            common_attn_metadata,
+            fast_build,
+        )
+
+    if backend == "triton":
+        from prime_rl.inference.vllm.kernels.rocm_sparse_mla import (
+            rocm_sparse_mla_bf16,
+        )
+
+        @functools.wraps(original_impl_forward_mla)
+        def _forward_mla(
+            self,
+            layer,
+            q,
+            kv_c_and_k_pe_cache,
+            attn_metadata,
+        ):
+            del layer
+            _require_sparse_mla_topk_tokens(
+                attn_metadata.topk_tokens,
+                "ROCMAiterMLASparseMetadata",
+            )
+            num_tokens = q.shape[0]
+            return rocm_sparse_mla_bf16(
+                q,
+                kv_c_and_k_pe_cache,
+                attn_metadata.paged_kv_indices,
+                attn_metadata.paged_kv_indptr[: num_tokens + 1],
+                self.scale,
+                num_heads=self.num_heads,
+            )
+
+    else:
+
+        @functools.wraps(original_impl_forward_mla)
+        def _forward_mla(
+            self,
+            layer,
+            q,
+            kv_c_and_k_pe_cache,
+            attn_metadata,
+        ):
+            del layer
+            num_tokens = q.shape[0]
+            topk_tokens = _require_sparse_mla_topk_tokens(
+                attn_metadata.topk_tokens,
+                "ROCMAiterMLASparseMetadata",
+            )
+            indptr = attn_metadata.paged_kv_indptr[: num_tokens + 1].to(torch.int64)
+            lengths = indptr[1:] - indptr[:-1]
+            positions = torch.arange(topk_tokens, device=q.device, dtype=torch.int64)
+            offsets = indptr[:-1, None] + positions[None, :]
+            valid_rows = (
+                (indptr[:-1] >= 0)
+                & (indptr[1:] >= indptr[:-1])
+                & (indptr[1:] <= attn_metadata.paged_kv_indices.shape[0])
+                & (lengths <= topk_tokens)
+            )
+            valid = valid_rows[:, None] & (positions[None, :] < lengths[:, None])
+            offsets = torch.where(valid, offsets, torch.zeros_like(offsets))
+            indices = attn_metadata.paged_kv_indices[offsets]
+            indices = torch.where(valid, indices, torch.full_like(indices, -1))
+
+            # The converted indices address tokens, while vLLM stores the cache
+            # as [blocks, block_size, head_size]. Flatten the first two
+            # dimensions so the bundled reference implementation sees
+            # [tokens, 1, head_size].
+            kv = kv_c_and_k_pe_cache.reshape(-1, 1, kv_c_and_k_pe_cache.shape[-1])
+            output = _reference_mla_sparse_prefill_output(
+                rocm_aiter_mla_sparse.reference_mla_sparse_prefill,
+                q,
+                kv,
+                indices[:, None, :],
+                self.scale,
+                self.kv_lora_rank,
+                prefill_q_chunk,
+            )
+            output = torch.where(
+                valid_rows[:, None, None],
+                output,
+                torch.zeros_like(output),
+            )
+            # AITER requires at least 16 query heads and the caller pads smaller
+            # TP-local head counts before entering ``_forward_mla``. Preserve
+            # the stock method's contract by removing repeated heads again.
+            return rocm_aiter_mla_sparse.AiterMLAHelper.get_mla_unpadded_o(
+                self.num_heads,
+                output,
+            )
+
+    _builder_init_without_aiter._prime_rl_non_aiter_sparse_mla_backend = backend
+    builder_cls.__init__ = _builder_init_without_aiter
+    builder_cls.build = _build_without_aiter
+    impl_cls._forward_mla = _forward_mla
+    if backend == "triton":
+        init_logger(__name__).warning(
+            "Enabled PRIME_ROCM_SPARSE_MLA_TRITON: using the bounded-memory gfx90a BF16 sparse-MLA kernel."
+        )
+    else:
+        init_logger(__name__).warning(
+            "Enabled PRIME_ROCM_SPARSE_MLA_REFERENCE_FALLBACK: using PyTorch "
+            "reference sparse MLA on ROCm; smoke tests only."
+        )
+        if prefill_q_chunk is not None:
+            init_logger(__name__).warning(
+                "Enabled PRIME_ROCM_SPARSE_MLA_PREFILL_Q_CHUNK=%d: bounding "
+                "the reference sparse-MLA prefill gather along its query "
+                "dimension.",
+                prefill_q_chunk,
+            )
+
+
+def monkey_patch_rocm_sparse_mla_reference_fallback():
+    """Backward-compatible entry point for the non-AITER sparse-MLA selector."""
+    monkey_patch_rocm_sparse_mla_fallback()
 
 
 def monkey_patch_kv_xfer_finished_tolerate_freed():
@@ -705,9 +1712,7 @@ def monkey_patch_fp32_lm_head():
             if self._fp32_lm_head_use_native_out_dtype:
                 logger.warning("fp32 lm_head ENABLED for this LogitsProcessor instance.")
             else:
-                logger.warning(
-                    "fp32 lm_head requested on ROCm; using vLLM ROCm lm_head GEMM plus fp32 logits cast."
-                )
+                logger.warning("fp32 lm_head requested on ROCm; using vLLM ROCm lm_head GEMM plus fp32 logits cast.")
 
     def _patched_get_logits(self, hidden_states, lm_head, embedding_bias):
         if not getattr(self, "_fp32_lm_head_enabled", False):
@@ -737,43 +1742,378 @@ def monkey_patch_fp32_lm_head():
     logger.info("Installed fp32 lm_head patch (native out_dtype=fp32 mm).")
 
 
+def _align_deepseek_router_logits_dtype(gate, router_logits_dtype):
+    """Align a DeepSeek-family gate before FusedMoE backend selection.
+
+    This is the pinned-vLLM backport seam. Upstream should pass the selected
+    gate dtype directly while constructing ``FusedMoE``.
+    """
+    import torch
+
+    if gate is None or not hasattr(gate, "out_dtype"):
+        raise RuntimeError(
+            "fp32 router logits require DeepseekV2MoE to pass a "
+            "GateLinear through FusedMoE(gate=...)"
+        )
+    if gate.out_dtype is None:
+        if router_logits_dtype not in (None, torch.float32):
+            raise RuntimeError(
+                "FusedMoE router_logits_dtype disagrees with the requested "
+                f"FP32 gate: {router_logits_dtype}"
+            )
+        gate.set_out_dtype(torch.float32)
+    if gate.out_dtype == torch.float32:
+        if router_logits_dtype not in (None, torch.float32):
+            raise RuntimeError(
+                "FusedMoE router_logits_dtype disagrees with the FP32 gate: "
+                f"{router_logits_dtype}"
+            )
+        return torch.float32
+    return router_logits_dtype
+
+
+def _require_exact_vllm_fp32_router_patch_abi(fused_moe, deepseek_moe_init) -> None:
+    """Validate every pinned constructor parameter touched by the backport."""
+
+    _require_exact_vllm_sparse_patch_abi(
+        "fp32 DeepSeek router-logits backport",
+        (
+            (
+                "deepseek_v2.FusedMoE",
+                fused_moe,
+                (
+                    "num_experts",
+                    "top_k",
+                    "hidden_size",
+                    "intermediate_size",
+                    "params_dtype",
+                    "renormalize",
+                    "use_grouped_topk",
+                    "num_expert_group",
+                    "topk_group",
+                    "quant_config",
+                    "tp_size",
+                    "dp_size",
+                    "pcp_size",
+                    "prefix",
+                    "custom_routing_function",
+                    "router",
+                    "scoring_func",
+                    "routed_scaling_factor",
+                    "swiglu_limit",
+                    "swiglu_alpha",
+                    "swiglu_beta",
+                    "e_score_correction_bias",
+                    "apply_router_weight_on_input",
+                    "activation",
+                    "enable_eplb",
+                    "num_redundant_experts",
+                    "has_bias",
+                    "is_sequence_parallel",
+                    "expert_mapping",
+                    "n_shared_experts",
+                    "router_logits_dtype",
+                    "gate",
+                    "shared_experts",
+                    "shared_expert_gate",
+                    "routed_input_transform",
+                    "routed_output_transform",
+                    "apply_routed_scale_to_output",
+                    "zero_expert_type",
+                    "hash_indices_table",
+                    "runner_cls",
+                    "runner_args",
+                    "routed_experts_cls",
+                    "routed_experts_args",
+                ),
+                {
+                    "params_dtype": None,
+                    "renormalize": True,
+                    "use_grouped_topk": False,
+                    "num_expert_group": None,
+                    "topk_group": None,
+                    "quant_config": None,
+                    "tp_size": None,
+                    "dp_size": None,
+                    "pcp_size": None,
+                    "prefix": "",
+                    "custom_routing_function": None,
+                    "router": None,
+                    "scoring_func": "softmax",
+                    "routed_scaling_factor": 1.0,
+                    "swiglu_limit": None,
+                    "swiglu_alpha": None,
+                    "swiglu_beta": None,
+                    "e_score_correction_bias": None,
+                    "apply_router_weight_on_input": False,
+                    "activation": "silu",
+                    "enable_eplb": False,
+                    "num_redundant_experts": 0,
+                    "has_bias": False,
+                    "is_sequence_parallel": False,
+                    "expert_mapping": None,
+                    "n_shared_experts": None,
+                    "router_logits_dtype": None,
+                    "gate": None,
+                    "shared_experts": None,
+                    "shared_expert_gate": None,
+                    "routed_input_transform": None,
+                    "routed_output_transform": None,
+                    "apply_routed_scale_to_output": False,
+                    "zero_expert_type": None,
+                    "hash_indices_table": None,
+                    "runner_cls": None,
+                    "runner_args": None,
+                    "routed_experts_cls": None,
+                    "routed_experts_args": None,
+                },
+            ),
+            (
+                "deepseek_v2.DeepseekV2MoE.__init__",
+                deepseek_moe_init,
+                (
+                    "self",
+                    "config",
+                    "parallel_config",
+                    "quant_config",
+                    "prefix",
+                ),
+                {
+                    "quant_config": None,
+                    "prefix": "",
+                },
+            ),
+        ),
+    )
+
+
 def monkey_patch_fp32_router_logits():
     """Emit fp32 MoE router logits for DeepSeek-family models (incl. GLM-5.x glm_moe_dsa).
 
     vLLM's DeepseekV2MoE gate is a GateLinear with a bf16 weight and no out_dtype,
     so router logits are rounded to bf16 before expert scoring. GLM-5.x was trained
-    with fp32 routing (Megatron ``--moe-router-dtype fp32``); upstream now runs its
-    gate fully in fp32 (vllm-project/vllm#47410, not in the pinned release).
-    Setting ``out_dtype=float32`` routes the gate through GateLinear's cuBLAS
-    bf16xbf16->fp32 tier: same GEMM, but the fp32 accumulator is written out
-    unrounded. Unlike the upstream PR, the gate weight stays bf16, so the LoRA
-    Triton kernel dtype assert and the bf16 weight-broadcast path are unaffected.
+    with fp32 routing (Megatron ``--moe-router-dtype fp32``). Current upstream
+    vLLM keeps the gate weight in BF16 and requests an FP32 output
+    (vllm-project/vllm#47970, which superseded the full weight upcast in #47410).
+    This backport requests the same dtype contract. Backends with native
+    BF16xBF16-to-FP32 output write the accumulator without a BF16 output
+    round-trip; the stock ROCm fallback described below does not.
+
+    On ROCm, vLLM's fallback first stores BF16 and only then casts to FP32.
+    ``PRIME_ROCM_GFX90A_GATE_LINEAR=1`` replaces that path for the exact
+    GLM-5.2 ``[M, 6144] @ [256, 6144].T`` contract with PRIME-RL's
+    BF16-to-FP32 gfx90a kernel. The opt-in fails closed on a changed model,
+    device, shape, dtype, token bound, or vLLM ABI. With the opt-in unset,
+    vLLM's stock path is unchanged.
+
+    ``PRIME_ROCM_GFX90A_ONE_GROUP_TOPK=1`` also recognizes GLM-5.2's
+    ``n_group=topk_group=1`` identity grouping and dispatches directly to
+    vLLM's fused biased-sigmoid top-k kernel. It preserves unbiased routing
+    weights, normalization, and the runner's separate 2.5 output scale.
 
     Activated by ``additional_config["fp32_router_logits"] = True``; the launcher
-    sets this when ``inference.enable_fp32_router_logits`` is set. The flag is read
-    at module construction, where vLLM guarantees a ``set_current_vllm_config()``
-    context. No-op if something else already set an out_dtype (e.g. the ROCm AITER
-    branch, whose kernel wants matching dtypes).
+    sets this when ``inference.enable_fp32_router_logits`` is set. The flag is
+    read from vLLM's module-construction context. Direct FusedMoE construction
+    without that context remains an untouched stock call when no gfx90a kernel
+    opt-in is set. An explicitly selected gate dtype (for example AITER's BF16
+    contract) is preserved.
     """
+    import functools
+    import inspect
+    import os
+
     import torch
-    from vllm.config import get_current_vllm_config
+    from vllm.config import get_current_vllm_config_or_none
     from vllm.logger import init_logger
-    from vllm.model_executor.models.deepseek_v2 import DeepseekV2MoE
+    from vllm.model_executor.models import deepseek_v2
 
     logger = init_logger(__name__)
+    DeepseekV2MoE = deepseek_v2.DeepseekV2MoE
 
+    init_is_patched = getattr(
+        DeepseekV2MoE.__init__,
+        "_prime_rl_fp32_router_logits_patch",
+        False,
+    )
+    factory_is_patched = getattr(
+        deepseek_v2.FusedMoE,
+        "_prime_rl_fp32_router_logits_factory_patch",
+        False,
+    )
+    if init_is_patched and factory_is_patched:
+        return
+    if init_is_patched or factory_is_patched:
+        raise RuntimeError(
+            "fp32 router-logits backport is only partially installed; "
+            "refusing to stack another constructor patch"
+        )
+
+    def _strict_env_enabled(name):
+        value = os.environ.get(name)
+        if value in (None, "0"):
+            return False
+        if value == "1":
+            return True
+        raise ValueError(f"{name} must be unset, '0', or '1'; got {value!r}")
+
+    gfx90a_gate_linear = _strict_env_enabled("PRIME_ROCM_GFX90A_GATE_LINEAR")
+    one_group_topk = _strict_env_enabled("PRIME_ROCM_GFX90A_ONE_GROUP_TOPK")
+
+    # DeepseekV2MoE passes gate.out_dtype into FusedMoE while it constructs the
+    # FusedMoEConfig and selects a backend. Updating the gate only after
+    # DeepseekV2MoE.__init__ returns leaves that configuration at BF16 even
+    # though the gate subsequently emits FP32. Set the dtype at the factory
+    # boundary instead, where both the gate and FusedMoE observe it before
+    # backend selection. Preserve an explicitly selected dtype such as AITER's
+    # BF16 contract.
+    _original_fused_moe = deepseek_v2.FusedMoE
     _original_init = DeepseekV2MoE.__init__
+
+    @functools.lru_cache(maxsize=1)
+    def _validate_pinned_constructor_abi():
+        _require_exact_vllm_fp32_router_patch_abi(
+            _original_fused_moe,
+            _original_init,
+        )
+        return inspect.signature(_original_fused_moe).bind
+
+    @functools.wraps(_original_fused_moe)
+    def _patched_fused_moe(*args, **kwargs):
+        vllm_config = get_current_vllm_config_or_none()
+        if vllm_config is None:
+            if gfx90a_gate_linear or one_group_topk:
+                raise RuntimeError(
+                    "gfx90a router-kernel opt-ins require a current vLLM "
+                    "configuration during FusedMoE construction"
+                )
+            return _original_fused_moe(*args, **kwargs)
+        additional_config = vllm_config.additional_config or {}
+        fp32_router_logits = additional_config.get("fp32_router_logits", False)
+        if (gfx90a_gate_linear or one_group_topk) and not fp32_router_logits:
+            raise RuntimeError(
+                "gfx90a router-kernel opt-ins require "
+                "additional_config['fp32_router_logits']=True"
+            )
+        if not fp32_router_logits:
+            return _original_fused_moe(*args, **kwargs)
+
+        if gfx90a_gate_linear:
+            from prime_rl.inference.vllm.kernels.rocm_gfx90a_gate_linear import (
+                validate_glm52_gate_scheduler_config,
+            )
+
+            validate_glm52_gate_scheduler_config(
+                getattr(vllm_config, "scheduler_config", None)
+            )
+        bind = _validate_pinned_constructor_abi()
+        bound = bind(*args, **kwargs)
+        aligned_dtype = _align_deepseek_router_logits_dtype(
+            bound.arguments.get("gate"),
+            bound.arguments.get("router_logits_dtype"),
+        )
+        if aligned_dtype is not None:
+            bound.arguments["router_logits_dtype"] = aligned_dtype
+        return _original_fused_moe(*bound.args, **bound.kwargs)
+
+    _patched_fused_moe._prime_rl_fp32_router_logits_factory_patch = True
+    deepseek_v2.FusedMoE = _patched_fused_moe
 
     def _patched_init(self, *args, **kwargs):
         _original_init(self, *args, **kwargs)
-        additional_config = get_current_vllm_config().additional_config or {}
-        if not additional_config.get("fp32_router_logits", False):
+        vllm_config = get_current_vllm_config_or_none()
+        if vllm_config is None:
+            if gfx90a_gate_linear or one_group_topk:
+                raise RuntimeError(
+                    "gfx90a router-kernel opt-ins require a current vLLM "
+                    "configuration during DeepseekV2MoE construction"
+                )
             return
-        if self.gate.out_dtype is None:
-            self.gate.set_out_dtype(torch.float32)
+        additional_config = vllm_config.additional_config or {}
+        fp32_router_logits = additional_config.get("fp32_router_logits", False)
+        if (gfx90a_gate_linear or one_group_topk) and not fp32_router_logits:
+            raise RuntimeError("gfx90a router-kernel opt-ins require additional_config['fp32_router_logits']=True")
+        if not fp32_router_logits:
+            return
+        if gfx90a_gate_linear:
+            from prime_rl.inference.vllm.kernels.rocm_gfx90a_gate_linear import (
+                install_glm52_gfx90a_gate_linear,
+            )
 
+            config = args[0] if args else kwargs.get("config")
+            install_glm52_gfx90a_gate_linear(self.gate, config)
+            logger.warning("Enabled PRIME_ROCM_GFX90A_GATE_LINEAR for an exact GLM-5.2 GateLinear module.")
+        elif self.gate.out_dtype is None:
+            self.gate.set_out_dtype(torch.float32)
+        if one_group_topk:
+            from prime_rl.inference.vllm.kernels.rocm_glm52_degenerate_grouped_topk import (
+                install_glm52_degenerate_grouped_topk,
+            )
+
+            config = args[0] if args else kwargs.get("config")
+            install_glm52_degenerate_grouped_topk(self.experts, config)
+            logger.warning("Enabled PRIME_ROCM_GFX90A_ONE_GROUP_TOPK for an exact GLM-5.2 router.")
+        if gfx90a_gate_linear or one_group_topk:
+            router_logits_dtype = getattr(
+                getattr(self.experts, "moe_config", None),
+                "router_logits_dtype",
+                None,
+            )
+            if self.gate.out_dtype != torch.float32 or router_logits_dtype != torch.float32:
+                raise RuntimeError(
+                    "gfx90a router kernels require matching FP32 gate and "
+                    "FusedMoE router logits; found "
+                    f"gate={self.gate.out_dtype}, moe={router_logits_dtype}"
+                )
+
+    _patched_init._prime_rl_fp32_router_logits_patch = True
     DeepseekV2MoE.__init__ = _patched_init
     logger.info("Installed fp32 router logits patch (self-gates on additional_config['fp32_router_logits']).")
+
+
+def monkey_patch_glm52_gfx90a_mla_bmm():
+    """Install measured GLM-5.2 MLA BMMs at vLLM's narrow method seams.
+
+    ``PRIME_ROCM_GFX90A_MLA_V_UP=1`` enables the V-up kernel supported by the
+    pinned vLLM distribution. ``PRIME_ROCM_GFX90A_MLA_BMM=1`` requires both
+    Q-absorb and V-up; it therefore also requires the documented upstream
+    ``_q_absorb`` hook. The integration validates the complete model, runtime,
+    weight-layout, device, and ABI contract before marking any module.
+    """
+    import os
+
+    from vllm.logger import init_logger
+
+    logger = init_logger(__name__)
+
+    def _strict_env_enabled(name):
+        value = os.environ.get(name)
+        if value in (None, "0"):
+            return False
+        if value == "1":
+            return True
+        raise ValueError(f"{name} must be unset, '0', or '1'; got {value!r}")
+
+    full_path = _strict_env_enabled("PRIME_ROCM_GFX90A_MLA_BMM")
+    v_up_only = _strict_env_enabled("PRIME_ROCM_GFX90A_MLA_V_UP")
+    if full_path and v_up_only:
+        raise ValueError(
+            "PRIME_ROCM_GFX90A_MLA_BMM and PRIME_ROCM_GFX90A_MLA_V_UP "
+            "are mutually exclusive"
+        )
+    if not (full_path or v_up_only):
+        return
+
+    from prime_rl.inference.vllm.kernels.rocm_gfx90a_mla_bmm_integration import (
+        install_glm52_gfx90a_mla_bmm,
+    )
+
+    installed = install_glm52_gfx90a_mla_bmm(require_q_absorb=full_path)
+    logger.warning(
+        "Enabled GLM-5.2 gfx90a MLA BMM kernels: "
+        "q_absorb=%s v_up=%s.",
+        installed.q_absorb,
+        installed.v_up,
+    )
 
 
 def monkey_patch_dp_coordinator_startup_timeout():
