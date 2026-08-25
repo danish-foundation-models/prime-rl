@@ -198,6 +198,19 @@ export PRIME_RL_VLLM_SOURCE_REV="{{ inference_env_vars["PRIME_RL_VLLM_SOURCE_REV
 {% endif -%}
 source "$PROJECT_DIR/scripts/lumi_vllm_source_overlay.sh"
 prime_rl_lumi_add_vllm_source_overlay
+{% if "PRIME_RL_AITER_SITE_PACKAGES" in inference_env_vars -%}
+AITER_SITE_PACKAGES="{{ inference_env_vars["PRIME_RL_AITER_SITE_PACKAGES"] }}"
+for package in aiter aiter_meta; do
+  package_source=$(readlink -f "$AITER_SITE_PACKAGES/$package")
+  if [[ ! -d "$package_source" ]]; then
+    echo "FATAL: AITER layer is missing $package: $AITER_SITE_PACKAGES" >&2
+    exit 1
+  fi
+  SING_BIND_ARGS+=(
+    -B "$package_source:/opt/venv/lib/python3.12/site-packages/$package:ro"
+  )
+done
+{% endif -%}
 if [[ -f "$RCCL_NET_SO_SRC" ]]; then
   SING_BIND_ARGS+=(
     -B "$RCCL_NET_SO_SRC:/lib/librccl-net.so"

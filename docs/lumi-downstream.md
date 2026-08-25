@@ -96,7 +96,10 @@ config's `[env_vars]` table to use a committed vLLM tuning stack. The launcher
 binds only the stack's Python and tuning files over vLLM 0.24.0, so the SIF's
 compiled extensions remain available. Set `PRIME_RL_AITER_SITE_PACKAGES` when
 the stack also needs an external AITER layer. The launcher fails before `srun`
-if the checkout, revision, source files, or AITER layer do not match.
+if the checkout, revision, source files, or AITER layer do not match. PRIME-RL
+binds the layer's `aiter` and `aiter_meta` packages into the SIF's standard
+site-packages directory, so API, engine-core, and worker processes all retain
+the layer with multiprocessing `spawn`.
 
 The UCloud relay URL defaults to
 `https://app-sandboxes-relay-v2.cloud.sdu.dk`. Relay deployments intentionally
