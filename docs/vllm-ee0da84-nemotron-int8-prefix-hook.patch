@@ -1,0 +1,37 @@
+--- a/vllm/v1/attention/ops/prefix_prefill.py
++++ b/vllm/v1/attention/ops/prefix_prefill.py
+@@ -19,6 +19,8 @@
+ IS_TURING = current_platform.get_device_capability() == (7, 5)
+ float8_info = torch.finfo(current_platform.fp8_dtype())
+ 
++_PRIME_NEMOTRON_INT8_PREFIX_VERSION = 1
++
+ 
+ # Here's an example autotuner config for this kernel. This config does provide
+ # a performance improvement, but dramatically increases first call latency in
+@@ -206,6 +208,12 @@
+ 
+         if k_load.dtype.is_fp8():
+             k = (k_load.to(tl.float32) * tl.load(k_scale)).to(q.dtype)
++        elif k_load.dtype == tl.int8:
++            scale_offsets = bn * PHYSICAL_BLOCK_SIZE + internal_offsets
++            k = (
++                k_load.to(tl.float32)
++                * tl.load(k_scale + scale_offsets)[None, :]
++            ).to(q.dtype)
+         else:
+             k = k_load
+ 
+@@ -259,6 +267,12 @@
+ 
+         if v_load.dtype.is_fp8():
+             v = (v_load.to(tl.float32) * tl.load(v_scale)).to(q.dtype)
++        elif v_load.dtype == tl.int8:
++            scale_offsets = bn * PHYSICAL_BLOCK_SIZE + internal_offsets
++            v = (
++                v_load.to(tl.float32)
++                * tl.load(v_scale + scale_offsets)[:, None]
++            ).to(q.dtype)
+         else:
+             v = v_load
+         p = p.to(v.dtype)

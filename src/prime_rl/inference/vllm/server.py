@@ -24,10 +24,15 @@ from prime_rl.inference.patches import (
     monkey_patch_dp_coordinator_startup_timeout,
     monkey_patch_harmony_stop_token_propagation,
     monkey_patch_nano_v3_reasoning_parser,
+    monkey_patch_rocm_gfx90a_aiter_attention,
     monkey_patch_strip_routed_experts_from_chat,
     monkey_patch_tokenize_params_validation,
     monkey_patch_vllm_padded_input_scrub,
 )
+
+# The API process selects and validates the attention backend before workers
+# import their extension, so install this guarded capability patch here too.
+monkey_patch_rocm_gfx90a_aiter_attention()
 
 # NOTE: Fix harmony stop token propagation for GPT-OSS models
 # Upstream issue still open: https://github.com/vllm-project/vllm/issues/22519
@@ -264,6 +269,7 @@ def server(config: InferenceConfig, vllm_extra: dict[str, Any] | None = None):
     parser = make_arg_parser(parser)
     args = parser.parse_args(args=[], namespace=namespace)
     assert args is not None
+
     validate_parsed_serve_args(args)
 
     # Set the worker extension class based on the broadcast backend

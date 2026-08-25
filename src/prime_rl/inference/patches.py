@@ -2155,34 +2155,289 @@ def monkey_patch_glm52_gfx90a_mla_bmm():
     )
 
 
-def _nemotron_prefill_feature_enabled(name: str) -> bool:
-    import os
+def monkey_patch_rocm_hybrid_paged_attention():
+    """Install the exact Nemotron TP8 long-context attention kernels."""
+    if not _strict_binary_env("PRIME_ROCM_HYBRID_PAGED_ATTN"):
+        return
 
-    value = os.environ.get(name)
-    if value in (None, "0"):
-        return False
-    if value == "1":
-        return True
-    raise ValueError(f"{name} must be unset, '0', or '1'; got {value!r}")
+    import inspect
+
+    from vllm.logger import init_logger
+    from vllm.v1.attention.backends import rocm_attn
+    from vllm.v1.attention.ops import chunked_prefill_paged_decode as paged_ops
+    from vllm.v1.attention.ops import prefix_prefill
+
+    from prime_rl.inference.vllm.kernels.rocm_hybrid_paged_attention import (
+        wrap_hybrid_paged_attention,
+    )
+    from prime_rl.inference.vllm.kernels.rocm_hybrid_prefix_prefill import (
+        wrap_hybrid_prefix_prefill,
+    )
+
+    feature = "PRIME_ROCM_HYBRID_PAGED_ATTN"
+    _require_rocm_gfx90a(feature)
+    if _strict_binary_env("PRIME_ROCM_GFX90A_AITER_PAGED_ATTN"):
+        from prime_rl.inference.vllm.kernels.rocm_aiter_native_paged_attention import (
+            register_aiter_native_paged_attention_op,
+        )
+
+        register_aiter_native_paged_attention_op()
+
+    original = paged_ops.chunked_prefill_paged_decode
+    expected_parameters = (
+        "query",
+        "key",
+        "value",
+        "output",
+        "kv_cache_dtype",
+        "key_cache",
+        "value_cache",
+        "block_table",
+        "query_start_loc",
+        "seq_lens",
+        "max_seq_len",
+        "max_query_len",
+        "k_scale",
+        "v_scale",
+        "alibi_slopes",
+        "sliding_window",
+        "sm_scale",
+        "output_scale",
+        "sinks",
+        "is_block_table_ptr",
+        "causal",
+    )
+    installed = _installed_vllm_distribution_version()
+    if installed != _EXPECTED_SPARSE_VLLM_DISTRIBUTION:
+        raise RuntimeError(
+            f"{feature} requires vLLM "
+            f"{_EXPECTED_SPARSE_VLLM_DISTRIBUTION!r}; found {installed!r}"
+        )
+    actual_parameters = tuple(inspect.signature(original).parameters)
+    if actual_parameters != expected_parameters:
+        raise RuntimeError(
+            f"{feature} requires chunked_prefill_paged_decode"
+            f"{expected_parameters}; found {actual_parameters}"
+        )
+    if rocm_attn.chunked_prefill_paged_decode is not original:
+        raise RuntimeError(
+            f"{feature} found an already-replaced ROCm attention dispatch"
+        )
+
+    original_prefill = prefix_prefill.context_attention_fwd
+    expected_prefill_parameters = (
+        "q",
+        "k",
+        "v",
+        "o",
+        "kv_cache_dtype",
+        "k_cache",
+        "v_cache",
+        "b_loc",
+        "b_start_loc",
+        "b_seq_len",
+        "max_seq_len",
+        "max_input_len",
+        "k_scale",
+        "v_scale",
+        "alibi_slopes",
+        "sliding_window",
+        "sm_scale",
+        "skip_decode",
+        "fp8_out_scale",
+        "sinks",
+        "is_block_table_ptr",
+        "causal",
+    )
+    actual_prefill_parameters = tuple(
+        inspect.signature(original_prefill).parameters
+    )
+    if actual_prefill_parameters != expected_prefill_parameters:
+        raise RuntimeError(
+            f"{feature} requires context_attention_fwd"
+            f"{expected_prefill_parameters}; found {actual_prefill_parameters}"
+        )
+    if paged_ops.context_attention_fwd is not original_prefill:
+        raise RuntimeError(
+            f"{feature} found an already-replaced prefix prefill dispatch"
+        )
+
+    wrapped = wrap_hybrid_paged_attention(original)
+    wrapped_prefill = wrap_hybrid_prefix_prefill(original_prefill)
+    paged_ops.chunked_prefill_paged_decode = wrapped
+    rocm_attn.chunked_prefill_paged_decode = wrapped
+    prefix_prefill.context_attention_fwd = wrapped_prefill
+    paged_ops.context_attention_fwd = wrapped_prefill
+    init_logger(__name__).warning(
+        "Enabled tuned gfx90a hybrid prefix prefill and partitioned decode."
+    )
+
+
+def monkey_patch_rocm_gfx90a_aiter_attention():
+    """Enable the guarded AITER paged-prefill/decode backend on gfx90a."""
+    if not _strict_binary_env("PRIME_ROCM_GFX90A_AITER_ATTN"):
+        return
+
+    from vllm.logger import init_logger
+
+    feature = "PRIME_ROCM_GFX90A_AITER_ATTN"
+    _require_rocm_gfx90a(feature)
+    installed = _installed_vllm_distribution_version()
+    if installed != _EXPECTED_SPARSE_VLLM_DISTRIBUTION:
+        raise RuntimeError(
+            f"{feature} requires vLLM "
+            f"{_EXPECTED_SPARSE_VLLM_DISTRIBUTION!r}; found {installed!r}"
+        )
+
+    from prime_rl.inference.vllm.kernels.rocm_gfx90a_aiter_attention import (
+        install_gfx90a_aiter_attention,
+    )
+
+    install_gfx90a_aiter_attention()
+    init_logger(__name__).warning(
+        "Enabled gfx90a AITER shuffled-cache batch prefill and decode."
+    )
+
+
+def monkey_patch_rocm_nemotron_int8_paged_attention():
+    """Install exact Nemotron TP8 decode for vLLM dynamic INT8 KV cache."""
+    if not _strict_binary_env("PRIME_ROCM_NEMOTRON_INT8_PAGED_ATTN"):
+        return
+
+    import inspect
+
+    from vllm.logger import init_logger
+    from vllm.v1.attention.backends.triton_attn import TritonAttentionImpl
+    from vllm.v1.attention.ops import prefix_prefill
+
+    from prime_rl.inference.vllm.kernels.rocm_nemotron_int8_paged_attention import (
+        wrap_triton_int8_attention_forward,
+    )
+
+    feature = "PRIME_ROCM_NEMOTRON_INT8_PAGED_ATTN"
+    _require_rocm_gfx90a(feature)
+    installed = _installed_vllm_distribution_version()
+    if installed != _EXPECTED_SPARSE_VLLM_DISTRIBUTION:
+        raise RuntimeError(
+            f"{feature} requires vLLM "
+            f"{_EXPECTED_SPARSE_VLLM_DISTRIBUTION!r}; found {installed!r}"
+        )
+    if getattr(prefix_prefill, "_PRIME_NEMOTRON_INT8_PREFIX_VERSION", None) != 1:
+        raise RuntimeError(
+            f"{feature} requires v1 of the pinned vLLM INT8 prefix source hook"
+        )
+
+    original = TritonAttentionImpl.forward
+    parameters = tuple(inspect.signature(original).parameters.values())
+    actual = tuple(
+        (parameter.name, parameter.kind, parameter.default)
+        for parameter in parameters
+    )
+    empty = inspect.Parameter.empty
+    positional = inspect.Parameter.POSITIONAL_OR_KEYWORD
+    expected = (
+        ("self", positional, empty),
+        ("layer", positional, empty),
+        ("query", positional, empty),
+        ("key", positional, empty),
+        ("value", positional, empty),
+        ("kv_cache", positional, empty),
+        ("attn_metadata", positional, empty),
+        ("output", positional, empty),
+        ("output_scale", positional, None),
+        ("output_block_scale", positional, None),
+    )
+    if actual != expected:
+        raise RuntimeError(
+            f"{feature} requires TritonAttentionImpl.forward{expected}; "
+            f"found {actual}"
+        )
+
+    TritonAttentionImpl.forward = wrap_triton_int8_attention_forward(original)
+    init_logger(__name__).warning(
+        "Enabled tuned gfx90a Nemotron-H dynamic-INT8 paged decode."
+    )
+
+
+def monkey_patch_rocm_nemotron_grouped_topk():
+    """Install the exact Nemotron-H biased sigmoid router on gfx90a."""
+    if not _strict_binary_env("PRIME_ROCM_NEMOTRON_GROUPED_TOPK"):
+        return
+
+    import inspect
+
+    from vllm.logger import init_logger
+    from vllm.model_executor.layers.fused_moe.router import fused_topk_bias_router
+    from vllm.model_executor.layers.fused_moe.router import grouped_topk_router
+    from vllm.model_executor.layers.fused_moe.router.fused_topk_bias_router import (
+        FusedTopKBiasRouter,
+    )
+
+    feature = "PRIME_ROCM_NEMOTRON_GROUPED_TOPK"
+    _require_rocm_gfx90a(feature)
+    installed = _installed_vllm_distribution_version()
+    if installed != _EXPECTED_SPARSE_VLLM_DISTRIBUTION:
+        raise RuntimeError(
+            f"{feature} requires vLLM "
+            f"{_EXPECTED_SPARSE_VLLM_DISTRIBUTION!r}; found {installed!r}"
+        )
+
+    original = FusedTopKBiasRouter._compute_routing
+    parameters = tuple(inspect.signature(original).parameters.values())
+    actual = tuple((parameter.name, parameter.kind) for parameter in parameters)
+    expected = (
+        ("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("hidden_states", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("router_logits", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("indices_type", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ("input_ids", inspect.Parameter.KEYWORD_ONLY),
+    )
+    if actual != expected:
+        raise RuntimeError(
+            f"{feature} requires FusedTopKBiasRouter._compute_routing{expected}; "
+            f"found {actual}"
+        )
+    if (
+        getattr(
+            fused_topk_bias_router,
+            "_PRIME_NEMOTRON_FUSED_TOPK_BIAS_VERSION",
+            None,
+        )
+        != 1
+    ):
+        raise RuntimeError(
+            f"{feature} requires v1 of the pinned vLLM fused-top-k-bias source hook"
+        )
+    if (
+        getattr(
+            grouped_topk_router,
+            "_PRIME_NEMOTRON_GROUPED_TOPK_VERSION",
+            None,
+        )
+        != 11
+    ):
+        raise RuntimeError(
+            f"{feature} requires v11 of the pinned vLLM grouped-top-k factory hook"
+        )
+
+    grouped_topk_router._PRIME_NEMOTRON_GROUPED_TOPK_ENABLED = True
+    fused_topk_bias_router._PRIME_NEMOTRON_FUSED_TOPK_BIAS_ENABLED = True
+    init_logger(__name__).warning(
+        "Enabled direct gfx90a Nemotron-H biased sigmoid routing."
+    )
+
+
+def _nemotron_prefill_feature_enabled(name: str) -> bool:
+    return _strict_binary_env(name)
 
 
 def _require_gfx90a_nemotron_prefill(feature: str) -> None:
-    from importlib.metadata import version
-
-    if torch.version.hip is None:
-        raise RuntimeError(f"{feature} requires a ROCm PyTorch build")
-    properties = torch.cuda.get_device_properties(torch.cuda.current_device())
-    architecture = getattr(properties, "gcnArchName", "").split(":")[0]
-    if architecture != "gfx90a":
+    _require_rocm_gfx90a(feature)
+    installed = _installed_vllm_distribution_version()
+    if installed != _EXPECTED_SPARSE_VLLM_DISTRIBUTION:
         raise RuntimeError(
-            f"{feature} is validated only on gfx90a; found "
-            f"{getattr(properties, 'gcnArchName', None)!r}"
-        )
-    expected = "0.24.0+lumi_aif_gfx90a_ee0da84"
-    installed = version("vllm")
-    if installed != expected:
-        raise RuntimeError(
-            f"{feature} requires vLLM {expected!r}; found {installed!r}"
+            f"{feature} requires vLLM "
+            f"{_EXPECTED_SPARSE_VLLM_DISTRIBUTION!r}; found {installed!r}"
         )
 
 

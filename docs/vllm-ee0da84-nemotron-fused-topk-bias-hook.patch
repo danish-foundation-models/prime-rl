@@ -1,0 +1,69 @@
+--- a/vllm/model_executor/layers/fused_moe/router/fused_topk_bias_router.py
++++ b/vllm/model_executor/layers/fused_moe/router/fused_topk_bias_router.py
+@@ -15,6 +15,9 @@
+ )
+ from vllm.model_executor.layers.fused_moe.router.base_router import BaseRouter
+ 
++_PRIME_NEMOTRON_FUSED_TOPK_BIAS_VERSION = 1
++_PRIME_NEMOTRON_FUSED_TOPK_BIAS_ENABLED = False
++
+ 
+ def vllm_topk_softmax(
+     topk_weights: torch.Tensor,
+@@ -367,6 +370,56 @@
+         input_ids: torch.Tensor | None = None,
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+         """Compute routing using fused top-k with bias."""
++        if (
++            _PRIME_NEMOTRON_FUSED_TOPK_BIAS_ENABLED
++            and self.top_k == 22
++            and self.global_num_experts == 512
++            and self.renormalize
++            and self.scoring_func == "sigmoid"
++            and self.routed_scaling_factor == 1.0
++            and self.e_score_correction_bias is not None
++            and self.e_score_correction_bias.dtype == torch.float32
++            and self.e_score_correction_bias.shape == (512,)
++            and self.e_score_correction_bias.stride(0) == 1
++            and router_logits.dtype == torch.float32
++            and router_logits.ndim == 2
++            and router_logits.shape[1] == 512
++            and router_logits.stride(1) == 1
++            and hidden_states.shape[0] == router_logits.shape[0]
++            and 1 <= router_logits.shape[0] <= 32768
++            and router_logits.device.type == "cuda"
++            and self.e_score_correction_bias.device == router_logits.device
++        ):
++            output_indices_dtype = (
++                torch.int32 if indices_type is None else indices_type
++            )
++            topk_weights = torch.empty(
++                router_logits.shape[0],
++                self.top_k,
++                dtype=torch.float32,
++                device=router_logits.device,
++            )
++            topk_ids = torch.empty(
++                router_logits.shape[0],
++                self.top_k,
++                dtype=output_indices_dtype,
++                device=router_logits.device,
++            )
++            token_expert_indices = torch.empty(
++                router_logits.shape[0],
++                self.top_k,
++                dtype=torch.int32,
++                device=router_logits.device,
++            )
++            return vllm_topk_sigmoid(
++                topk_weights,
++                topk_ids,
++                token_expert_indices,
++                router_logits,
++                True,
++                self.e_score_correction_bias.data,
++            )
++
+         topk_weights, topk_ids = fused_topk_bias(
+             hidden_states=hidden_states,
+             gating_output=router_logits,

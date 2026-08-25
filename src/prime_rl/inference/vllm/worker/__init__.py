@@ -7,7 +7,11 @@ from prime_rl.inference.patches import (
     monkey_patch_glm52_gfx90a_mla_bmm,
     monkey_patch_minimax_m2_for_lora,
     monkey_patch_no_moe_lora,
+    monkey_patch_rocm_gfx90a_aiter_attention,
     monkey_patch_rocm_gfx90a_aiter_legacy_allreduce,
+    monkey_patch_rocm_hybrid_paged_attention,
+    monkey_patch_rocm_nemotron_grouped_topk,
+    monkey_patch_rocm_nemotron_int8_paged_attention,
     monkey_patch_rocm_nemotron_moe_config,
     monkey_patch_rocm_nemotron_relu2,
     monkey_patch_rocm_nemotron_router_linear,
@@ -34,6 +38,18 @@ monkey_patch_fp32_router_logits()
 
 # Install exact-shape GLM-5.2 MLA BMMs only when explicitly selected.
 monkey_patch_glm52_gfx90a_mla_bmm()
+
+# Install the guarded AITER MHA backend before attention methods are captured.
+monkey_patch_rocm_gfx90a_aiter_attention()
+
+# Install the exact Nemotron TP8 long-context kernel only when explicitly selected.
+monkey_patch_rocm_hybrid_paged_attention()
+
+# Install exact Nemotron TP8 dynamic-INT8 decode only when explicitly selected.
+monkey_patch_rocm_nemotron_int8_paged_attention()
+
+# Install exact Nemotron-H one-group decode routing only when selected.
+monkey_patch_rocm_nemotron_grouped_topk()
 
 # GLM-5.2's sparse attention requires AITER by default on ROCm. AITER does not
 # support LUMI's gfx90a GPUs, so permit explicitly selected non-AITER indexer
