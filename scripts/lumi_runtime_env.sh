@@ -14,6 +14,7 @@ prime_rl_lumi_export_pythonpath() {
   path="$path:$project_dir/packages/prime-rl-configs/src"
   path="$path:$project_dir/deps/renderers"
   path="$path:$project_dir/deps/verifiers"
+  path="$path:$project_dir/deps/ucloud-sandboxes-sdk/src"
   path="$path:$project_dir/deps/pydantic-config/src"
 
   for env_root in \

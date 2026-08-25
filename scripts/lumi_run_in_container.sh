@@ -32,7 +32,7 @@ mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" \
 export PROJECT_DIR SIF LUMI_ROOT
 PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
 
-PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:/workdir/deps/research-environments/environments/terminal/tmax_v1:$PRIME_RL_METADATA_DIR
+PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/ucloud-sandboxes-sdk/src:/workdir/deps/pydantic-config/src:/workdir/deps/research-environments/environments/terminal/tmax_v1:$PRIME_RL_METADATA_DIR
 PATH_VALUE=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
 PASSTHROUGH_ENV=()
 for name in \

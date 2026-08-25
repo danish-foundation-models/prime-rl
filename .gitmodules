@@ -12,3 +12,6 @@
 [submodule "pydantic-config"]
 	path = deps/pydantic-config
 	url = https://github.com/PrimeIntellect-ai/pydantic-config
+[submodule "ucloud-sandboxes-sdk"]
+	path = deps/ucloud-sandboxes-sdk
+	url = https://github.com/rlrs/ucloud-sandboxes-sdk.git

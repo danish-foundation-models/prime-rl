@@ -68,11 +68,15 @@ Current downstream dependency pins:
   attribution prefix while continuing to reject malformed prefixes after the
   first user message. Validated by its two focused default-renderer tests.
   Remove when upstream provides the same guarded behavior.
-- `verifiers` `cc6454464`: adds the UCloud sandbox runtime and polling-relay
+- `verifiers` `c384e65d5`: adds the UCloud sandbox runtime and polling-relay
   interception backend. Validated by the focused sandbox/relay tests, config
   and import tests, lint, syntax compilation, and no-network construction
   smoke tests. Remove when verifiers supports a pluggable UCloud provider or
   equivalent upstream runtime and relay.
+- `ucloud-sandboxes-sdk` `96409abd`: supplies the public registration-token
+  relay API used by the Verifiers adapter. It is pinned as live source because
+  the operational SIF does not bundle the SDK. Remove the submodule only after
+  the supported runtime image provides the same API.
 - `research-environments` stays on the upstream pin. The preserved
   `mini-swe-agent-v2` work is being separated into its own package rather than
   maintained as a fork of a repository that removed it.
