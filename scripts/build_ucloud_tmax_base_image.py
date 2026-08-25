@@ -10,8 +10,8 @@ import time
 from pathlib import Path
 
 DEFAULT_BASE_IMAGE = "ucloud-sandbox-registry:5000/prime-rl/mini-swe-python311:mswe-2.2.8"
-DEFAULT_TAG = "ucloud-sandbox-registry:5000/prime-rl/tmax-mini-base:mswe-2.2.8-r5"
-DEFAULT_IMAGE_ID = "prime-rl-tmax-mini-base-mswe-2-2-8-r5"
+DEFAULT_TAG = "ucloud-sandbox-registry:5000/prime-rl/tmax-mini-base:mswe-2.2.8-r6"
+DEFAULT_IMAGE_ID = "prime-rl-tmax-mini-base-mswe-2-2-8-r6"
 DEFAULT_MINI_VERSION = "2.2.8"
 
 
@@ -91,6 +91,8 @@ def _dockerfile(base_image: str) -> str:
             chown -R user:user /home/user /app /logs /mini-swe-agent /task /opt/rust /usr/local/go /opt/tmax-python || true; \\
             chmod -R a+rwX /home/user /app /logs /mini-swe-agent /task /opt /usr/local; \\
             rm -rf /var/lib/apt/lists/*
+
+        ENV PYTHONPATH=/opt/tmax-python:/usr/lib/python3/dist-packages
         """
     )
 

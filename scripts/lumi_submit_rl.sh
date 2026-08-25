@@ -35,6 +35,11 @@ CONFIG=$(readlink -f "$CONFIG")
 CONTAINER_CONFIG=$CONFIG
 if [[ "$CONFIG" == "$REPO_DIR/"* ]]; then
   CONTAINER_CONFIG=/workdir/${CONFIG#"$REPO_DIR/"}
+else
+  HOST_LUMI_ROOT=$(readlink -f "$LUMI_ROOT")
+  if [[ "$CONFIG" == "$HOST_LUMI_ROOT/"* ]]; then
+    CONTAINER_CONFIG=$LUMI_ROOT/${CONFIG#"$HOST_LUMI_ROOT/"}
+  fi
 fi
 
 USER_DRY_RUN=false

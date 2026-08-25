@@ -251,6 +251,11 @@ cleanup_remote_sandboxes() {
       export PATH="$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:$PATH"
       source /workdir/scripts/lumi_runtime_env.sh
       prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR"
+{%- if orchestrator_env_vars %}
+{%- for key, value in orchestrator_env_vars.items() %}
+      export {{ key }}="{{ value }}"
+{%- endfor %}
+{%- endif %}
       python /workdir/scripts/cleanup_ucloud_sandboxes.py \
         --config "$1" \
         --sandbox-ids-file "$2" \
@@ -390,6 +395,10 @@ RUN_DONE_FILE="$OUTPUT_DIR/.run_complete_$SLURM_JOB_ID"
 if [ "$SLURM_PROCID" -lt "$NUM_INFER_NODES" ]; then
     export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
     INFER_NODE_RANK=$SLURM_PROCID
+    # Inference env vars: launcher defaults + [env_vars] + [inference.env_vars]
+{%- for key, value in inference_env_vars.items() %}
+    export {{ key }}="{{ value }}"
+{%- endfor %}
     export VLLM_WORKER_MULTIPROC_METHOD=spawn
     LOCAL_IP=$(hostname -I | awk "{print \$1}")
 
@@ -570,6 +579,11 @@ else
     TRAIN_NODE_RANK=$SLURM_PROCID
 {%- endif %}
 
+    # Trainer env vars: launcher defaults + [env_vars] + [trainer.env_vars]
+{%- for key, value in trainer_env_vars.items() %}
+    export {{ key }}="{{ value }}"
+{%- endfor %}
+
     if [[ "${PRIME_RL_HF_HUB_OFFLINE:-0}" = "1" ]]; then
         export HF_HUB_OFFLINE=1
     fi
@@ -605,6 +619,12 @@ if [ "$SLURM_PROCID" -eq "$ORCH_PROCID" ]; then
     ORCHESTRATOR_ARGS="@ $CONFIG_DIR/orchestrator.toml"
     ORCHESTRATOR_ARGS="$ORCHESTRATOR_ARGS --model.client.base-url $INFER_URLS"
     ORCHESTRATOR_ARGS="$ORCHESTRATOR_ARGS --model.client.admin-base-url $ADMIN_URLS"
+{%- if orchestrator_env_vars %}
+    # Orchestrator env vars from [env_vars] + [orchestrator.env_vars]
+{%- for key, value in orchestrator_env_vars.items() %}
+    export {{ key }}="{{ value }}"
+{%- endfor %}
+{%- endif %}
     {% if use_nccl_broadcast %}ORCHESTRATOR_ARGS="$ORCHESTRATOR_ARGS --weight_broadcast.host $MASTER_ADDR"
     {% endif %}WANDB_SHARED_LABEL=orchestrator uv run orchestrator $ORCHESTRATOR_ARGS \
         2>&1 | tee $OUTPUT_DIR/logs/orchestrator.log &
