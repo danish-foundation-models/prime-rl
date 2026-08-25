@@ -72,6 +72,14 @@ SBATCH_PATH=$(sed -E 's/\x1B\[[0-9;]*[mK]//g' "$render_log" \
   echo "FATAL: could not find rendered RL sbatch path in launcher output" >&2
   exit 1
 }
+ORCHESTRATOR_CONFIG=$(dirname "$SBATCH_PATH")/configs/orchestrator.toml
+if [[ -f "$ORCHESTRATOR_CONFIG" ]] \
+  && grep -Eq '^type = "ucloud-relay"$' "$ORCHESTRATOR_CONFIG" \
+  && [[ -z "${UCLOUD_RELAY_WORKER_TOKEN:-}" ]]; then
+  echo "FATAL: UCloud relay rollouts require UCLOUD_RELAY_WORKER_TOKEN." >&2
+  echo "This is the relay deployment's opaque worker bearer token, not a JWT and not UCLOUD_RELAY_SANDBOX_TOKEN." >&2
+  exit 1
+fi
 SBATCH_BIN=${SBATCH_BIN:-sbatch}
 command -v "$SBATCH_BIN" >/dev/null || {
   echo "FATAL: host sbatch command not found: $SBATCH_BIN" >&2
