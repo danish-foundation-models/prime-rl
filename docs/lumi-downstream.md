@@ -28,6 +28,9 @@ The integration branch currently carries:
 - a small regular-worker router because the operational image does not provide
   `vllm-router`;
 - UCloud image preparation, capacity prewarming, and cleanup orchestration.
+- an opt-in, revision-pinned source overlay for the gfx90a vLLM stack, preserving
+  the runtime image's compiled vLLM extensions while replacing its tuned Python
+  modules.
 
 The integration branch does not carry the old writable-overlay builder,
 historical smoke/run configs, gradient diagnostics, packed-SDPA support, or
@@ -68,11 +71,12 @@ Current downstream dependency pins:
   attribution prefix while continuing to reject malformed prefixes after the
   first user message. Validated by its two focused default-renderer tests.
   Remove when upstream provides the same guarded behavior.
-- `verifiers` `c384e65d5`: adds the UCloud sandbox runtime and polling-relay
-  interception backend. Validated by the focused sandbox/relay tests, config
-  and import tests, lint, syntax compilation, and no-network construction
-  smoke tests. Remove when verifiers supports a pluggable UCloud provider or
-  equivalent upstream runtime and relay.
+- `verifiers` `ab3adefa4`: adds the UCloud sandbox runtime and polling-relay
+  interception backend, uses the current typed sandbox SDK request, supports
+  gateway-managed image IDs, and defaults to the production relay URL.
+  Validated by the focused sandbox/relay tests, lint, syntax compilation, and
+  a live managed-image create/exec/delete smoke. Remove when verifiers supports
+  a pluggable UCloud provider or equivalent upstream runtime and relay.
 - `ucloud-sandboxes-sdk` `96409abd`: supplies the public registration-token
   relay API used by the Verifiers adapter. It is pinned as live source because
   the operational SIF does not bundle the SDK. Remove the submodule only after
@@ -80,3 +84,18 @@ Current downstream dependency pins:
 - `research-environments` stays on the upstream pin. The preserved
   `mini-swe-agent-v2` work is being separated into its own package rather than
   maintained as a fork of a repository that removed it.
+
+## gfx90a vLLM source overlay
+
+Set `PRIME_RL_VLLM_SOURCE_ROOT` and `PRIME_RL_VLLM_SOURCE_REV` in a LUMI RL
+config's `[env_vars]` table to use a committed vLLM tuning stack. The launcher
+binds only the stack's Python and tuning files over vLLM 0.24.0, so the SIF's
+compiled extensions remain available. Set `PRIME_RL_AITER_SITE_PACKAGES` when
+the stack also needs an external AITER layer. The launcher fails before `srun`
+if the checkout, revision, source files, or AITER layer do not match.
+
+The UCloud relay URL defaults to
+`https://app-sandboxes-relay-v2.cloud.sdu.dk`. Relay deployments intentionally
+use two distinct opaque bearer tokens: `UCLOUD_RELAY_SANDBOX_TOKEN` for model
+calls made inside sandboxes and `UCLOUD_RELAY_WORKER_TOKEN` for trusted rollout
+registration and polling. These are deployment tokens, not JWT credentials.

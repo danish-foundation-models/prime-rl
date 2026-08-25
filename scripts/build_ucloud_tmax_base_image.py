@@ -3,23 +3,17 @@
 
 import argparse
 import os
-import re
 import tempfile
 import textwrap
 import time
 from pathlib import Path
 
-DEFAULT_BASE_IMAGE = "ucloud-sandbox-registry:5000/prime-rl/mini-swe-python311:mswe-2.2.8"
-DEFAULT_TAG = "ucloud-sandbox-registry:5000/prime-rl/tmax-mini-base:mswe-2.2.8-r6"
+DEFAULT_BASE_IMAGE = "python:3.11-bookworm"
 DEFAULT_IMAGE_ID = "prime-rl-tmax-mini-base-mswe-2-2-8-r6"
 DEFAULT_MINI_VERSION = "2.2.8"
 
 
-def _safe_id(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-").lower()[:96] or "tmax"
-
-
-def _dockerfile(base_image: str) -> str:
+def _dockerfile(base_image: str, mini_version: str) -> str:
     apt_packages = " ".join(
         [
             "bash",
@@ -74,6 +68,7 @@ def _dockerfile(base_image: str) -> str:
         RUN set -eux; \\
             apt-get -o Acquire::Retries=3 update -qq; \\
             apt-get -o Acquire::Retries=3 install -y -qq {apt_packages}; \\
+            python3 -m pip install --no-cache-dir mini-swe-agent=={mini_version}; \\
             id user >/dev/null 2>&1 || useradd -m -s /bin/bash user; \\
             mkdir -p /logs/agent /mini-swe-agent /home/user /app /task /opt/rust /usr/local/go /opt/tmax-python; \\
             printf '%s\\n' \\
@@ -130,22 +125,15 @@ def _build_with_status(client, image, timeout_seconds: int, retry_interval_secon
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tag", default=DEFAULT_TAG)
     parser.add_argument("--image-id", default=DEFAULT_IMAGE_ID)
     parser.add_argument("--base-image", default=DEFAULT_BASE_IMAGE)
     parser.add_argument("--mini-version", default=DEFAULT_MINI_VERSION)
     parser.add_argument("--timeout-seconds", type=int, default=3600)
     parser.add_argument("--retry-interval-seconds", type=float, default=20.0)
-    parser.add_argument(
-        "--push",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Push the built tag so sandbox nodes can pull it.",
-    )
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    dockerfile = _dockerfile(args.base_image)
+    dockerfile = _dockerfile(args.base_image, args.mini_version)
     if args.dry_run:
         print(dockerfile)
         return 0
@@ -157,7 +145,7 @@ def main() -> int:
     if not base_url or not token:
         raise RuntimeError("UCLOUD_SANDBOX_API_URL and UCLOUD_SANDBOX_API_TOKEN are required.")
 
-    image_id = args.image_id or _safe_id(args.tag)
+    image_id = args.image_id
     with tempfile.TemporaryDirectory(prefix="ucloud-tmax-base-") as tmp:
         context = Path(tmp)
         (context / "Dockerfile").write_text(dockerfile)
@@ -171,10 +159,8 @@ def main() -> int:
             prepare_builder(count=1, ttl_seconds=1200)
         image = Image.from_dockerfile(
             name=image_id,
-            tag=args.tag,
             context_path=context,
             dockerfile="Dockerfile",
-            push=args.push,
             labels={
                 "created_by": "prime-rl",
                 "purpose": "tmax-base",

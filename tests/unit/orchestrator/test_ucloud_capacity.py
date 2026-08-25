@@ -7,12 +7,17 @@ from prime_rl.orchestrator.ucloud_capacity import prepare_ucloud_capacity
 
 
 class FakeImage:
-    def __init__(self, reference: str):
+    def __init__(self, reference: str, source: str):
         self.reference = reference
+        self.source = source
 
     @classmethod
     def from_registry(cls, reference: str):
-        return cls(reference)
+        return cls(reference, "registry")
+
+    @classmethod
+    def from_name(cls, name: str):
+        return cls(name, "managed")
 
 
 class FakeAsyncSandboxClient:
@@ -119,7 +124,31 @@ def test_prepare_ucloud_capacity_announces_fixed_image(monkeypatch):
         }
     ]
     assert client.prepared[0]["image"].reference == "registry.example/tmax:latest"
+    assert client.prepared[0]["image"].source == "registry"
     assert env.harness.runtime.prepare_id == "prime-rl-prime-rl-run-tmax"
+
+
+def test_prepare_ucloud_capacity_uses_managed_image_id(monkeypatch):
+    _install_fake_sdk(monkeypatch)
+    monkeypatch.setenv("UCLOUD_SANDBOX_API_URL", "https://gateway.example")
+    monkeypatch.setenv("UCLOUD_SANDBOX_API_TOKEN", "token")
+
+    env = SimpleNamespace(
+        resolved_name="tmax",
+        num_workers=2,
+        args={
+            "sandbox_backend": "ucloud",
+            "tmax_image": "prime-rl-tmax-mini-base-mswe-2-2-8-r6",
+        },
+    )
+
+    asyncio.run(prepare_ucloud_capacity(_config(env)))
+
+    client = FakeAsyncSandboxClient.instances[-1]
+    assert client.prepared[0]["image"].reference == (
+        "prime-rl-tmax-mini-base-mswe-2-2-8-r6"
+    )
+    assert client.prepared[0]["image"].source == "managed"
 
 
 def test_prepare_ucloud_capacity_uses_constant_sandbox_image_template(monkeypatch):

@@ -190,6 +190,14 @@ SING_BIND_ARGS=(
   -B "$PROJECT_DIR:/workdir"
   -B /scratch/project_465002751:/scratch/project_465002751
 )
+{% if "PRIME_RL_VLLM_SOURCE_ROOT" in inference_env_vars -%}
+export PRIME_RL_VLLM_SOURCE_ROOT="{{ inference_env_vars["PRIME_RL_VLLM_SOURCE_ROOT"] }}"
+{% endif -%}
+{% if "PRIME_RL_VLLM_SOURCE_REV" in inference_env_vars -%}
+export PRIME_RL_VLLM_SOURCE_REV="{{ inference_env_vars["PRIME_RL_VLLM_SOURCE_REV"] }}"
+{% endif -%}
+source "$PROJECT_DIR/scripts/lumi_vllm_source_overlay.sh"
+prime_rl_lumi_add_vllm_source_overlay
 if [[ -f "$RCCL_NET_SO_SRC" ]]; then
   SING_BIND_ARGS+=(
     -B "$RCCL_NET_SO_SRC:/lib/librccl-net.so"
@@ -399,6 +407,13 @@ if [ "$SLURM_PROCID" -lt "$NUM_INFER_NODES" ]; then
 {%- for key, value in inference_env_vars.items() %}
     export {{ key }}="{{ value }}"
 {%- endfor %}
+    if [[ -n "${PRIME_RL_AITER_SITE_PACKAGES:-}" ]]; then
+      [[ -d "$PRIME_RL_AITER_SITE_PACKAGES" ]] || {
+        echo "FATAL: AITER site-packages path not found: $PRIME_RL_AITER_SITE_PACKAGES" >&2
+        exit 1
+      }
+      export PYTHONPATH="$PRIME_RL_AITER_SITE_PACKAGES:$PYTHONPATH"
+    fi
     export VLLM_WORKER_MULTIPROC_METHOD=spawn
     LOCAL_IP=$(hostname -I | awk "{print \$1}")
 

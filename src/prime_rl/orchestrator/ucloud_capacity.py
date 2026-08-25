@@ -167,6 +167,15 @@ def _prewarm_images(args: dict[str, Any]) -> list[str]:
     return unique
 
 
+def _sdk_image(image: str, image_cls: Any) -> Any:
+    """Resolve gateway-managed IDs separately from registry references."""
+    if "/" not in image and ":" not in image:
+        from_name = getattr(image_cls, "from_name", None)
+        if callable(from_name):
+            return from_name(image)
+    return image_cls.from_registry(image)
+
+
 def _image_prepare_id(base_prepare_id: str, image: str, num_images: int) -> str:
     if num_images == 1:
         return base_prepare_id
@@ -278,7 +287,7 @@ async def prepare_ucloud_capacity(config: OrchestratorConfig) -> None:
             resources = _resources(args)
             prepare_id = f"prime-rl-{run_slug}-{_slug(env.resolved_name)}"
             images = _prewarm_images(args)
-            image_objects = [(image, Image.from_registry(image)) for image in images]
+            image_objects = [(image, _sdk_image(image, Image)) for image in images]
             if not image_objects:
                 image_objects = [(None, None)]
             for image_name, image in image_objects:
