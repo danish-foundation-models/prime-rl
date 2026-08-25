@@ -1,0 +1,22 @@
+diff --git a/vllm/model_executor/layers/attention/mla_attention.py b/vllm/model_executor/layers/attention/mla_attention.py
+--- a/vllm/model_executor/layers/attention/mla_attention.py
++++ b/vllm/model_executor/layers/attention/mla_attention.py
+@@ -786,7 +786,7 @@ class MLAAttention(nn.Module):
+                     mqa_ql_nope = mqa_q_nope.new_empty((N, B, L))
+ 
+                 # Multiply (N, B, P) x (N, P, L) -> (N, B, L)
+-                torch.bmm(mqa_q_nope, self.W_UK_T, out=mqa_ql_nope)
++                self._q_absorb(mqa_q_nope, mqa_ql_nope)
+ 
+                 # Convert from (N, B, L) to (B, N, L)
+                 mqa_ql_nope = mqa_ql_nope.transpose(0, 1)
+@@ -1009,6 +1009,9 @@ class MLAAttention(nn.Module):
+             cache_dtype_str=vllm_config.cache_config.cache_dtype,
+         )
+ 
++    def _q_absorb(self, q_nope: torch.Tensor, out: torch.Tensor) -> None:
++        torch.bmm(q_nope, self.W_UK_T, out=out)
++
+     def _v_up_proj(self, x: torch.Tensor, out: torch.Tensor):
+         # Convert from (B, N, L) to (N, B, L)
+         x = x.view(-1, self.num_heads, self.kv_lora_rank).transpose(0, 1)

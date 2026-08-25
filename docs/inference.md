@@ -5,6 +5,7 @@ This page covers the inference configuration and the supported features/deployme
 ## Table of Contents
 
 - [Overview](#overview)
+- [ROCm gfx90a kernels](#rocm-gfx90a-kernels)
 - [Single-Node](#single-node)
 - [Multi-Node](#multi-node)
     - [Multi-replica](#multi-replica)
@@ -29,6 +30,13 @@ We support 3 distinct deployment shapes:
 - [Disaggregated](#pd-disaggregation) - Runs the inference server on multiple nodes, but disaggregates the prefill and decode stages. Useful for large scale experiments or larger models, where latency is a concern and multi-node deployment creates very high E2E rollout latency, such as agentic workflows.
 
 Most of the features are supported for all deployment shapes, with few exceptions. These exceptions are rejected on validation.
+
+## ROCm gfx90a kernels
+
+GLM-5.2 and Nemotron 3 Super deployments on AMD CDNA2 can opt into the
+specialized INT8, MoE, routing, collective, and long-context attention stack.
+The exact model, runtime, topology, source-hook, and numerical contracts are
+documented in [ROCm gfx90a inference kernels](rocm-gfx90a-kernels.md).
 
 You can select the deployment shape with `InferenceDeploymentConfig` in your config file. This is a config-field that allows you to set the deployment shape, deployment-specific knobs such as `num_nodes`, `num_replicas`, `backend_port`, and a `[...deployment.router]` block, etc.
 
