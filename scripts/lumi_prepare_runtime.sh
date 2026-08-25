@@ -7,6 +7,7 @@ LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
 SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
 PRIME_RL_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache/prime-rl}
 LUMI_RUNTIME_PACKAGES=(
+  "harbor==0.14.0"
   "modelexpress==0.3.0"
   "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.6.0/torchao-0.17.0+git02105d46c-cp312-cp312-linux_x86_64.whl"
 )

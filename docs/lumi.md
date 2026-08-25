@@ -32,6 +32,11 @@ Its key also includes `pyproject.toml`, because entry points are packaging
 metadata. Ordinary dirty source edits intentionally reuse the target and are
 picked up immediately through `PYTHONPATH`.
 
+The metadata target also supplies the exact locked Harbor CLI plus the
+`modelexpress` and `torchao` runtime companions. This keeps taskset downloads
+and model loading aligned with the checkout when the immutable SIF contains an
+older compatible dependency stack.
+
 RL jobs also add every local package beneath
 `deps/verifiers/environments/` and `deps/research-environments/environments/`
 to the live-source path. This is generated centrally by
@@ -87,6 +92,7 @@ The runtime has stable defaults, with these supported overrides:
 - `LUMI_UV`: uv executable bound into the SIF for the launcher
 - `PRIME_RL_HF_HOME`: Hugging Face cache root
 - `PRIME_RL_UV_CACHE_DIR`, `PRIME_RL_XDG_CACHE_HOME`,
+  `PRIME_RL_HARBOR_CACHE_DIR`,
   `PRIME_RL_WANDB_CACHE_DIR`, `PRIME_RL_WANDB_CONFIG_DIR`,
   `PRIME_RL_MPLCONFIGDIR`, `PRIME_RL_TMPDIR`: non-home runtime state
 - `PRIME_RL_METADATA_DIR`: prepared distribution-metadata target inside a job
@@ -149,3 +155,6 @@ Unexpected writes under `$HOME`
 
 - Inspect the cache variables above. LUMI launchers set all of them beneath the
   project scratch trees and set `PYTHONNOUSERSITE=1` in the container.
+- Harbor tasksets use a job-scoped node-local cache under `/tmp` by default.
+  Set `PRIME_RL_HARBOR_CACHE_DIR` only when that data must persist; do not
+  redirect a large task export to project scratch or the login-node home.
