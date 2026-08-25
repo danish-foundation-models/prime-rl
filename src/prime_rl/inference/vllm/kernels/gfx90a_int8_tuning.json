@@ -10,7 +10,7 @@
     "measurement_scope": "one idle GCD"
   },
   "runtime": {
-    "vllm_distribution": "0.24.0+lumi_aif_gfx90a_ee0da84",
+    "vllm_distribution": "0.25.0.dev0+g27d0e3ef3.gfx90a",
     "vllm_upstream_commit": "ee0da84ab9e04ac7610e28580af62c365e898389",
     "torch_version": "2.11.0+rocm7.1",
     "triton_version": "3.7.1",
@@ -64,7 +64,7 @@
       "enable_eplb": false
     },
     "local_scheduler_max_tokens": 2048,
-    "global_ep_max_tokens": 4096
+    "global_ep_max_tokens": 16384
   },
   "runtime_options": {
     "quantization": "prime_cdna2_int8",
@@ -102,7 +102,9 @@
       512,
       1024,
       2048,
-      4096
+      4096,
+      8192,
+      16384
     ],
     "reject_above_maximum": true
   },
@@ -414,6 +416,14 @@
       "group_size_m": 1,
       "num_warps": 8,
       "num_stages": 2
+    },
+    "m128_n256_g32_w8_s2": {
+      "block_m": 128,
+      "block_n": 256,
+      "block_k": 32,
+      "group_size_m": 32,
+      "num_warps": 8,
+      "num_stages": 2
     }
   },
   "selected_dense": {
@@ -538,7 +548,9 @@
     "512": "m64_n128_g1_w8_s2",
     "1024": "m128_n128_g1_w8_s2",
     "2048": "m64_n128_g8_w8_s2",
-    "4096": "m64_n128_g8_w8_s2"
+    "4096": "m64_n128_g8_w8_s2",
+    "8192": "m128_n256_g32_w8_s2",
+    "16384": "m128_n256_g32_w8_s2"
   },
   "moe_launch_overrides": {
     "split_k": 1

@@ -25,19 +25,21 @@ Keep the stock vLLM path for other models or deployment shapes.
 | Routed-expert ReLU-squared | Nemotron 3 Super BF16 contiguous `[M, 2688]`, `5,632 <= M <= 720,896` | `PRIME_ROCM_NEMOTRON_RELU2=1` |
 | Large-prefill MoE tiles | Nemotron 3 Super TP8/EP8 expert shapes `(64, 2688, 1024)` and `(64, 1024, 2688)`, top-22, and `4,096 <= M <= 32,768` | `PRIME_ROCM_NEMOTRON_MOE_CONFIG=1` |
 
-All paths require a ROCm PyTorch build, a `gfx90a` GPU, and the exact
-vLLM distribution described below. The INT8 path is currently specific to
+All paths require a ROCm PyTorch build, a `gfx90a` GPU, and their explicitly
+validated vLLM distribution. The INT8 path is currently specific to
 `zai-org/GLM-5.2-FP8`'s model contract; a similar architecture or another
 GLM release is not implicitly supported.
 
 ## Exact runtime and topology
 
-The private vLLM symbols used by these integrations are pinned to distribution
-`0.24.0+lumi_aif_gfx90a_ee0da84`, corresponding to vLLM commit
-`ee0da84ab9e04ac7610e28580af62c365e898389`. Startup validates the
-distribution and every imported private-function signature before binding the
-symbols. The measured software stack is PyTorch `2.11.0+rocm7.1` and Triton
-`3.7.1`.
+The Nemotron, sparse-attention, and documented source-hook integrations are
+pinned to distribution `0.24.0+lumi_aif_gfx90a_ee0da84`, corresponding to
+vLLM commit `ee0da84ab9e04ac7610e28580af62c365e898389`. The later modular
+GLM dense/routed INT8 path is pinned independently to
+`0.25.0.dev0+g27d0e3ef3.gfx90a`. Startup validates the relevant distribution
+and every imported private-function signature before binding symbols, so
+enabling a path against the other runtime fails closed. The measured software
+stack is PyTorch `2.11.0+rocm7.1` and Triton `3.7.1`.
 
 For GLM MLA, validate the canonical `qk_head_dim`, `qk_nope_head_dim`, and
 `qk_rope_head_dim` fields rather than the generic `head_dim` alias.
