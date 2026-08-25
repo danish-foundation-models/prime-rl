@@ -21,10 +21,13 @@ prime_rl_lumi_export_pythonpath() {
     "$project_dir/deps/research-environments/environments"
   do
     [[ -d "$env_root" ]] || continue
-    for env_dir in "$env_root"/*; do
-      [[ -f "$env_dir/pyproject.toml" ]] || continue
+    while IFS= read -r -d '' pyproject; do
+      env_dir=${pyproject%/pyproject.toml}
       path="$path:$env_dir"
-    done
+    done < <(
+      find "$env_root" -mindepth 2 -maxdepth 4 -type f \
+        -name pyproject.toml -print0 | sort -z
+    )
   done
 
   export PYTHONPATH="$path:$metadata_dir"
