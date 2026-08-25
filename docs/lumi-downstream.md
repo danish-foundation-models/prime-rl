@@ -81,6 +81,10 @@ Current downstream dependency pins:
   relay API used by the Verifiers adapter. It is pinned as live source because
   the operational SIF does not bundle the SDK. Remove the submodule only after
   the supported runtime image provides the same API.
+- `modelexpress==0.3.0` and the lock-pinned `torchao` wheel are installed
+  without dependencies into PRIME-RL's commit-keyed runtime metadata. The
+  operational SIF already provides their heavy Python dependencies but not
+  these packages, and current orchestrator modules import both during startup.
 - `research-environments` stays on the upstream pin. The preserved
   `mini-swe-agent-v2` work is being separated into its own package rather than
   maintained as a fork of a repository that removed it.
