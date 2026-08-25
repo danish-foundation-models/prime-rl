@@ -117,6 +117,25 @@ the PRIME-RL command wrappers. At job startup the Slurm templates prepend live
 source directories to `PYTHONPATH` and add the metadata target's `bin` directory
 to `PATH`.
 
+TMax task records may refer to registry images that UCloud workers cannot pull.
+For a bounded run, export the Harbor taskset, build each selected task's
+`environment/Dockerfile` under a stable gateway image id, and map the task name
+to that id with `taskset.image_overrides`:
+
+```bash
+uv run scripts/build_ucloud_harbor_image.py \
+  --task-dir /path/to/export/tmax/task_000001_example \
+  --image-id prime-rl-tmax-task-000001-example
+```
+
+Keep `taskset.tasks` aligned with the prepared image set. Do not assume the
+registry reference in a Harbor `task.toml` is public or available on every
+sandbox node. UCloud's direct runtime requires numeric OCI identities; the
+Verifiers adapter maps `runtime.user = "root"` to UID `0` when constructing the
+sandbox request. Use the current mini-SWE harness version; its sandbox program
+pins the LiteLLM release used by Verifiers so Python 3.10 task images resolve a
+compatible environment.
+
 ## Monitoring
 
 ```bash
