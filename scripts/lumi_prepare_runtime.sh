@@ -9,6 +9,16 @@ PRIME_RL_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache/prime-rl}
 LUMI_RUNTIME_PACKAGES=(
   "harbor==0.14.0"
   "modelexpress==0.3.0"
+  "multi-swe-bench==1.1.2"
+  "dataclasses-json==0.6.7"
+  "marshmallow==3.26.2"
+  "typing-inspect==0.9.0"
+  "mypy-extensions==1.1.0"
+  "PyGithub==2.9.1"
+  "PyNaCl==1.6.2"
+  "swe-rex==1.4.0"
+  "bashlex==0.18"
+  "unidiff==0.7.5"
   "https://github.com/PrimeIntellect-ai/prime-rl/releases/download/v0.6.0/torchao-0.17.0+git02105d46c-cp312-cp312-linux_x86_64.whl"
 )
 

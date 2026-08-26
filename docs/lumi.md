@@ -4,6 +4,9 @@ PRIME-RL owns training, inference, orchestration, and the Slurm runtime on
 LUMI. The repository remains a live checkout; generated outputs live outside
 the checkout under the bench artifact tree.
 
+See [LUMI agentic environment portfolio](lumi-agentic-environments.md) for the
+large-corpus training mix, held-out eval tasksets, and current UCloud coverage.
+
 See [LUMI downstream maintenance](lumi-downstream.md) for the integration
 branch policy, refresh procedure, and dependency-fork requirements.
 
@@ -32,10 +35,13 @@ Its key also includes `pyproject.toml`, because entry points are packaging
 metadata. Ordinary dirty source edits intentionally reuse the target and are
 picked up immediately through `PYTHONPATH`.
 
-The metadata target also supplies the exact locked Harbor CLI plus the
-`modelexpress` and `torchao` runtime companions. This keeps taskset downloads
-and model loading aligned with the checkout when the immutable SIF contains an
-older compatible dependency stack.
+The metadata target also supplies the exact locked Harbor CLI, Multi-SWE scorer
+and its missing transitive packages, plus the `modelexpress` and `torchao`
+runtime companions. Packages are listed explicitly and installed without
+dependency resolution so this thin layer does not replace the SIF's tested
+Torch, Pydantic, FastAPI, or other core runtime stack. This keeps taskset
+downloads, scoring, and model loading aligned with the checkout when the
+immutable SIF contains an older compatible dependency stack.
 
 RL jobs also add every local package beneath
 `deps/verifiers/environments/` and `deps/research-environments/environments/`
@@ -135,6 +141,21 @@ Verifiers adapter maps `runtime.user = "root"` to UID `0` when constructing the
 sandbox request. Use the current mini-SWE harness version; its sandbox program
 pins the LiteLLM release used by Verifiers so Python 3.10 task images resolve a
 compatible environment.
+
+Probe a representative task image and its setup hook through the operational
+SIF before adding a taskset to a UCloud training mix:
+
+```bash
+./scripts/lumi_validate_ucloud_taskset.sh r2e-gym-v1
+./scripts/lumi_validate_ucloud_taskset.sh scaleswe-v1 \
+  --num-tasks 3 --shuffle --max-concurrent 3
+```
+
+Run Harbor-backed taskset probes serially. Harbor 0.14 stores anonymous session
+state in one user-level credentials file and its writes are not atomic, so
+parallel dataset exports can observe a partially written JSON document. This
+does not affect already-exported tasksets or ordinary non-Harbor environment
+loads.
 
 ## Monitoring
 
