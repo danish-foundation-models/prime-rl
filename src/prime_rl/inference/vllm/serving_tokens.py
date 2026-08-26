@@ -189,7 +189,7 @@ class PrimeRlServingTokens(ServingTokens):
         request: GenerateRequest,
         raw_request: Request | None = None,
     ) -> PrimeRlGenerateResponse | ErrorResponse | AsyncGenerator[str, None]:
-        # Mirrors upstream ``ServingTokens.serve_tokens`` (vllm 0.22). Diffs:
+        # Mirrors upstream ``ServingTokens.serve_tokens``. Diffs:
         # (a) inject ``data_parallel_rank`` from the inbound header into
         # ``engine_client.generate``; (b) default ``sampling_params.max_tokens``
         # to ``max_model_len - prompt_len`` when the caller didn't set it; and
@@ -226,6 +226,7 @@ class PrimeRlServingTokens(ServingTokens):
             from vllm.inputs import mm_input
             from vllm.multimodal.inputs import (
                 MultiModalKwargsItem,
+                MultiModalKwargsItems,
                 PlaceholderRange,
             )
 
@@ -242,13 +243,13 @@ class PrimeRlServingTokens(ServingTokens):
                     mm_kwargs[modality] = [None] * len(hashes)
             engine_input = mm_input(
                 prompt_token_ids=request.token_ids,
-                mm_kwargs=mm_kwargs,  # type: ignore[arg-type]
+                mm_kwargs=MultiModalKwargsItems(mm_kwargs),
                 mm_hashes=features.mm_hashes,
                 mm_placeholders=mm_placeholders,
                 cache_salt=request.cache_salt,
             )
         else:
-            (engine_input,) = await self.openai_serving_render.preprocess_completion(
+            (engine_input,) = await self.online_renderer.preprocess_completion(
                 request,
                 prompt_input=request.token_ids,
                 prompt_embeds=None,

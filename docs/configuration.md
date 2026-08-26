@@ -17,7 +17,7 @@ Every `prime-rl` entrypoint uses [`pydantic-config`](https://github.com/PrimeInt
   - [Optional Sub-Configs](#optional-sub-configs)
   - [None](#none)
   - [Discriminated Unions](#discriminated-unions)
-  - [Environments](#environments-orchestratortrainenv)
+  - [Environments](#environments)
   - [Environment Variables](#environment-variables)
 - [Examples](#examples)
 
@@ -50,18 +50,18 @@ CLI flags mirror the TOML tree using dots:
 --max-steps 50                              # top-level
 --model.name Qwen/Qwen3-4B                  # nested
 --trainer.optim.lr 1e-5                     # double-nested
---inference.parallel.tp 4
+--inference.vllm.tensor-parallel-size 4
 ```
 
 > Field names are snake_case in TOML (`max_model_len`) and kebab-case on the CLI (`--max-model-len`).
 
-> Renamed fields keep their old name as a validation alias — e.g. `rollouts_per_example` is still accepted in TOML and CLI after being renamed to `group_size`. Mixing the two names across sources is safe.
+> A renamed field keeps no alias for its old name: the old spelling fails as an unknown key rather than being silently translated.
 
 ## Inspecting and Validating
 
 ```bash
 uv run rl --help                                       # full schema
-uv run rl @ rl.toml --dry-run --output-dir /tmp/check  # write resolved configs
+uv run rl @ rl.toml --dry-run --output-dir /tmp --run.name check  # write resolved configs (JSON) to /tmp/check/configs
 ```
 
 ## Syntax
@@ -71,12 +71,12 @@ uv run rl @ rl.toml --dry-run --output-dir /tmp/check  # write resolved configs
 CLI uses paired flags: bare `--flag` sets `True`, `--no-flag` sets `False`. TOML must be explicit:
 
 ```bash
-uv run rl @ rl.toml --clean-output-dir       # True
-uv run rl @ rl.toml --no-clean-output-dir    # False
+uv run rl @ rl.toml --clean       # True
+uv run rl @ rl.toml --no-clean    # False
 ```
 
 ```toml
-clean_output_dir = true
+clean = true
 ```
 
 ### Lists
@@ -93,20 +93,21 @@ uv run rl @ rl.toml --trainer.model.lora.target-modules '["q_proj", "k_proj", "v
 target_modules = ["q_proj", "k_proj", "v_proj"]
 ```
 
-Overlay TOMLs **replace** lists wholesale — an overlay that wants to add one item must still spell out the full list. For arrays of tables (e.g. environments), see [Environments](#environments-orchestratortrainenv).
+Overlay TOMLs **replace** lists wholesale — an overlay that wants to add one item must still spell out the full list. For arrays of tables, see [Environments](#environments).
 
 ### Dicts
 
-CLI takes a JSON literal. TOML uses a table or inline-table. CLI dicts deep-merge with TOML dicts — CLI keys win on conflict but don't wipe the file's keys:
+CLI takes a JSON literal. TOML uses a table. CLI dicts deep-merge with TOML dicts — CLI keys win on conflict but don't wipe the file's keys:
 
 ```bash
-uv run rl @ rl.toml --orchestrator.train.env.0.args \
+uv run rl @ rl.toml --orchestrator.train.source.0.args \
   '{"dataset_name": "openai/gsm8k", "dataset_subset": "main"}'
 ```
 
 ```toml
-[[orchestrator.train.env]]
-args = { dataset_name = "openai/gsm8k", dataset_subset = "main" }
+[[orchestrator.train.source]]
+args.dataset_name = "openai/gsm8k"
+args.dataset_subset = "main"
 ```
 
 ### Optional Sub-Configs
@@ -123,11 +124,11 @@ To **disable** a sub-config that's on by default, use `--no-<name>` on the CLI o
 TOML has no `null`. Use the string `"None"`, which the loader coerces:
 
 ```toml
-[inference.model]
+[inference.vllm]
 max_model_len = "None"
 ```
 
-On the CLI: `--inference.model.max-model-len None`.
+On the CLI: `--inference.vllm.max-model-len None`.
 
 ### Discriminated Unions
 
@@ -142,27 +143,32 @@ mu = 0.95
 
 Omit `type` to keep the default variant.
 
-### Environments (`[[orchestrator.train.env]]`)
+### Environments
 
-Training environments are an array of tables — set one per env, optionally with sampling weights:
+Training and evaluation sources are arrays of tables. Set one source per environment; training sources can optionally carry sampling weights:
 
 ```toml
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "gsm8k"
-env.taskset = { id = "gsm8k-v1", split = "train" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
 ratio = 3  # 75% of batches
+env.taskset.id = "gsm8k"
+env.taskset.split = "train"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "reverse-text"
-env.taskset = { id = "reverse-text-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
 ratio = 1  # default — 25% of batches
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "gsm8k-eval"
-env.taskset = { id = "gsm8k-v1", split = "test" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "gsm8k"
+env.taskset.split = "test"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 ```
 
 `ratio` defaults to `1` (equal weight per env); values are relative weights normalized to probabilities across envs.
@@ -192,7 +198,7 @@ PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:False"
 VLLM_USE_DEEP_GEMM = "1"
 
 [orchestrator.env_vars]
-PI_USAGE_BASE_URL = "https://..."
+PRIME_LOG_LEVEL = "debug"
 ```
 
 The `rl` launcher applies these the same way in both single-node and multi-node (SLURM) runs. Precedence, low to high:
@@ -231,17 +237,24 @@ Start from a shipped base config, override two fields on the CLI, and dry-run:
 
 ```bash
 uv run rl @ examples/basic/reverse-text/rl.toml \
-  --wandb.name my-experiment \
+  --monitors.wandb.name my-experiment \
   --trainer.optim.lr 5e-6 \
   --output-dir /tmp/reverse-dry \
+  --run.name check \
   --dry-run
 ```
 
 Then inspect the resolved config:
 
 ```bash
-ls /tmp/reverse-dry/configs/
-# rl.toml  trainer.toml  orchestrator.toml  inference.toml
+ls /tmp/reverse-dry/check/configs/latest/resolved/
+# rl.json  trainer.json  orchestrator.json  inference.json
 ```
 
-Each per-process TOML reflects the final, validated configuration that the actual run would consume — exactly what each process sees when started standalone (`uv run trainer @ /tmp/reverse-dry/configs/trainer.toml`, etc.). This is the easiest way to bisect a misbehaving config: dry-run a known-good base, dry-run your overlay, diff the two.
+Each per-process JSON contains the final, validated configuration that the run
+uses. This is also what each standalone process reads. For example, the trainer
+reads `configs/latest/resolved/trainer.json`.
+
+`configs/latest/command.txt` records the shell-safe launch command and its CLI
+overrides. Each launch also remains under `configs/attempt_<n>/`. To compare
+configs, dry-run a known-good base and your overlay. Then diff the two attempts.

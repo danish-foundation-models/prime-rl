@@ -1,7 +1,5 @@
 import torch
 
-from prime_rl.inference.vllm.padded_input_scrub import monkey_patch_vllm_padded_input_scrub
-
 _EXPECTED_SPARSE_VLLM_DISTRIBUTION = "0.24.0+lumi_aif_gfx90a_ee0da84"
 _GLM_SPARSE_MLA_TOPK = 2048
 
@@ -89,7 +87,6 @@ def _require_sparse_mla_topk_tokens(topk_tokens: object, source: str) -> int:
         )
     return topk_tokens
 
-
 def apply_shared_vllm_patches():
     """vLLM general plugin: prime-rl patches that must run in every vLLM process.
 
@@ -104,7 +101,6 @@ def apply_shared_vllm_patches():
     monkey_patch_nano_v3_reasoning_parser()
     monkey_patch_qwen3_coder_param_newline_trim()
     monkey_patch_minimax_m2_think_end_passthrough()
-    monkey_patch_vllm_padded_input_scrub()
     monkey_patch_return_routed_experts_with_nixl_connector()
     monkey_patch_kv_xfer_finished_tolerate_freed()
     monkey_patch_online_fp8_parameter_cast()
@@ -2367,8 +2363,7 @@ def monkey_patch_rocm_nemotron_grouped_topk():
     import inspect
 
     from vllm.logger import init_logger
-    from vllm.model_executor.layers.fused_moe.router import fused_topk_bias_router
-    from vllm.model_executor.layers.fused_moe.router import grouped_topk_router
+    from vllm.model_executor.layers.fused_moe.router import fused_topk_bias_router, grouped_topk_router
     from vllm.model_executor.layers.fused_moe.router.fused_topk_bias_router import (
         FusedTopKBiasRouter,
     )

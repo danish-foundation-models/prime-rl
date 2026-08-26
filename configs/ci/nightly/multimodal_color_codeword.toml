@@ -17,13 +17,18 @@ language_model_attr = "model.language_model"
 batch_size = 256
 group_size = 16
 
+[orchestrator.concurrency]
+max_inflight = 128
+
 [orchestrator.train.sampling]
 max_completion_tokens = 64
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "color-codeword"
-env.taskset = { id = "color-codeword-v1", images_per_turn = 1 }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "color-codeword"
+env.taskset.images_per_turn = 1
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [trainer]
 

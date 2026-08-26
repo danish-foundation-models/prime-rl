@@ -6,12 +6,18 @@
 	path = deps/renderers
 	url = git@github.com:rlrs/renderers.git
 	branch = feat/lumi-integration
+[submodule "prime-envs"]
+	path = deps/prime-envs
+	url = git@github.com:PrimeIntellect-ai/prime-envs.git
 [submodule "research-environments"]
 	path = deps/research-environments
 	url = git@github.com:PrimeIntellect-ai/research-environments.git
 [submodule "pydantic-config"]
 	path = deps/pydantic-config
 	url = https://github.com/PrimeIntellect-ai/pydantic-config
+[submodule "prime-kernels"]
+	path = deps/prime-kernels
+	url = https://github.com/PrimeIntellect-ai/prime-kernels
 [submodule "ucloud-sandboxes-sdk"]
 	path = deps/ucloud-sandboxes-sdk
 	url = https://github.com/rlrs/ucloud-sandboxes-sdk.git

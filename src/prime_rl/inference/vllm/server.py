@@ -1,12 +1,10 @@
 import asyncio
 from argparse import Namespace
-from typing import Any
 
 import uvloop
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from starlette.datastructures import State
-from vllm.config import ProfilerConfig
 from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.openai.api_server import init_app_state
 from vllm.entrypoints.openai.cli_args import make_arg_parser, validate_parsed_serve_args
@@ -27,7 +25,6 @@ from prime_rl.inference.patches import (
     monkey_patch_rocm_gfx90a_aiter_attention,
     monkey_patch_strip_routed_experts_from_chat,
     monkey_patch_tokenize_params_validation,
-    monkey_patch_vllm_padded_input_scrub,
 )
 
 # The API process selects and validates the attention backend before workers
@@ -43,9 +40,6 @@ monkey_patch_tokenize_params_validation()
 # NOTE: Register Nano V3 reasoning parser so configs can use
 # `reasoning_parser = "nano_v3"` without a vLLM plugin file.
 monkey_patch_nano_v3_reasoning_parser()
-# NOTE: Optional mitigation for vLLM padded decode inputs until the native fix
-# is available in our pinned runtime.
-monkey_patch_vllm_padded_input_scrub()
 # NOTE: routed_experts are consumed only via the serialized /generate path (router
 # replay). The chat-completions path encodes them as a base64 np.save string the PD
 # router cannot merge, which fails eval rollouts (they use chat completions). Strip
@@ -109,10 +103,14 @@ async def load_lora_adapter(lora_request: LoadLoRAAdapterRequest, raw_request: R
     """Wrapper around vLLM's /v1/load_lora_adapter.
 
     prime-rl reloads a fixed-name adapter with fresh weights every step (the path
-    changes per policy version; the name is constant, see orchestrator.lora_name).
-    vLLM's native loader rejects a same-name reload unless ``load_inplace=True``,
-    so we force it here — that makes the worker re-read the new weights during
-    ``add_lora``, reusing the existing ``lora_int_id``.
+    changes per policy version; the name is constant — the base model name, which
+    the adapter shadows: ``_maybe_get_adapters`` resolves ``lora_requests`` before
+    the base-model match, so requests keep addressing one stable name. If a future
+    vLLM rejects registering an adapter under a served model name, fall back to a
+    distinct constant adapter name set once at startup.) vLLM's native loader
+    rejects a same-name reload unless ``load_inplace=True``, so we force it here —
+    that makes the worker re-read the new weights during ``add_lora``, reusing the
+    existing ``lora_int_id``.
 
     We then reset the stored request's flag back to ``False``. ``load_inplace`` is
     a sticky field on the ``LoRARequest`` that ``_maybe_get_adapters`` hands to
@@ -240,30 +238,18 @@ def _run_parsed_server(args: Namespace) -> None:
         uvloop.run(run_server(args))
 
 
-def _normalize_vllm_extra(key: str, value: Any) -> Any:
-    """Build config objects that vLLM reads directly from the CLI namespace."""
-
-    # EngineArgs converts its nested dictionaries while building VllmConfig,
-    # but the API profile router reads this value before that conversion.
-    if key == "profiler_config" and isinstance(value, dict):
-        return ProfilerConfig(**value)
-    return value
-
-
 # Adapted from vllm/entrypoints/cli/serve.py
 # Only difference we do some config translation (i.e. pass populated namespace
 # to `parse_args`) and additional arg validation
-def server(config: InferenceConfig, vllm_extra: dict[str, Any] | None = None):
+def server(config: InferenceConfig):
     import os
 
     # Signal worker processes to disable LoRA on MoE layers when LoRA targets don't include experts
-    if config.lora_target_modules and not any("expert" in m for m in config.lora_target_modules):
+    lora_target_modules = config.vllm.lora_target_modules
+    if lora_target_modules and not any("expert" in m for m in lora_target_modules):
         os.environ["PRIME_NO_MOE_LORA"] = "1"
 
-    namespace = config.to_vllm()
-    if vllm_extra:
-        for key, value in vllm_extra.items():
-            setattr(namespace, key, _normalize_vllm_extra(key, value))
+    namespace = config.to_namespace()
 
     parser = FlexibleArgumentParser(description="vLLM OpenAI-Compatible RESTful API server.")
     parser = make_arg_parser(parser)

@@ -9,14 +9,14 @@ def strip_escape_codes(text: str) -> str:
     return re.sub(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])", "", text)
 
 
-def check_no_error(process: ProcessResult, output_dir: Path) -> None:
+def check_no_error(process: ProcessResult, run_dir: Path) -> None:
     """Helper to assert that a process did not error"""
     if process.returncode != 0:
         print("=== Inference Outputs ===")
-        with open(output_dir / "logs" / "inference.log", "r") as f:
+        with open(run_dir / "logs" / "latest" / "inference.log", "r") as f:
             print(*f.readlines()[-100:], sep="")
         print("=== Orchestrator Outputs ===")
-        with open(output_dir / "logs" / "orchestrator.log", "r") as f:
+        with open(run_dir / "logs" / "latest" / "orchestrator.log", "r") as f:
             print(*f.readlines()[-1000:], sep="")
     assert process.returncode == 0, f"Process has non-zero return code ({process})"
 
@@ -108,7 +108,7 @@ def check_loss_goes_down(lines: list[str]):
 
 
 def check_final_eval_reward_above(lines: list[str], env_name: str, min_threshold: float):
-    """Assert the LAST `Evaluated {env_name} (Step N) | ... | Reward X.XXXX`
+    """Assert the last `Evaluated {env_name} | ... | Reward X.XXXX`
     line reports a reward above ``min_threshold``.
 
     Robust for short distill smokes: until the policy converges, eval reward is
@@ -223,3 +223,23 @@ def check_mismatch_kl_in_range(
         min_threshold=min_threshold,
         max_threshold=max_threshold,
     )
+
+
+def convert_checkpoint(converter: str, *args: Path) -> None:
+    """Run ``tools/convert_<converter>.py`` on a checkpoint."""
+    import subprocess
+
+    cmd = ["uv", "run", "python", f"tools/convert_{converter}.py", *[str(arg) for arg in args]]
+    subprocess.run(cmd, check=True, timeout=600)
+
+
+def check_hf_load(weights_dir: Path) -> None:
+    """Helper to assert that an exported checkpoint loads as an HF model with no missing/unexpected tensors"""
+    import torch
+    from transformers import AutoModelForCausalLM
+
+    model, loading_info = AutoModelForCausalLM.from_pretrained(weights_dir, output_loading_info=True)
+    assert not loading_info["missing_keys"], f"missing keys: {loading_info['missing_keys'][:5]}"
+    assert not loading_info["unexpected_keys"], f"unexpected keys: {loading_info['unexpected_keys'][:5]}"
+    assert not loading_info["mismatched_keys"], f"mismatched keys: {loading_info['mismatched_keys'][:5]}"
+    assert all(torch.isfinite(param).all() for param in model.parameters())

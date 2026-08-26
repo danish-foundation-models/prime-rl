@@ -4,7 +4,7 @@ seq_len = 2048
 [model]
 name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
 
-[wandb]
+[monitors.wandb]
 project = "reverse-text"
 name = "reverse-text"
 
@@ -15,10 +15,11 @@ group_size = 16
 [orchestrator.train.sampling]
 max_completion_tokens = 128
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "reverse-text"
-env.taskset = { id = "reverse-text-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [trainer.optim]
 lr = 3e-6

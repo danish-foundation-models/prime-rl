@@ -16,7 +16,7 @@ type = "filesystem"
 [model]
 name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
 
-[wandb]
+[monitors.wandb]
 project = "reverse-text-ci"
 name = "ci-rl-sft"
 
@@ -24,13 +24,16 @@ name = "ci-rl-sft"
 batch_size = 128
 group_size = 16
 
+[orchestrator.concurrency]
+max_inflight = 128
+
 [orchestrator.algo]
 type = "sft"
 
 # sft's teacher IS the model it samples from.
 [orchestrator.algo.sampling.source]
 name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-RL"
-base_url = ["http://localhost:8001/v1"]
+base_url = "http://localhost:8001/v1"
 
 # The student's renderer tokenizes the teacher's messages into the student's
 # token space (backfill). Use `prime-qwen3` — it matches this PrimeIntellect
@@ -43,10 +46,11 @@ name = "prime-qwen3"
 [orchestrator.train.sampling]
 max_completion_tokens = 128
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "reverse-text"
-env.taskset = { id = "reverse-text-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [orchestrator.eval]
 interval = 1
@@ -55,13 +59,16 @@ num_examples = 16
 [orchestrator.eval.sampling]
 max_completion_tokens = 128
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "reverse-text"
-env.taskset = { id = "reverse-text-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [trainer.optim]
 lr = 3e-6
 
 [inference]
+
+[inference.vllm]
 gpu_memory_utilization = 0.4

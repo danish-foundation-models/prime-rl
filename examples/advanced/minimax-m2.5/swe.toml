@@ -20,7 +20,7 @@ job_name = "swe-minimax"
 [ckpt]
 interval = 100
 
-[wandb]
+[monitors.wandb]
 project = "minimax-swe"
 
 [trainer.model]
@@ -45,26 +45,28 @@ weight_decay = 0.01
 
 [orchestrator]
 batch_size = 2048
-oversampling_factor = 2
 max_off_policy_steps = 16
 
+[orchestrator.concurrency]
+initial_inflight = 4096
+max_inflight = 4096
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "swe"
-env.taskset = { id = "r2e-gym-v1" }
-env.agent.harness = { id = "bash", runtime = { type = "prime", labels = ["minimax-swe", "swe"] } }
+env.taskset.id = "r2e-gym"
+env.agent.harness.id = "bash"
+env.agent.runtime.labels = ["minimax-swe", "swe"]
 
 [orchestrator.eval]
 interval = 25
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "swe-bench-verified"
-env.taskset = { id = "swebench-verified-v1" }
-env.agent.harness = { id = "bash", runtime = { type = "prime", labels = ["minimax-swe", "swe-bench-verified"] } }
+env.taskset.id = "swebench-verified"
+env.agent.harness.id = "bash"
+env.agent.runtime.labels = ["minimax-swe", "swe-bench-verified"]
 
-[inference.parallel]
-tp = 8
-
-# PrimeIntellect/MiniMax-M2.5-bf16 — template-identical to MiniMaxAI/MiniMax-M2.5 (mapped).
+[inference.vllm]
+tensor_parallel_size = 8
 [orchestrator.renderer]
 name = "minimax-m2"

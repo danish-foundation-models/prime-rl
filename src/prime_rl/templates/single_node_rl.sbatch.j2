@@ -18,14 +18,16 @@
 {%- if exclude %}
 #SBATCH --exclude={{ exclude }}
 {%- endif %}
-#SBATCH --output={{ output_dir }}/job_%j.log
-#SBATCH --error={{ output_dir }}/job_%j.log
+#SBATCH --output={{ launcher_log_dir }}/job_%j.log
+#SBATCH --error={{ launcher_log_dir }}/job_%j.log
 
 # Exit immediately if any setup command or the launcher fails so the SLURM job
 # releases its allocation instead of holding nodes after a crash.
 set -e
 
 export PROJECT_DIR={{ project_dir }}
+export PRL_ATTEMPT_CONFIG_DIR={{ config_dir }}
+export PRL_ATTEMPT_LOG_DIR={{ log_dir }}
 
 # Setup environment
 cd $PROJECT_DIR
@@ -37,4 +39,5 @@ uv sync --all-extras --all-packages
 # Pre-run command
 {{ pre_run_command }}
 {% endif %}
+export PRL_RUN_ID=${PRL_RUN_ID:-$(python3 -c "import uuid; print(uuid.uuid4().hex)")}
 uv run rl @ {{ config_path }}
