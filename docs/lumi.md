@@ -167,9 +167,9 @@ sacct -j <jobid> --format=JobID,JobName%30,Partition,State,ExitCode,Elapsed,NNod
 For a run output directory:
 
 - Slurm output: `<output_dir>/job_<jobid>.log`
-- Trainer: `<output_dir>/logs/trainer.log`
+- Trainer rank 0: `<output_dir>/logs/trainer/node_0.log`
 - Orchestrator: `<output_dir>/logs/orchestrator.log`
-- Inference: `<output_dir>/logs/inference.log`
+- Inference rank 0: `<output_dir>/logs/inference/node_0.log`
 - Per-node streams: `<output_dir>/logs/{trainer,inference}/node_<rank>.log`
 
 ## Troubleshooting

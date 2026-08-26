@@ -17,6 +17,12 @@ enforcement for production training so zero-gradient groups do not consume steps
 The smoke caps trainer sequences at 4K. An 8K trial completed its first 64-rank
 trainer step, then fragmented an MI250X rank on a 32 GiB allocation during step 2;
 do not raise the cap for a scale run until that memory path is addressed.
+The supported 4K path completed a three-step, 64-rank integrated smoke across
+all four training sources and all three held-out environments with no sandbox
+errors. Both intermediate 224.77 GiB broadcasts reloaded into vLLM, and the
+final checkpoint was saved. The third rollout batch included an R2E reward of
+0.25 (0.125 for the mixed batch), so the final trainer step exercised a real
+non-zero-advantage update rather than only the plumbing path.
 Production mixture weights should be selected from observed reward density,
 error rate, rollout length, and duplicate rate after the smoke run.
 
