@@ -36,10 +36,16 @@ class _FakeMixer(torch.nn.Module):
         self.out_proj = torch.nn.Identity()
 
 
-def _install_fake_scan(monkeypatch, seen_seq_idx: list[torch.Tensor]) -> None:
+def _install_fake_scan(
+    monkeypatch,
+    seen_seq_idx: list[torch.Tensor],
+    seen_compiling: list[bool] | None = None,
+) -> None:
     def fake_scan(hidden_states, time_step, A, B, C, **kwargs):
         assert kwargs["return_final_states"] is False
         seen_seq_idx.append(kwargs["seq_idx"].clone())
+        if seen_compiling is not None:
+            seen_compiling.append(torch.compiler.is_compiling())
         return hidden_states
 
     ssd_combined = types.ModuleType("mamba_ssm.ops.triton.ssd_combined")
@@ -83,3 +89,51 @@ def test_mamba_cp_forward_builds_seq_idx_for_uneven_packs(monkeypatch):
     cp_mamba.mamba_cp_forward(_FakeMixer().cuda(), hidden_states, None, 0, 1, cu_seqlens)
 
     assert torch.equal(seen_seq_idx[0], torch.tensor([[0, 1, 1, 1, 2, 2]], dtype=torch.int32, device="cuda"))
+
+
+def test_compiled_packed_boundaries_can_specialize(monkeypatch):
+    """Regression test for CP Mamba's dynamic-shape guard failure."""
+    monkeypatch.setattr(torch._dynamo.config, "capture_scalar_outputs", True)
+    torch._dynamo.reset()
+
+    boundaries = torch.tensor([0, 4], dtype=torch.int32)
+    cp_mamba.mark_packed_boundaries_dynamic(boundaries)
+
+    def packed_sum(values: torch.Tensor, cu_seqlens: torch.Tensor) -> torch.Tensor:
+        boundary_list = cu_seqlens.tolist()
+        segments = [values[start:end] for start, end in zip(boundary_list[:-1], boundary_list[1:])]
+        return torch.cat(segments).sum()
+
+    compiled_packed_sum = torch.compile(packed_sum, backend="eager", fullgraph=False)
+    assert compiled_packed_sum(torch.ones(4), boundaries).item() == 4
+
+    next_boundaries = torch.tensor([0, 2, 4], dtype=torch.int32)
+    cp_mamba.mark_packed_boundaries_dynamic(next_boundaries)
+    assert compiled_packed_sum(torch.ones(4), next_boundaries).item() == 4
+
+
+def test_mamba_scan_stays_outside_inductor(monkeypatch):
+    """mamba_ssm's custom Triton kernels must remain behind a graph break."""
+    seen_seq_idx: list[torch.Tensor] = []
+    seen_compiling: list[bool] = []
+    _install_fake_scan(monkeypatch, seen_seq_idx, seen_compiling)
+    torch._dynamo.reset()
+
+    def scan(values: torch.Tensor) -> torch.Tensor:
+        return cp_mamba._mamba_chunk_scan_combined(
+            values,
+            values,
+            values,
+            values,
+            values,
+            chunk_size=1,
+            D=values,
+            seq_idx=torch.zeros(1, 1, dtype=torch.int32),
+            dt_bias=values,
+            dt_softplus=True,
+        )
+
+    compiled_scan = torch.compile(scan, backend="eager", fullgraph=False)
+    values = torch.ones(1)
+    torch.testing.assert_close(compiled_scan(values), values)
+    assert seen_compiling == [False]

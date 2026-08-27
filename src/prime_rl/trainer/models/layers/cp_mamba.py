@@ -20,6 +20,58 @@ from fla.modules.conv import causal_conv1d as fla_causal_conv1d
 from fla.ops.utils import prepare_sequence_ids
 
 
+def mark_packed_boundaries_dynamic(cu_seqlens: torch.Tensor) -> None:
+    """Allow dynamic packed boundaries without forbidding specialization.
+
+    The per-document convolution below converts ``cu_seqlens`` to a Python
+    list. TorchDynamo must therefore specialize the number of documents in a
+    compiled graph, even though other batches may contain a different number.
+    """
+    torch._dynamo.maybe_mark_dynamic(cu_seqlens, 0)
+
+
+@torch.compiler.disable
+def _mamba_chunk_scan_combined(
+    hidden_states: torch.Tensor,
+    time_step: torch.Tensor,
+    A: torch.Tensor,
+    B: torch.Tensor,
+    C: torch.Tensor,
+    *,
+    chunk_size: int,
+    D: torch.Tensor,
+    seq_idx: torch.Tensor,
+    dt_bias: torch.Tensor,
+    dt_softplus: bool,
+    **kwargs,
+) -> torch.Tensor:
+    """Run mamba_ssm's Triton scan without tracing it through Inductor.
+
+    mamba_ssm 2.3.1 exposes its raw Triton kernels through a custom autograd
+    function. Inductor can compile the first static sequence length, but its
+    automatic dynamic-shape recompile fails while decomposing those kernels.
+    This graph break leaves the surrounding layer compiled while mamba_ssm
+    continues to JIT and execute its optimized Triton kernels directly.
+    """
+    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
+
+    return mamba_chunk_scan_combined(
+        hidden_states,
+        time_step,
+        A,
+        B,
+        C,
+        chunk_size=chunk_size,
+        D=D,
+        z=None,
+        seq_idx=seq_idx,
+        return_final_states=False,
+        dt_bias=dt_bias,
+        dt_softplus=dt_softplus,
+        **kwargs,
+    )
+
+
 class _SeqToHeadParallel(torch.autograd.Function):
     """[B, S/cp, D] -> [B, S, D/cp] via all-to-all."""
 
@@ -108,8 +160,6 @@ def mamba_cp_forward(
     Replaces the mixer's cuda_kernels_forward when CP > 1. Parameters are
     sliced at runtime so FSDP / checkpoint shapes are unchanged.
     """
-    from mamba_ssm.ops.triton.ssd_combined import mamba_chunk_scan_combined
-
     batch_size, seq_len, _ = hidden_states.shape  # seq_len = S/cp here
 
     # ── 1. in_proj (token-parallel, no communication needed) ──
@@ -199,7 +249,7 @@ def mamba_cp_forward(
     # ── 5. SSM scan on full sequence, local heads ──
     dt_limit_kwargs = {} if mixer.time_step_limit is None else {"dt_limit": mixer.time_step_limit}
 
-    scan_output = mamba_chunk_scan_combined(
+    scan_output = _mamba_chunk_scan_combined(
         hidden_states_local.view(batch_size, full_seq_len, local_num_heads, mixer.head_dim),
         time_step,
         local_A,
@@ -207,9 +257,7 @@ def mamba_cp_forward(
         C_local.view(batch_size, full_seq_len, local_n_groups, -1),
         chunk_size=mixer.chunk_size,
         D=local_D,
-        z=None,
         seq_idx=seq_idx,
-        return_final_states=False,
         dt_bias=local_dt_bias,
         dt_softplus=True,
         **dt_limit_kwargs,

@@ -21,7 +21,7 @@ from transformers.utils import auto_docstring, logging
 
 from prime_rl.trainer.models.base import PreTrainedModelPrimeRL
 from prime_rl.trainer.models.layers.attn import ATTN_IMPL2CLASS, AttentionConfig
-from prime_rl.trainer.models.layers.cp_mamba import mamba_cp_forward
+from prime_rl.trainer.models.layers.cp_mamba import mamba_cp_forward, mark_packed_boundaries_dynamic
 from prime_rl.trainer.models.layers.lm_head import PrimeLmOutput
 from prime_rl.trainer.models.layers.moe import LatentMoE, NemotronHRouter, NonGatedGroupedExperts
 from prime_rl.trainer.models.layers.rms_norm import RMSNorm, RMSNormConfig
@@ -439,7 +439,7 @@ class NemotronHModel(NemotronHPreTrainedModel):
             seq_lens.to(device=inputs_embeds.device),
             total_tokens=None if seq_lens_are_pre_shard else inputs_embeds.shape[1],
         )
-        torch._dynamo.mark_dynamic(cu_seqlens, 0)
+        mark_packed_boundaries_dynamic(cu_seqlens)
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids) if self.rotary_emb is not None else None
