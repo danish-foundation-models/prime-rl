@@ -160,6 +160,14 @@ async def _client_set_max_tokens(raw_request: Request | None) -> bool:
     return isinstance(sp, dict) and "max_tokens" in sp
 
 
+def _serving_renderer(serving: object) -> object:
+    """Return the renderer across the vLLM 0.24 and current attribute names."""
+    renderer = getattr(serving, "online_renderer", None)
+    if renderer is None:
+        renderer = getattr(serving, "openai_serving_render")
+    return renderer
+
+
 class PrimeRlServingTokens(ServingTokens):
     """ServingTokens + DP-rank routing + compact routed experts + max_tokens defaulting."""
 
@@ -249,7 +257,8 @@ class PrimeRlServingTokens(ServingTokens):
                 cache_salt=request.cache_salt,
             )
         else:
-            (engine_input,) = await self.online_renderer.preprocess_completion(
+            renderer = _serving_renderer(self)
+            (engine_input,) = await renderer.preprocess_completion(
                 request,
                 prompt_input=request.token_ids,
                 prompt_embeds=None,

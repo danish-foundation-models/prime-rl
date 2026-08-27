@@ -11,6 +11,7 @@ deltas here:
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import numpy as np
 import pybase64
@@ -39,6 +40,7 @@ from prime_rl.inference.vllm.serving_tokens import (
     _client_set_max_tokens,
     _FinalOutputCapture,
     _GenerateRoutedExpertsCapture,
+    _serving_renderer,
 )
 
 
@@ -71,6 +73,13 @@ def test_subclass_only_overrides_serve_tokens():
         PrimeRlServingTokens.serve_tokens_full_generator
         is not PrimeRlServingTokens.__mro__[1].serve_tokens_full_generator
     )
+
+
+def test_serving_renderer_supports_current_and_vllm_024_names():
+    current = object()
+    legacy = object()
+    assert _serving_renderer(SimpleNamespace(online_renderer=current)) is current
+    assert _serving_renderer(SimpleNamespace(openai_serving_render=legacy)) is legacy
 
 
 def test_serialize_routed_experts_uses_compact_raw_payload():
