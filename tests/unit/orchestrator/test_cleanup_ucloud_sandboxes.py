@@ -1,4 +1,6 @@
 import importlib.util
+import threading
+import time
 from pathlib import Path
 
 
@@ -50,3 +52,48 @@ labels = ["native-label"]
     cleanup = _cleanup_module()
 
     assert cleanup._ucloud_labels(config) == ["native-label"]
+
+
+def test_ucloud_labels_reads_resolved_v1_json(tmp_path):
+    config = tmp_path / "orchestrator.json"
+    config.write_text(
+        '{"orchestrator":{"train":{"source":[{"env":{"agent":{"runtime":'
+        '{"type":"ucloud","labels":["resolved-label"]}}}}]}}}'
+    )
+
+    cleanup = _cleanup_module()
+
+    assert cleanup._ucloud_labels(config) == ["resolved-label"]
+
+
+def test_delete_resources_is_concurrent_and_idempotent():
+    cleanup = _cleanup_module()
+    lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    class NotFoundError(Exception):
+        status_code = 404
+
+    def delete(resource_id):
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.02)
+        with lock:
+            active -= 1
+        if resource_id == "missing":
+            raise NotFoundError
+        if resource_id == "broken":
+            raise RuntimeError("backend unavailable")
+
+    failures = cleanup._delete_resources(
+        ["one", "two", "missing", "broken"],
+        delete=delete,
+        resource_name="sandbox",
+        workers=4,
+    )
+
+    assert max_active > 1
+    assert failures == ["broken"]

@@ -31,20 +31,31 @@ placed first on `PYTHONPATH`. vLLM discovers PRIME-RL patches through the
 `vllm.general_plugins` distribution entry point, so
 `scripts/lumi_prepare_runtime.sh` maintains a small commit-keyed metadata target
 under `.cache/prime-rl/metadata`. The metadata target never replaces live source.
-Its key also includes `pyproject.toml`, because entry points are packaging
+Its key also includes `pyproject.toml` and the runtime-preparation script,
+because entry points and the explicitly layered packages are packaging
 metadata. Ordinary dirty source edits intentionally reuse the target and are
 picked up immediately through `PYTHONPATH`.
 
 The metadata target also supplies the exact locked Harbor CLI, Multi-SWE scorer
-and its missing transitive packages, plus the `modelexpress` and `torchao`
-runtime companions. Packages are listed explicitly and installed without
-dependency resolution so this thin layer does not replace the SIF's tested
-Torch, Pydantic, FastAPI, or other core runtime stack. This keeps taskset
-downloads, scoring, and model loading aligned with the checkout when the
-immutable SIF contains an older compatible dependency stack.
+and its missing transitive packages, plus the `modelexpress`, `torchao`,
+`mamba-ssm`, `prime-sandboxes`, and `vllm-router` runtime companions.
+`mamba-ssm` is compiled for `gfx90a` and is required by context-parallel
+NemotronH training. The router wheel supplies the default local inference
+front end when the base image predates PRIME-RL's router integration. The
+`prime-sandboxes` pin must satisfy the version required by the live Verifiers
+checkout; otherwise importing `verifiers.v1` can fail before configuration is
+parsed. Its matching `connectrpc` and `protobuf-py` distributions are layered
+too, so they take precedence over the legacy `connect-python` module path in
+the base image. Container launchers also mask that legacy distribution's
+metadata, because current `prime-sandboxes` rejects a partial in-place upgrade.
+Packages are listed explicitly and installed without dependency resolution so
+this thin layer does not replace the SIF's tested Torch, Pydantic, FastAPI, or
+other core runtime stack. This keeps taskset downloads, scoring, and model
+loading aligned with the checkout when the immutable SIF contains an older
+compatible dependency stack.
 
-RL jobs also add every local package beneath
-`deps/verifiers/environments/` and `deps/research-environments/environments/`
+RL jobs also add every local package beneath `deps/prime-envs/environments/`,
+`deps/verifiers/environments/`, and `deps/research-environments/environments/`
 to the live-source path. This is generated centrally by
 `scripts/lumi_runtime_env.sh`; repository-bundled environments such as
 `reverse-text` therefore remain outside the SIF and track checkout edits.
@@ -83,6 +94,13 @@ The active LUMI templates are:
 - `src/prime_rl/templates/multi_node_rl_lumi.sbatch.j2`
 - `src/prime_rl/templates/lumi/single_node_sft_lumi.sbatch.j2`
 - `src/prime_rl/templates/lumi/multi_node_sft_lumi.sbatch.j2`
+
+Multi-replica RL deployments use one global router on inference node 0. The
+rendered launcher must expose one `INFER_URLS` value for the policy client and
+one space-separated `ADMIN_URLS` entry per vLLM server. Admin traffic bypasses
+the router for weight updates and health checks. Do not create one policy URL
+per replica: `model.client.base_url` is a single router URL, and extra values
+will be rejected by the orchestrator CLI.
 
 The generic single-node configs write beneath
 `/scratch/project_465002751/rasmus/artifacts/training`. Experiment configs must
@@ -123,6 +141,18 @@ the PRIME-RL command wrappers. At job startup the Slurm templates prepend live
 source directories to `PYTHONPATH` and add the metadata target's `bin` directory
 to `PATH`.
 
+Run CPU-only unit tests against live source and the base SIF, without appending
+the prepared metadata target. The layered `mamba-ssm` package is GPU-runtime
+state: its upstream ROCm autotuner queries the device architecture during
+import, so importing it on a login node with no visible GPU is unsupported.
+Validate that layer with a GPU probe or training smoke.
+
+Single-node launchers normalize the Slurm allocation to logical
+`CUDA_VISIBLE_DEVICES` IDs and unset the node-wide `HIP_VISIBLE_DEVICES` and
+`ROCR_VISIBLE_DEVICES` values before PRIME-RL partitions GPUs among child
+processes. PyTorch ROCm supports this compatibility variable; keeping the
+node-wide ROCm variables would defeat the per-child inference/trainer split.
+
 TMax task records may refer to registry images that UCloud workers cannot pull.
 For a bounded run, export the Harbor taskset, build each selected task's
 `environment/Dockerfile` under a stable gateway image id, and map the task name
@@ -159,6 +189,32 @@ loads.
 
 ## Monitoring
 
+Start the local run dashboard on a named user access node and keep it in a
+detached `tmux` session. Bind it to loopback; use an SSH tunnel rather than
+exposing the service on the shared login network:
+
+```bash
+hostname  # record the exact UAN, for example uan01
+tmux new-session -d -s prime-rl-dashboard-7799 -c "$PWD" \
+  './scripts/lumi_run_in_container.sh dashboard \
+  /scratch/project_465002751/rasmus/artifacts/training \
+  --host 127.0.0.1 --port 7799'
+curl -fsS http://127.0.0.1:7799/api/runs >/dev/null
+```
+
+From a workstation, tunnel through LUMI's public login endpoint to that exact
+UAN, then open `http://localhost:7799`:
+
+```bash
+ssh -N -J "$USER@lumi.csc.fi" \
+  -L 7799:127.0.0.1:7799 "$USER@uan01"
+```
+
+The dashboard includes metrics, resolved configs, component logs, and rollout
+traces. Inspect or stop the server with `tmux attach -t
+prime-rl-dashboard-7799` or `tmux kill-session -t prime-rl-dashboard-7799` on
+the recorded UAN.
+
 ```bash
 squeue -u "$USER" -o "%.18i %.9P %.30j %.8T %.10M %.6D %R"
 sacct -j <jobid> --format=JobID,JobName%30,Partition,State,ExitCode,Elapsed,NNodes,NodeList -P
@@ -171,6 +227,38 @@ For a run output directory:
 - Orchestrator: `<output_dir>/logs/orchestrator.log`
 - Inference rank 0: `<output_dir>/logs/inference/node_0.log`
 - Per-node streams: `<output_dir>/logs/{trainer,inference}/node_<rank>.log`
+
+Long quiet intervals are normal during the first compiled trainer step and
+while vLLM reloads a 120B checkpoint. Do not classify them as CP or RCCL hangs
+from log silence alone. Check that the rank processes are runnable and sample
+the node's kernel GPU-busy counters from an overlapping, CPU-only step:
+
+```bash
+srun --jobid=<jobid> --overlap -w <trainer-node> -N1 -n1 \
+  --cpus-per-task=1 --gpus=0 bash -lc \
+  'ps -C PRIME-RL::Train -o pid,stat,pcpu,etime,wchan:24,comm; \
+   for f in /sys/class/drm/card*/device/gpu_busy_percent; do \
+     printf "%s=" "$f"; cat "$f"; done'
+```
+
+During a filesystem weight broadcast, the inference log reports checkpoint
+prefetch progress and ends with a successful `POST /update_weights`. A real
+trainer failure has a rank traceback; search every node log before resubmitting:
+
+```bash
+rg -n 'Fatal|ERROR|Traceback|InductorError|OutOfMemory' \
+  <output_dir>/logs/trainer/node_*.log
+```
+
+Set `slurm.cleanup_grace_period` explicitly for scale jobs. It preserves a
+short window for an in-flight checkpoint after a component failure; the
+Nemotron smoke uses 600 seconds instead of the generic one-hour default so a
+failed allocation does not look indefinitely hung.
+
+The RL launcher also deletes run-labelled UCloud sandboxes on exit. Cleanup
+uses concurrent, idempotent deletion so cancellation can remove hundreds of
+sandboxes within Slurm's termination window; HTTP 404 means the sandbox is
+already gone, while other deletion errors are reported.
 
 ## Troubleshooting
 

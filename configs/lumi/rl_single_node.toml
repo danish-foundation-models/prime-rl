@@ -1,6 +1,9 @@
-output_dir = "/scratch/project_465002751/rasmus/artifacts/training/lumi-rl-single-node"
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training"
 max_steps = 5
 seq_len = 2048
+
+[run]
+name = "lumi-rl-single-node"
 
 [model]
 name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
@@ -15,14 +18,23 @@ num_infer_gpus = 1
 attn = "flash_attention_2"
 
 [orchestrator]
-batch_size = 128
-group_size = 16
+batch_size = 32
+group_size = 4
+
+[orchestrator.concurrency]
+initial_inflight = 8
+min_inflight = 4
+max_inflight = 32
 
 [orchestrator.train.sampling]
 max_completion_tokens = 128
 
-[[orchestrator.train.env]]
-id = "reverse-text"
+[[orchestrator.train.source]]
+name = "reverse-text"
+curriculum = { sampler = { type = "difficulty_pool" }, gates = { zero_advantage = { type = "advantage_range" } } }
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [trainer.optim]
 lr = 3e-6
@@ -32,7 +44,7 @@ lr = 3e-6
 [inference]
 
 [orchestrator.renderer]
-name = "default"
+name = "prime-qwen3"
 
 [slurm]
 job_name = "prime-rl-rl-lumi"

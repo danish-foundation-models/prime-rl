@@ -2,15 +2,21 @@
 """Terminate UCloud sandboxes tagged by a PRIME-RL config."""
 
 import argparse
+import json
 import sys
 import tomllib
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def _ucloud_labels(config_path: Path) -> list[str]:
-    with config_path.open("rb") as f:
-        config = tomllib.load(f)
+    if config_path.suffix == ".json":
+        with config_path.open() as f:
+            config = json.load(f)
+    else:
+        with config_path.open("rb") as f:
+            config = tomllib.load(f)
 
     orchestrator = config.get("orchestrator")
     if not isinstance(orchestrator, dict):
@@ -23,7 +29,7 @@ def _ucloud_labels(config_path: Path) -> list[str]:
         sections.append(orchestrator["eval"])
 
     for section in sections:
-        envs = section.get("env", []) if isinstance(section, dict) else []
+        envs = section.get("source", section.get("env", [])) if isinstance(section, dict) else []
         if not isinstance(envs, list):
             continue
         for env in envs:
@@ -47,7 +53,12 @@ def _ucloud_labels(config_path: Path) -> list[str]:
 
 def _ucloud_labels_from_env(env: dict[str, Any]) -> list[str]:
     labels: list[str] = []
+    if isinstance(env.get("env"), dict):
+        env = env["env"]
     runtime = env.get("runtime")
+    agent = env.get("agent")
+    if isinstance(agent, dict):
+        runtime = agent.get("runtime", runtime)
     harness = env.get("harness")
     if isinstance(harness, dict):
         runtime = harness.get("runtime", runtime)
@@ -78,6 +89,41 @@ def _sandbox_labels(record: dict[str, Any]) -> dict[str, Any]:
         return spec["labels"]
     labels = record.get("labels")
     return labels if isinstance(labels, dict) else {}
+
+
+def _delete_resources(
+    resource_ids: list[str],
+    *,
+    delete: Callable[[str], object],
+    resource_name: str,
+    workers: int,
+) -> list[str]:
+    failures: list[str] = []
+    if not resource_ids:
+        return failures
+
+    def delete_one(resource_id: str) -> tuple[str, Exception | None]:
+        try:
+            delete(resource_id)
+        except Exception as exc:
+            if int(getattr(exc, "status_code", 0) or 0) != 404:
+                return resource_id, exc
+        return resource_id, None
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(resource_ids))) as executor:
+        futures = {}
+        for resource_id in resource_ids:
+            print(f"deleting {resource_name} {resource_id}")
+            futures[executor.submit(delete_one, resource_id)] = resource_id
+        for future in as_completed(futures):
+            resource_id, error = future.result()
+            if error is not None:
+                failures.append(resource_id)
+                print(
+                    f"failed to delete {resource_name} {resource_id}: {error}",
+                    file=sys.stderr,
+                )
+    return sorted(failures)
 
 
 def _main() -> int:
@@ -118,12 +164,20 @@ def _main() -> int:
         help="Per-request timeout for UCloud API calls.",
     )
     parser.add_argument(
+        "--delete-workers",
+        type=int,
+        default=32,
+        help="Maximum concurrent UCloud deletion requests.",
+    )
+    parser.add_argument(
         "--allow-list-failure",
         action="store_true",
         help="Return success if direct cleanup works but list_sandboxes fails.",
     )
     parser.add_argument("--dry-run", action="store_true", help="List without deleting.")
     args = parser.parse_args()
+    if args.delete_workers < 1:
+        parser.error("--delete-workers must be at least 1")
 
     labels = list(args.label)
     if args.config:
@@ -160,7 +214,6 @@ def _main() -> int:
         api_token=token,
     )
 
-    total = 0
     sandbox_ids = list(args.sandbox_id)
     if args.sandbox_ids_file and args.sandbox_ids_file.exists():
         sandbox_ids.extend(
@@ -171,16 +224,6 @@ def _main() -> int:
     sandbox_ids = sorted(set(sandbox_ids))
     if sandbox_ids:
         print(f"Found {len(sandbox_ids)} explicit UCloud sandbox ID(s) to clean")
-        for sandbox_id in sandbox_ids:
-            total += 1
-            if args.dry_run:
-                print(f"would delete sandbox {sandbox_id}")
-                continue
-            print(f"deleting sandbox {sandbox_id}")
-            try:
-                client.delete_sandbox(sandbox_id)
-            except Exception as exc:
-                print(f"failed to delete sandbox {sandbox_id}: {exc}", file=sys.stderr)
 
     prepared_capacity_ids = list(args.prepared_capacity_id)
     if args.prepared_capacity_ids_file and args.prepared_capacity_ids_file.exists():
@@ -195,31 +238,16 @@ def _main() -> int:
             f"Found {len(prepared_capacity_ids)} explicit UCloud prepared-capacity ID(s) "
             "to clean"
         )
-        for prepare_id in prepared_capacity_ids:
-            total += 1
-            if args.dry_run:
-                print(f"would delete prepared capacity {prepare_id}")
-                continue
-            print(f"deleting prepared capacity {prepare_id}")
-            try:
-                client.delete_prepared_capacity(prepare_id)
-            except Exception as exc:
-                print(
-                    f"failed to delete prepared capacity {prepare_id}: {exc}",
-                    file=sys.stderr,
-                )
-
+    list_failed = False
     if labels:
         label_set = set(labels)
         targets: list[str] = []
+        records: list[dict[str, Any]] = []
         try:
             records = client.list_sandboxes()
         except Exception as exc:
             print(f"failed to list UCloud sandboxes by label: {exc}", file=sys.stderr)
-            if args.allow_list_failure:
-                print(f"Total matched UCloud resource(s): {total}")
-                return 0
-            return 1
+            list_failed = True
 
         for record in records:
             if isinstance(record, dict):
@@ -231,19 +259,35 @@ def _main() -> int:
                     targets.append(sandbox_id)
 
         print(f"Found {len(targets)} UCloud sandbox(es) for labels: {', '.join(labels)}")
-        for sandbox_id in targets:
-            total += 1
-            if args.dry_run:
-                print(f"would delete sandbox {sandbox_id}")
-                continue
-            print(f"deleting sandbox {sandbox_id}")
-            try:
-                client.delete_sandbox(sandbox_id)
-            except Exception as exc:
-                print(f"failed to delete sandbox {sandbox_id}: {exc}", file=sys.stderr)
+        sandbox_ids = sorted(set(sandbox_ids) | set(targets))
 
+    total = len(sandbox_ids) + len(prepared_capacity_ids)
+    if args.dry_run:
+        for sandbox_id in sandbox_ids:
+            print(f"would delete sandbox {sandbox_id}")
+        for prepare_id in prepared_capacity_ids:
+            print(f"would delete prepared capacity {prepare_id}")
+        print(f"Total matched UCloud resource(s): {total}")
+        return int(list_failed and not args.allow_list_failure)
+
+    failures = _delete_resources(
+        sandbox_ids,
+        delete=client.delete_sandbox,
+        resource_name="sandbox",
+        workers=args.delete_workers,
+    )
+    failures.extend(
+        _delete_resources(
+            prepared_capacity_ids,
+            delete=client.delete_prepared_capacity,
+            resource_name="prepared capacity",
+            workers=args.delete_workers,
+        )
+    )
     print(f"Total matched UCloud resource(s): {total}")
-    return 0
+    if failures:
+        print(f"Failed to delete {len(failures)} UCloud resource(s)", file=sys.stderr)
+    return int(bool(failures) or (list_failed and not args.allow_list_failure))
 
 
 if __name__ == "__main__":

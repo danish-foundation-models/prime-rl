@@ -20,6 +20,7 @@ prime_rl_lumi_export_pythonpath() {
   path="$path:$project_dir/deps/pydantic-config/src"
 
   for env_root in \
+    "$scan_dir/deps/prime-envs/environments" \
     "$scan_dir/deps/verifiers/environments" \
     "$scan_dir/deps/research-environments/environments"
   do
@@ -35,4 +36,16 @@ prime_rl_lumi_export_pythonpath() {
   done
 
   export PYTHONPATH="$path:$metadata_dir"
+}
+
+# The current supported SIF still contains connect-python 0.9.0. New
+# prime-sandboxes releases intentionally reject that distribution even when
+# the replacement connectrpc module is first on PYTHONPATH. Bind this empty
+# directory over the legacy dist-info metadata for container executions.
+prime_rl_lumi_connect_python_mask() {
+  local lumi_root=${1:?LUMI root is required}
+  local mask_dir="$lumi_root/.runtime/masks/connect_python-0.9.0.dist-info"
+
+  mkdir -p "$mask_dir"
+  printf '%s\n' "$mask_dir"
 }

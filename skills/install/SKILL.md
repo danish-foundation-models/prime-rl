@@ -62,7 +62,14 @@ See the `kernels` skill.
 CUDA_HOME=/usr/local/cuda uv pip install mamba-ssm
 ```
 
-Requires `nvcc`. Without `mamba-ssm`, NemotronH falls back to HF's pure-PyTorch SSD path, which computes softplus in bf16 and yields ~0.4 KL divergence vs vLLM. Do **not** install `causal-conv1d` unless your GPU arch matches the prebuilt kernels — the code falls back to `nn.Conv1d` when it's absent.
+The CUDA build requires `nvcc`. On LUMI, do not install it into the immutable
+image or active environment: `scripts/lumi_prepare_runtime.sh` builds the locked
+version for `gfx90a` into the commit-keyed metadata layer. Context-parallel
+NemotronH training requires its Triton SSD forward/backward kernels. Without
+`mamba-ssm`, non-CP NemotronH falls back to HF's pure-PyTorch SSD path, which
+computes softplus in bf16 and yields ~0.4 KL divergence vs vLLM. Do **not**
+install `causal-conv1d` unless your GPU arch matches the prebuilt kernels — the
+code falls back to `nn.Conv1d` when it is absent.
 
 ### Trainer DeepEP backend
 

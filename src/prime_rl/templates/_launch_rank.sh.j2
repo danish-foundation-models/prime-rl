@@ -26,7 +26,7 @@ launch_inference_rank() {
         --vllm.data-parallel-size "$dp" --vllm.data-parallel-size-local 1 --vllm.api-server-count 1)
     [ -n "$rpc" ] && cmd+=(--vllm.data-parallel-rpc-port "$rpc")
     # Per-rank vLLM overrides go through a JSON file merged into [inference.vllm]
-    # (dict-valued keys like compilation_config can't be inlined as CLI flags).
+    # (dict-valued keys like compilation_config cannot be inlined as CLI flags).
     if [ -n "$extra" ]; then
         printf '%s' "$extra" > "$rpcbase/vllm-overrides.json"
         cmd+=(--vllm @ "$rpcbase/vllm-overrides.json")

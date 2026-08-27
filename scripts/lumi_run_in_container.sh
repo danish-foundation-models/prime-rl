@@ -34,6 +34,7 @@ PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
 
 source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
 prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR" /workdir "$PROJECT_DIR"
+CONNECT_PYTHON_MASK_DIR=$(prime_rl_lumi_connect_python_mask "$LUMI_ROOT")
 PATH_VALUE=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
 PASSTHROUGH_ENV=()
 for name in \
@@ -53,6 +54,7 @@ exec singularity exec \
   --cleanenv \
   -B "$PROJECT_DIR:/workdir" \
   -B /scratch/project_465002751:/scratch/project_465002751 \
+  -B "$CONNECT_PYTHON_MASK_DIR:/opt/venv/lib/python3.12/site-packages/connect_python-0.9.0.dist-info" \
   --home "$CONTAINER_HOME" \
   --pwd /workdir \
   --env "PATH=$PATH_VALUE" \

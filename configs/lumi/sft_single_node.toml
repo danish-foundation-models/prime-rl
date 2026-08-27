@@ -1,5 +1,8 @@
-output_dir = "/scratch/project_465002751/rasmus/artifacts/training/lumi-sft-single-node"
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training"
 max_steps = 100
+
+[run]
+name = "lumi-sft-single-node"
 
 [ckpt]
 
@@ -18,7 +21,8 @@ lr = 2e-5
 [deployment]
 type = "single_node"
 gpus_per_node = 8
-num_gpus = 1
+num_train_gpus = 1
+num_infer_gpus = 0
 
 [slurm]
 job_name = "prime-rl-sft-lumi"

@@ -34,20 +34,53 @@ def _slug(value: str) -> str:
 
 def _ucloud_envs(config: OrchestratorConfig) -> list[EnvConfig]:
     envs: list[EnvConfig] = []
-    for env in config.train.env:
+    for env in _sources(config.train):
         if _uses_ucloud(env):
             envs.append(env)
     if config.eval is not None:
-        for env in config.eval.env:
+        for env in _sources(config.eval):
             if _uses_ucloud(env):
                 envs.append(env)
     return envs
 
 
+def _sources(group: object) -> list[EnvConfig]:
+    """Return sources from the current schema, with old-run compatibility."""
+    sources = getattr(group, "source", None)
+    if sources is None:
+        sources = getattr(group, "env", ())
+    return list(sources)
+
+
+def _runtime_binding(env: EnvConfig) -> tuple[object | None, object | None]:
+    """Find the runtime and the config object that owns it.
+
+    Verifiers v1 puts runtimes on agent roles nested below ``source.env``.
+    Older PRIME-RL configs put one runtime below ``source.harness``.
+    """
+    vf_env = getattr(env, "env", None)
+    if vf_env is not None:
+        field_names = list(getattr(type(vf_env), "model_fields", {}))
+        if not field_names:
+            field_names = list(vars(vf_env))
+        if "agent" in field_names:
+            field_names.remove("agent")
+            field_names.insert(0, "agent")
+        for field_name in field_names:
+            owner = getattr(vf_env, field_name, None)
+            runtime = getattr(owner, "runtime", None)
+            if runtime is not None:
+                return runtime, owner
+
+    owner = getattr(env, "harness", None)
+    return getattr(owner, "runtime", None), owner
+
+
 def _uses_ucloud(env: EnvConfig) -> bool:
-    if str(env.args.get("sandbox_backend") or "").lower() == "ucloud":
+    args = getattr(env, "args", {}) or {}
+    if str(args.get("sandbox_backend") or "").lower() == "ucloud":
         return True
-    runtime = getattr(getattr(env, "harness", None), "runtime", None)
+    runtime, _ = _runtime_binding(env)
     if getattr(runtime, "type", None) == "ucloud":
         return True
     if getattr(runtime, "type", None) != "prime":
@@ -59,9 +92,10 @@ def _uses_ucloud(env: EnvConfig) -> bool:
 
 
 def _capacity_args(env: EnvConfig) -> dict[str, Any]:
-    args = dict(env.args)
-    taskset = getattr(env, "taskset", None)
-    runtime = getattr(getattr(env, "harness", None), "runtime", None)
+    args = dict(getattr(env, "args", {}) or {})
+    vf_env = getattr(env, "env", None)
+    taskset = getattr(vf_env, "taskset", None) or getattr(env, "taskset", None)
+    runtime, _ = _runtime_binding(env)
     for source, mapping in (
         (
             taskset,
@@ -87,6 +121,7 @@ def _capacity_args(env: EnvConfig) -> dict[str, Any]:
                 "enable_cron": "enable_cron",
                 "enable_sshd": "enable_sshd",
                 "keep_alive": "keep_alive",
+                "parkable": "parkable",
                 "writable_paths": "writable_paths",
             },
         ),
@@ -104,12 +139,21 @@ def _prewarm_count(config: OrchestratorConfig, env: EnvConfig, num_ucloud_train_
     override = os.environ.get("UCLOUD_SANDBOX_PREWARM_COUNT")
     if override:
         return _as_int(override, 1)
-    pool = getattr(env, "pool", None)
+    serve = getattr(env, "serve", None)
+    pool = getattr(serve, "pool", None) or getattr(env, "pool", None)
     pool_workers = getattr(pool, "num_workers", None)
+    if pool_workers is None:
+        pool_workers = getattr(pool, "max_workers", None)
     env_workers = getattr(env, "num_workers", None)
     workers = pool_workers if isinstance(pool_workers, int) else env_workers if isinstance(env_workers, int) else 1
-    if env in config.train.env and num_ucloud_train_envs == 1 and config.max_inflight_rollouts:
-        return max(workers, int(config.max_inflight_rollouts))
+    train_sources = _sources(config.train)
+    is_train_source = any(source is env for source in train_sources)
+    concurrency = getattr(config, "concurrency", None)
+    max_inflight = getattr(concurrency, "max_inflight", None)
+    if max_inflight is None:
+        max_inflight = getattr(config, "max_inflight_rollouts", None)
+    if is_train_source and num_ucloud_train_envs == 1 and max_inflight:
+        return max(workers, int(max_inflight))
     return workers
 
 
@@ -182,11 +226,8 @@ def _image_prepare_id(base_prepare_id: str, image: str, num_images: int) -> str:
     return f"{base_prepare_id}-{_slug(image)}"
 
 
-def _set_runtime_prepare_id(
-    env: EnvConfig, *, prepare_id: str, image_name: str | None
-) -> None:
-    harness = getattr(env, "harness", None)
-    runtime = getattr(harness, "runtime", None)
+def _set_runtime_prepare_id(env: EnvConfig, *, prepare_id: str, image_name: str | None) -> None:
+    runtime, owner = _runtime_binding(env)
     if getattr(runtime, "type", None) != "ucloud":
         return
     runtime_image = getattr(runtime, "image", None)
@@ -196,12 +237,11 @@ def _set_runtime_prepare_id(
         return
     model_copy = getattr(runtime, "model_copy", None)
     if callable(model_copy):
-        harness.runtime = model_copy(update={"prepare_id": prepare_id})
+        owner.runtime = model_copy(update={"prepare_id": prepare_id})
     else:
         runtime.prepare_id = prepare_id
     get_logger().info(
-        "Assigned UCloud prepared capacity to runtime "
-        f"(env={env.resolved_name}, prepare_id={prepare_id})"
+        f"Assigned UCloud prepared capacity to runtime (env={env.resolved_name}, prepare_id={prepare_id})"
     )
 
 
@@ -218,13 +258,9 @@ async def _retry_ucloud_call(
             return True
         except Exception as exc:
             if attempt >= attempts:
-                get_logger().warning(
-                    f"{description} failed after {attempts} attempt(s); continuing: {exc}"
-                )
+                get_logger().warning(f"{description} failed after {attempts} attempt(s); continuing: {exc}")
                 return False
-            get_logger().warning(
-                f"{description} failed on attempt {attempt}/{attempts}; retrying: {exc}"
-            )
+            get_logger().warning(f"{description} failed on attempt {attempt}/{attempts}; retrying: {exc}")
             await asyncio.sleep(delay_seconds)
     return False
 
@@ -248,9 +284,7 @@ async def prepare_ucloud_capacity(config: OrchestratorConfig) -> None:
     try:
         from ucloud_sandboxes_sdk import AsyncSandboxClient, Image
     except ImportError as exc:
-        raise RuntimeError(
-            "UCloud sandbox prewarm requires the latest ucloud-sandboxes-sdk."
-        ) from exc
+        raise RuntimeError("UCloud sandbox prewarm requires the latest ucloud-sandboxes-sdk.") from exc
     try:
         from ucloud_sandboxes_sdk.client import SandboxApiError
     except ImportError:
@@ -263,10 +297,7 @@ async def prepare_ucloud_capacity(config: OrchestratorConfig) -> None:
     )
     token = os.environ.get("UCLOUD_SANDBOX_API_TOKEN")
     if not base_url or not token:
-        raise RuntimeError(
-            "UCloud sandbox prewarm requires UCLOUD_SANDBOX_API_URL "
-            "and UCLOUD_SANDBOX_API_TOKEN."
-        )
+        raise RuntimeError("UCloud sandbox prewarm requires UCLOUD_SANDBOX_API_URL and UCLOUD_SANDBOX_API_TOKEN.")
 
     ttl_seconds = _as_int(os.environ.get("UCLOUD_SANDBOX_PREWARM_TTL_SECONDS"), 1800)
     timeout_seconds = _as_int(os.environ.get("UCLOUD_SANDBOX_PREWARM_TIMEOUT_SECONDS"), 300)
@@ -274,7 +305,7 @@ async def prepare_ucloud_capacity(config: OrchestratorConfig) -> None:
     retry_delay_seconds = _as_float(os.environ.get("UCLOUD_SANDBOX_PREWARM_RETRY_DELAY_SECONDS"), 5.0)
     pull_images = _env_bool("UCLOUD_SANDBOX_PREWARM_PULL_IMAGES", True)
     run_slug = _slug(config.output_dir.name)
-    num_ucloud_train_envs = sum(1 for env in config.train.env if env in envs)
+    num_ucloud_train_envs = sum(1 for train_env in _sources(config.train) if any(train_env is env for env in envs))
     client = AsyncSandboxClient(
         base_url,
         api_token=token,
@@ -293,13 +324,13 @@ async def prepare_ucloud_capacity(config: OrchestratorConfig) -> None:
             for image_name, image in image_objects:
                 image_prepare_id = _image_prepare_id(prepare_id, image_name or "", len(image_objects))
                 prepared = await _retry_ucloud_call(
-                    "UCloud sandbox capacity prewarm "
-                    f"(env={env.resolved_name}, image={image_name}, count={count})",
+                    f"UCloud sandbox capacity prewarm (env={env.resolved_name}, image={image_name}, count={count})",
                     lambda: client.prepare_capacity(
                         prepare_id=image_prepare_id,
                         count=count,
                         ttl_seconds=ttl_seconds,
                         image=image,
+                        parkable=bool(args.get("parkable", False)),
                         **resources,
                     ),
                     attempts=attempts,
@@ -319,9 +350,7 @@ async def prepare_ucloud_capacity(config: OrchestratorConfig) -> None:
                         )
                 if not prepared:
                     continue
-                _set_runtime_prepare_id(
-                    env, prepare_id=image_prepare_id, image_name=image_name
-                )
+                _set_runtime_prepare_id(env, prepare_id=image_prepare_id, image_name=image_name)
                 image_part = f", image={image_name}" if image_name else ""
                 get_logger().info(
                     "Prepared UCloud sandbox capacity "

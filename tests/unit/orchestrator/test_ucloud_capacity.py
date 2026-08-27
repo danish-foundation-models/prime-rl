@@ -60,10 +60,54 @@ def _install_fake_sdk(monkeypatch):
 def _config(env):
     return SimpleNamespace(
         output_dir=Path("/tmp/prime-rl-run"),
-        max_inflight_rollouts=8,
-        train=SimpleNamespace(env=[env]),
+        concurrency=SimpleNamespace(max_inflight=8),
+        train=SimpleNamespace(source=[env]),
         eval=None,
     )
+
+
+def _v1_env(runtime, *, workers=2):
+    return SimpleNamespace(
+        resolved_name="tmax",
+        env=SimpleNamespace(
+            agent=SimpleNamespace(runtime=runtime),
+            taskset=SimpleNamespace(),
+        ),
+        serve=SimpleNamespace(pool=SimpleNamespace(type="elastic", max_workers=workers)),
+    )
+
+
+def test_prepare_ucloud_capacity_ignores_non_ucloud_v1_source(monkeypatch):
+    _install_fake_sdk(monkeypatch)
+    env = _v1_env(SimpleNamespace(type="subprocess"))
+
+    asyncio.run(prepare_ucloud_capacity(_config(env)))
+
+    assert FakeAsyncSandboxClient.instances == []
+
+
+def test_prepare_ucloud_capacity_supports_v1_source(monkeypatch):
+    _install_fake_sdk(monkeypatch)
+    monkeypatch.setenv("UCLOUD_SANDBOX_API_URL", "https://gateway.example")
+    monkeypatch.setenv("UCLOUD_SANDBOX_API_TOKEN", "token")
+    runtime = SimpleNamespace(
+        type="ucloud",
+        image="registry.example/tmax:latest",
+        prepare_id=None,
+        cpu=2,
+        memory=4,
+        disk=6,
+    )
+    env = _v1_env(runtime)
+
+    asyncio.run(prepare_ucloud_capacity(_config(env)))
+
+    client = FakeAsyncSandboxClient.instances[-1]
+    assert client.prepared[0]["count"] == 8
+    assert client.prepared[0]["cpus"] == 2.0
+    assert client.prepared[0]["memory_mb"] == 4096
+    assert client.prepared[0]["disk_mb"] == 6144
+    assert env.env.agent.runtime.prepare_id == "prime-rl-prime-rl-run-tmax"
 
 
 def test_prepare_ucloud_capacity_announces_fixed_image(monkeypatch):
@@ -84,6 +128,7 @@ def test_prepare_ucloud_capacity_announces_fixed_image(monkeypatch):
                 enable_cron=True,
                 enable_sshd=True,
                 keep_alive=True,
+                parkable=True,
                 writable_paths=["/home/user", "/task", "/app"],
             )
         ),
@@ -112,6 +157,7 @@ def test_prepare_ucloud_capacity_announces_fixed_image(monkeypatch):
             "cpus": 2.0,
             "memory_mb": 4096,
             "disk_mb": 6144,
+            "parkable": True,
         }
     ]
     assert client.pulled == [
@@ -145,9 +191,7 @@ def test_prepare_ucloud_capacity_uses_managed_image_id(monkeypatch):
     asyncio.run(prepare_ucloud_capacity(_config(env)))
 
     client = FakeAsyncSandboxClient.instances[-1]
-    assert client.prepared[0]["image"].reference == (
-        "prime-rl-tmax-mini-base-mswe-2-2-8-r6"
-    )
+    assert client.prepared[0]["image"].reference == ("prime-rl-tmax-mini-base-mswe-2-2-8-r6")
     assert client.prepared[0]["image"].source == "managed"
 
 

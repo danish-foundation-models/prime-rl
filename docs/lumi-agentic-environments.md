@@ -14,15 +14,22 @@ It monitors but does not enforce the post-batch zero-advantage filter: a plumbin
 run must still exercise the trainer and weight broadcast when an early policy
 checkpoint happens to score zero on every member of a tiny sampled group. Restore
 enforcement for production training so zero-gradient groups do not consume steps.
-The smoke caps trainer sequences at 4K. An 8K trial completed its first 64-rank
-trainer step, then fragmented an MI250X rank on a 32 GiB allocation during step 2;
-do not raise the cap for a scale run until that memory path is addressed.
-The supported 4K path completed a three-step, 64-rank integrated smoke across
-all four training sources and all three held-out environments with no sandbox
-errors. Both intermediate 224.77 GiB broadcasts reloaded into vLLM, and the
-final checkpoint was saved. The third rollout batch included an R2E reward of
-0.25 (0.125 for the mixed batch), so the final trainer step exercised a real
-non-zero-advantage update rather than only the plumbing path.
+The supported smoke caps trainer sequences at 8K and uses context parallelism
+two across 64 trainer ranks. Job `21541900` completed three variable-length
+trainer steps across all four training sources and all three held-out
+environments with no sandbox setup or authentication errors and 0% error in
+the three required rollout batches. Rank-zero throughput was 1,175, 2,290, and
+3,366 tokens/s; peak rank memory was 59.4 GiB. All three 224.77 GiB broadcasts
+reloaded into the optimized vLLM server, and the final 225 GiB, 80-shard
+checkpoint was marked stable. Two surplus Multi-SWE rollouts logged transient
+relay transport exceptions after the required batches: one poll timeout
+recovered and completed, while one response disconnect was drained at shutdown.
+
+That smoke is a systems validation, not evidence of learning quality: its three
+tiny rollout batches happened to contain 0/8 trainable groups and therefore
+produced zero loss. A production run must restore the zero-advantage filter,
+use enough concurrent groups to obtain reliable reward density, and verify a
+non-zero update early before consuming the full allocation.
 Production mixture weights should be selected from observed reward density,
 error rate, rollout length, and duplicate rate after the smoke run.
 
@@ -46,6 +53,10 @@ mini-SWE harness `TMPDIR=/var/tmp`: UCloud mounts `/tmp` as a 64 MiB tmpfs, whic
 is too small to unpack `uv`, while `/var/tmp` uses the task's root filesystem.
 The Harbor adapter likewise stages verifier test archives under `/var/tmp`, so
 large benchmark test bundles do not exhaust that fixed tmpfs during scoring.
+UCloud creation pacing is shared through
+`~/.cache/verifiers/limiter/ucloud-sandbox.bucket`. The limiter must update that
+cursor with a locked positional write; append-mode truncate/rewrite can leave a
+NUL-filled gap on the shared filesystem when many env workers start together.
 
 ## Held-out eval mix
 

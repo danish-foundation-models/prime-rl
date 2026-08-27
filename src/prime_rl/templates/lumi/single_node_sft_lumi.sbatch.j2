@@ -39,10 +39,13 @@ mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" "$WANDB
 export PROJECT_DIR SIF LUMI_ROOT
 PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
 export PRIME_RL_METADATA_DIR
+source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
+CONNECT_PYTHON_MASK_DIR=$(prime_rl_lumi_connect_python_mask "$LUMI_ROOT")
 
 SING_BIND_ARGS=(
   -B "$PROJECT_DIR:/workdir"
   -B /scratch/project_465002751:/scratch/project_465002751
+  -B "$CONNECT_PYTHON_MASK_DIR:/opt/venv/lib/python3.12/site-packages/connect_python-0.9.0.dist-info"
 )
 
 RANK_CMD="

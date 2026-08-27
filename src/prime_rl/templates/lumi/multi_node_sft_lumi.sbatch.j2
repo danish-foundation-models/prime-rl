@@ -63,10 +63,13 @@ export SIF LUMI_ROOT
 PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
 export PRIME_RL_METADATA_DIR HF_HOME UV_CACHE_DIR XDG_CACHE_HOME
 export WANDB_CACHE_DIR WANDB_CONFIG_DIR MPLCONFIGDIR TMPDIR POST_ROOT
+source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
+CONNECT_PYTHON_MASK_DIR=$(prime_rl_lumi_connect_python_mask "$LUMI_ROOT")
 
 SING_BIND_ARGS=(
   -B "$PROJECT_DIR:/workdir"
   -B /scratch/project_465002751:/scratch/project_465002751
+  -B "$CONNECT_PYTHON_MASK_DIR:/opt/venv/lib/python3.12/site-packages/connect_python-0.9.0.dist-info"
 )
 
 HOSTNAMES=( $(scontrol show hostnames "$SLURM_JOB_NODELIST") )
@@ -80,12 +83,20 @@ echo "MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT"
 {{ pre_run_command }}
 {% endif %}
 
-srun bash -s <<'CLEANUP_SH'
+if ! timeout --signal=TERM --kill-after=15s 600s srun --kill-on-bad-exit=1 bash -s <<'CLEANUP_SH'
+  started=$SECONDS
   pkill -9 -f "[p]ython.*prime_rl" 2>/dev/null || true
   pkill -9 -f "[t]orchrun" 2>/dev/null || true
   pkill -9 -f "[p]rime_rl" 2>/dev/null || true
+  killed=$SECONDS
   rm -rf /dev/shm/vllm-* /dev/shm/vllm_* /tmp/torch-* /tmp/torchelastic_* 2>/dev/null || true
+  removed=$SECONDS
+  echo "[node-cleanup] $(hostname) kill_s=$((killed-started)) remove_s=$((removed-killed)) total_s=$((removed-started))"
 CLEANUP_SH
+then
+  echo "Node cleanup did not complete on every allocated node within 600 seconds" >&2
+  exit 1
+fi
 
 srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
   set -euo pipefail

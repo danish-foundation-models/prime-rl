@@ -9,6 +9,12 @@ PRIME_RL_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache/prime-rl}
 LUMI_RUNTIME_PACKAGES=(
   "harbor==0.14.0"
   "modelexpress==0.3.0"
+  "mamba-ssm==2.3.1"
+  "prime-sandboxes==0.2.39"
+  "connectrpc==0.11.1"
+  "protobuf-py==0.1.1"
+  "protobuf-py-ext==0.1.1"
+  "https://github.com/PrimeIntellect-ai/router/releases/download/v0.2.0/vllm_router-0.2.0-cp38-abi3-manylinux_2_28_x86_64.whl"
   "multi-swe-bench==1.1.2"
   "dataclasses-json==0.6.7"
   "marshmallow==3.26.2"
@@ -32,9 +38,15 @@ LUMI_RUNTIME_PACKAGES=(
 }
 
 commit=$(git -C "$PROJECT_DIR" rev-parse HEAD)
-project_hash=$(sha256sum "$PROJECT_DIR/pyproject.toml" | cut -c1-12)
+runtime_hash=$(
+  sha256sum \
+    "$PROJECT_DIR/pyproject.toml" \
+    "$PROJECT_DIR/scripts/lumi_prepare_runtime.sh" \
+    | sha256sum \
+    | cut -c1-12
+)
 metadata_root=$PRIME_RL_CACHE_DIR/metadata
-metadata_dir=$metadata_root/$commit-$project_hash
+metadata_dir=$metadata_root/$commit-$runtime_hash
 lock_file=$metadata_root/.lock
 
 mkdir -p "$metadata_root" "$LUMI_ROOT/.cache/pip" "$LUMI_ROOT/tmp"
@@ -49,7 +61,7 @@ if [[ ! -f "$metadata_dir/.ready" ]]; then
   singularity exec \
     -B "$PROJECT_DIR:$PROJECT_DIR" \
     -B "$LUMI_ROOT:$LUMI_ROOT" \
-    --env "PIP_CACHE_DIR=$LUMI_ROOT/.cache/pip,TMPDIR=$LUMI_ROOT/tmp" \
+    --env "PIP_CACHE_DIR=$LUMI_ROOT/.cache/pip,TMPDIR=$LUMI_ROOT/tmp,HIP_ARCHITECTURES=gfx90a,MAX_JOBS=2" \
     "$SIF" \
     /opt/venv/bin/python -m pip install \
       --no-deps \
