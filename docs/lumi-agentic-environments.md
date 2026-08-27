@@ -57,6 +57,11 @@ UCloud creation pacing is shared through
 `~/.cache/verifiers/limiter/ucloud-sandbox.bucket`. The limiter must update that
 cursor with a locked positional write; append-mode truncate/rewrite can leave a
 NUL-filled gap on the shared filesystem when many env workers start together.
+Parkable scale runs can also receive retryable `node_active_exec_deferred` 503s
+after creation while the direct node makes active CPU or memory headroom. Set
+`exec_attempts` and `retry_interval_seconds` on the UCloud runtime so these
+responses backpressure setup instead of failing the rollout; the current
+mid-scale config allows 120 attempts at five-second intervals.
 
 ## Held-out eval mix
 
