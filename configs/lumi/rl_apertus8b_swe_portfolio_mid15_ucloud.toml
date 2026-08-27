@@ -1,0 +1,236 @@
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training"
+clean = false
+max_steps = 15
+seq_len = 65536
+
+[run]
+name = "rl-apertus8b-swe-portfolio-mid15-b128-t50-6n-20260827-r3"
+
+[env_vars]
+HARBOR_CACHE_DIR = "/scratch/project_465002751/rasmus/.cache/xdg/harbor"
+UCLOUD_SANDBOX_PREWARM = "0"
+PRIME_RL_VLLM_SOURCE_ROOT = "/scratch/project_465002751/rasmus/tmp/vllm-gfx90a-nemotron-v024-layer"
+PRIME_RL_VLLM_SOURCE_REV = "f7e4142724f0d67ea0db22a97df3770c42bd3fc0"
+PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:False"
+VLLM_WORKER_MULTIPROC_METHOD = "spawn"
+VLLM_ENGINE_READY_TIMEOUT_S = "4200"
+VLLM_CACHE_ROOT = "/scratch/project_465002751/rasmus/.cache/vllm-apertus8b-prime-stack-f7e414272-v1"
+GPU_ARCHS = "gfx90a"
+NCCL_MIN_NCHANNELS = "16"
+NCCL_MAX_NCHANNELS = "16"
+
+[slurm]
+job_name = "rl-ap8b-swe-b128-t50"
+template_path = "src/prime_rl/templates/multi_node_rl_lumi.sbatch.j2"
+partition = "standard-g"
+account = "project_465002751"
+time = "24:00:00"
+exclude = "nid005395,nid005414,nid005423,nid005439,nid005444,nid005457,nid005466,nid005483,nid005532"
+cleanup_grace_period = 600
+pre_run_command = 'export PRIME_RL_RUNTIME_TMPDIR=/tmp/prime-rl-$USER-$SLURM_JOB_ID'
+
+[deployment]
+type = "multi_node"
+num_train_nodes = 2
+num_infer_nodes = 1
+num_infer_replicas = 4
+gpus_per_node = 8
+orchestrator_on_inference = true
+
+[model]
+name = "/scratch/project_465002751/rasmus/artifacts/training/apertus-8b-2509-qwen35-agentic-apertus-tokens-r2-ot3-tmax-sft-16n-bs256-lr3e5-s1457/final"
+
+[weight_broadcast]
+type = "filesystem"
+
+[trainer]
+dist_timeout_seconds = 900
+
+[trainer.model]
+trust_remote_code = false
+seq_len = 65536
+attn = "flash_attention_2"
+ac_offloading = "None"
+optim_cpu_offload = false
+fsdp_cpu_offload = false
+reshard_after_forward = true
+dp_replicate = 1
+impl = "hf"
+
+[trainer.model.ac]
+mode = "full"
+freq = 1
+
+[trainer.optim]
+type = "adamw"
+lr = 1e-6
+weight_decay = 0.1
+max_norm = 1.0
+betas1 = 0.9
+betas2 = 0.999
+
+[trainer.ckpt]
+skip_optimizer = true
+
+[trainer.log]
+level = "info"
+vf_level = "info"
+json_logging = false
+log_data = true
+interval = 10.0
+ranks_filter = [0]
+
+[orchestrator]
+batch_size = 128
+group_size = 16
+seq_len = 65536
+max_off_policy_steps = 32
+
+[orchestrator.concurrency]
+initial_inflight = 128
+min_inflight = 64
+max_inflight = 256
+
+[orchestrator.renderer]
+name = "default"
+tool_parser = "qwen3.5"
+reasoning_parser = "think"
+enable_thinking = false
+
+[orchestrator.algo]
+type = "grpo"
+
+[orchestrator.algo.length_penalty]
+type = "linear"
+num_output_tokens_weight = 0.0
+num_input_tokens_weight = 0.1
+num_turns_weight = 0.1
+
+[orchestrator.train]
+filter_zero_advantages = true
+
+[orchestrator.train.sampling]
+temperature = 1.0
+max_completion_tokens = 4096
+
+[[orchestrator.train.source]]
+name = "scaleswe"
+ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool", pools = { hard = { threshold = 0.25, weight = 0.2 }, normal = { threshold = 0.75, weight = 1.0 }, easy = { threshold = 1.0, weight = 0.2 } } } }
+env.taskset = { id = "scaleswe-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 50
+env.agent.max_output_tokens = 8192
+env.agent.max_total_tokens = 65536
+env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
+
+[[orchestrator.train.source]]
+name = "r2e-gym"
+ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool", pools = { hard = { threshold = 0.25, weight = 0.2 }, normal = { threshold = 0.75, weight = 1.0 }, easy = { threshold = 1.0, weight = 0.2 } } } }
+env.taskset = { id = "r2e-gym-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 50
+env.agent.max_output_tokens = 8192
+env.agent.max_total_tokens = 65536
+env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
+
+[[orchestrator.train.source]]
+name = "swelego"
+ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool", pools = { hard = { threshold = 0.25, weight = 0.2 }, normal = { threshold = 0.75, weight = 1.0 }, easy = { threshold = 1.0, weight = 0.2 } } } }
+env.taskset = { id = "swelego-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 50
+env.agent.max_output_tokens = 8192
+env.agent.max_total_tokens = 65536
+env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
+
+[[orchestrator.train.source]]
+name = "multiswe"
+ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool", pools = { hard = { threshold = 0.25, weight = 0.2 }, normal = { threshold = 0.75, weight = 1.0 }, easy = { threshold = 1.0, weight = 0.2 } } } }
+env.taskset = { id = "multiswe-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 50
+env.agent.max_output_tokens = 8192
+env.agent.max_total_tokens = 65536
+env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
+
+[orchestrator.eval]
+interval = 5
+num_examples = 4
+group_size = 1
+
+[orchestrator.eval.sampling]
+temperature = 0.0
+max_completion_tokens = 4096
+
+[[orchestrator.eval.source]]
+name = "swebench-verified"
+env.taskset = { id = "swebench-verified-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 50
+env.agent.max_output_tokens = 8192
+env.agent.max_total_tokens = 65536
+env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 1, multiplex = 4 }
+
+[[orchestrator.eval.source]]
+name = "swebench-multilingual"
+env.taskset = { id = "swebench-multilingual-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 50
+env.agent.max_output_tokens = 8192
+env.agent.max_total_tokens = 65536
+env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 1, multiplex = 4 }
+
+[[orchestrator.eval.source]]
+name = "terminal-bench-2"
+env.taskset = { id = "terminal-bench-2-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 50
+env.agent.max_output_tokens = 8192
+env.agent.max_total_tokens = 65536
+env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 1, multiplex = 4 }
+
+[inference.vllm]
+trust_remote_code = false
+dtype = "bfloat16"
+max_model_len = 65536
+tool_call_parser = "qwen3_coder"
+reasoning_parser = "qwen3"
+tensor_parallel_size = 8
+data_parallel_size = 1
+enable_prefix_caching = true
+gpu_memory_utilization = 0.85
+max_num_batched_tokens = 65536
+max_num_seqs = 32
+
+[ckpt]
+interval = 5
+keep_last = 2
+
+[log]
+level = "info"
+json_logging = false

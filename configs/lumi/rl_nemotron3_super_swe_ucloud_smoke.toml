@@ -1,7 +1,10 @@
-output_dir = "/scratch/project_465002751/rasmus/artifacts/training/rl-nemotron3-super-swe-ucloud-smoke-20260826-trainsteps-4k"
-clean_output_dir = false
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training"
+clean = false
 max_steps = 3
-seq_len = 4096
+seq_len = 8192
+
+[run]
+name = "rl-nemotron3-super-swe-ucloud-upstream-smoke-20260826"
 
 [env_vars]
 HARBOR_CACHE_DIR = "/scratch/project_465002751/rasmus/.cache/xdg/harbor"
@@ -32,11 +35,13 @@ PRIME_ROCM_NEMOTRON_ROUTER_LINEAR = "1"
 PRIME_ROCM_GFX90A_AITER_LEGACY_ALLREDUCE = "0"
 
 [slurm]
-job_name = "rl-nemo120b-swe4-smoke"
+job_name = "rl-nemo120b-swe8-cp2"
 template_path = "src/prime_rl/templates/multi_node_rl_lumi.sbatch.j2"
 partition = "standard-g"
 account = "project_465002751"
 time = "06:00:00"
+exclude = "nid005395,nid005414,nid005423,nid005439,nid005444,nid005457,nid005466,nid005483,nid005532"
+cleanup_grace_period = 600
 pre_run_command = 'export PRIME_RL_RUNTIME_TMPDIR=/tmp/prime-rl-$USER-$SLURM_JOB_ID'
 
 [deployment]
@@ -54,11 +59,11 @@ name = "/scratch/project_465002751/rasmus/artifacts/training/sft-nemotron3-super
 type = "filesystem"
 
 [trainer]
-dist_timeout_seconds = 7200
+dist_timeout_seconds = 900
 
 [trainer.model]
 trust_remote_code = false
-seq_len = 4096
+seq_len = 8192
 attn = "flash_attention_2"
 ac_offloading = "None"
 optim_cpu_offload = false
@@ -68,7 +73,7 @@ dp_replicate = 1
 ep = 8
 ep_comm_backend = "torch"
 deepep_num_sms = 20
-cp = 1
+cp = 2
 cp_style = "ulysses"
 impl = "custom"
 optimization_dtype = "bfloat16"
@@ -95,15 +100,7 @@ betas1 = 0.9
 betas2 = 0.999
 
 [trainer.ckpt]
-interval = 3
-skip_gather_master_weights = false
-weights_only = true
-keep_last = 1
-
-[trainer.ckpt.weights]
-save_sharded = true
-save_format = "safetensors"
-save_adapter_separately = false
+skip_optimizer = true
 
 [trainer.log]
 level = "info"
@@ -116,13 +113,12 @@ ranks_filter = [0]
 [orchestrator]
 batch_size = 8
 group_size = 4
-max_inflight_rollouts = 8
-seq_len = 4096
-post_batch_filters = [
-  { type = "gibberish", enforce = false, token_id_threshold = 100000, logprob_offset = 2.0 },
-  { type = "repetition", enforce = false, window = 3000, prob_threshold = 0.99 },
-  { type = "zero_advantage", enforce = false },
-]
+seq_len = 8192
+
+[orchestrator.concurrency]
+initial_inflight = 8
+min_inflight = 4
+max_inflight = 32
 
 [orchestrator.renderer]
 name = "nemotron-3"
@@ -143,53 +139,61 @@ num_turns_weight = 0.1
 temperature = 1.0
 max_completion_tokens = 4096
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "scaleswe"
 ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool" }, gates = { zero_advantage = { type = "advantage_range" } } }
 env.taskset = { id = "scaleswe-v1" }
 env.interception = { type = "ucloud-relay" }
 env.agent.max_turns = 12
 env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 32768
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
-env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" }, runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe4-smoke-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true } }
-pool = { type = "elastic", max_workers = 2, multiplex = 8 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe8-cp2-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 2, multiplex = 8 }
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "r2e-gym"
 ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool" }, gates = { zero_advantage = { type = "advantage_range" } } }
 env.taskset = { id = "r2e-gym-v1" }
 env.interception = { type = "ucloud-relay" }
 env.agent.max_turns = 12
 env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 32768
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
-env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" }, runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe4-smoke-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true } }
-pool = { type = "elastic", max_workers = 2, multiplex = 8 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe8-cp2-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 2, multiplex = 8 }
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "swelego"
 ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool" }, gates = { zero_advantage = { type = "advantage_range" } } }
 env.taskset = { id = "swelego-v1" }
 env.interception = { type = "ucloud-relay" }
 env.agent.max_turns = 12
 env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 32768
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
-env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" }, runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe4-smoke-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true } }
-pool = { type = "elastic", max_workers = 2, multiplex = 8 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe8-cp2-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 2, multiplex = 8 }
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "multiswe"
 ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool" }, gates = { zero_advantage = { type = "advantage_range" } } }
 env.taskset = { id = "multiswe-v1" }
 env.interception = { type = "ucloud-relay" }
 env.agent.max_turns = 12
 env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 32768
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
-env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" }, runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe4-smoke-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true } }
-pool = { type = "elastic", max_workers = 2, multiplex = 8 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe8-cp2-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 2, multiplex = 8 }
 
 [orchestrator.eval]
 interval = 20
@@ -200,7 +204,7 @@ group_size = 1
 temperature = 0.0
 max_completion_tokens = 4096
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "swebench-verified"
 env.taskset = { id = "swebench-verified-v1" }
 env.interception = { type = "ucloud-relay" }
@@ -208,10 +212,11 @@ env.agent.max_turns = 12
 env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 32768
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
-env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" }, runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe4-smoke-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true } }
-pool = { type = "elastic", max_workers = 1, multiplex = 8 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe8-cp2-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 1, multiplex = 8 }
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "swebench-multilingual"
 env.taskset = { id = "swebench-multilingual-v1" }
 env.interception = { type = "ucloud-relay" }
@@ -219,10 +224,11 @@ env.agent.max_turns = 12
 env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 32768
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
-env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" }, runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe4-smoke-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true } }
-pool = { type = "elastic", max_workers = 1, multiplex = 8 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe8-cp2-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 1, multiplex = 8 }
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "terminal-bench-2"
 env.taskset = { id = "terminal-bench-2-v1" }
 env.interception = { type = "ucloud-relay" }
@@ -230,32 +236,29 @@ env.agent.max_turns = 12
 env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 32768
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
-env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" }, runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe4-smoke-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true } }
-pool = { type = "elastic", max_workers = 1, multiplex = 8 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["nemotron3-super-swe8-cp2-20260826-integrated"], creates_per_min = 64, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 1, multiplex = 8 }
 
 [inference]
+use_deep_gemm = false
+enable_fp32_lm_head = true
+enable_fp32_router_logits = true
+
+[inference.vllm]
+trust_remote_code = true
+dtype = "bfloat16"
+max_model_len = 32768
+tool_call_parser = "qwen3_coder"
+reasoning_parser = "nemotron_v3"
+tensor_parallel_size = 8
+data_parallel_size = 1
 enable_prefix_caching = true
 gpu_memory_utilization = 0.85
 enable_expert_parallel = true
 all2all_backend = "allgather_reducescatter"
 enable_eplb = false
 enable_dbo = false
-use_deep_gemm = false
-enable_fp32_lm_head = true
-enable_fp32_router_logits = true
-
-[inference.model]
-trust_remote_code = true
-dtype = "bfloat16"
-max_model_len = 32768
-tool_call_parser = "qwen3_coder"
-reasoning_parser = "nemotron_v3"
-
-[inference.parallel]
-tp = 8
-dp = 1
-
-[inference.vllm_extra]
 language_model_only = true
 max_num_batched_tokens = 32768
 max_num_seqs = 16

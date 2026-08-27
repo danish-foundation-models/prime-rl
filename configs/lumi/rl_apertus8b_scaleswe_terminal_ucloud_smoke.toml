@@ -1,0 +1,164 @@
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training"
+clean = false
+max_steps = 1
+seq_len = 8192
+
+[run]
+name = "rl-apertus8b-scaleswe-terminal-smoke-20260826-r5"
+
+[env_vars]
+HARBOR_CACHE_DIR = "/scratch/project_465002751/rasmus/.cache/xdg/harbor"
+UCLOUD_SANDBOX_PREWARM = "0"
+PRIME_RL_VLLM_SOURCE_ROOT = "/scratch/project_465002751/rasmus/tmp/vllm-gfx90a-nemotron-v024-layer"
+PRIME_RL_VLLM_SOURCE_REV = "f7e4142724f0d67ea0db22a97df3770c42bd3fc0"
+PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:False"
+VLLM_WORKER_MULTIPROC_METHOD = "spawn"
+VLLM_ENGINE_READY_TIMEOUT_S = "4200"
+VLLM_CACHE_ROOT = "/scratch/project_465002751/rasmus/.cache/vllm-apertus8b-prime-stack-f7e414272-v1"
+GPU_ARCHS = "gfx90a"
+NCCL_MIN_NCHANNELS = "16"
+NCCL_MAX_NCHANNELS = "16"
+
+[slurm]
+job_name = "rl-ap8b-swe-term"
+template_path = "src/prime_rl/templates/multi_node_rl_lumi.sbatch.j2"
+partition = "standard-g"
+account = "project_465002751"
+time = "02:00:00"
+exclude = "nid005395,nid005414,nid005423,nid005439,nid005444,nid005457,nid005466,nid005483,nid005532"
+cleanup_grace_period = 600
+pre_run_command = 'export PRIME_RL_RUNTIME_TMPDIR=/tmp/prime-rl-$USER-$SLURM_JOB_ID'
+
+[deployment]
+type = "multi_node"
+num_train_nodes = 1
+num_infer_nodes = 1
+num_infer_replicas = 1
+gpus_per_node = 8
+orchestrator_on_inference = true
+
+[model]
+name = "/scratch/project_465002751/rasmus/artifacts/training/apertus-8b-2509-qwen35-agentic-apertus-tokens-r2-ot3-tmax-sft-16n-bs256-lr3e5-s1457/final"
+
+[weight_broadcast]
+type = "filesystem"
+
+[trainer]
+dist_timeout_seconds = 900
+
+[trainer.model]
+trust_remote_code = false
+seq_len = 8192
+attn = "flash_attention_2"
+ac_offloading = "None"
+optim_cpu_offload = false
+fsdp_cpu_offload = false
+reshard_after_forward = true
+dp_replicate = 1
+impl = "hf"
+
+[trainer.model.ac]
+mode = "full"
+freq = 1
+
+[trainer.optim]
+type = "adamw"
+lr = 1e-6
+weight_decay = 0.0
+max_norm = 1.0
+betas1 = 0.9
+betas2 = 0.999
+
+[trainer.ckpt]
+skip_optimizer = true
+
+[trainer.log]
+level = "info"
+vf_level = "info"
+json_logging = false
+log_data = true
+interval = 5.0
+ranks_filter = [0]
+
+[orchestrator]
+batch_size = 2
+group_size = 2
+seq_len = 8192
+
+[orchestrator.concurrency]
+initial_inflight = 2
+min_inflight = 1
+max_inflight = 4
+
+[orchestrator.renderer]
+name = "default"
+tool_parser = "qwen3.5"
+reasoning_parser = "think"
+enable_thinking = false
+
+[orchestrator.algo]
+type = "grpo"
+
+[orchestrator.train]
+filter_zero_advantages = false
+
+[orchestrator.train.sampling]
+temperature = 0.8
+max_completion_tokens = 2048
+
+[[orchestrator.train.source]]
+name = "scaleswe"
+ratio = 1.0
+curriculum = { sampler = { type = "difficulty_pool", pools = { hard = { threshold = 0.25, weight = 0.5 }, normal = { threshold = 0.75, weight = 1.0 }, easy = { threshold = 1.0, weight = 0.5 } } } }
+env.taskset = { id = "scaleswe-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 4
+env.agent.max_output_tokens = 2048
+env.agent.max_total_tokens = 8192
+env.agent.timeout = { setup = 1800.0, rollout = 1800.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 900.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-terminal-smoke-20260826-r5"], creates_per_min = 8, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 2, multiplex = 2 }
+
+[orchestrator.eval]
+interval = 1
+num_examples = 1
+group_size = 1
+skip_first_step = true
+
+[orchestrator.eval.sampling]
+temperature = 0.0
+max_completion_tokens = 2048
+
+[[orchestrator.eval.source]]
+name = "terminal-bench-2"
+env.taskset = { id = "terminal-bench-2-v1" }
+env.interception = { type = "ucloud-relay" }
+env.agent.max_turns = 4
+env.agent.max_output_tokens = 2048
+env.agent.max_total_tokens = 8192
+env.agent.timeout = { setup = 1800.0, rollout = 1800.0, finalize = 600.0, scoring = 1800.0 }
+env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 900.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-terminal-smoke-20260826-r5"], creates_per_min = 8, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+serve.pool = { type = "elastic", max_workers = 1, multiplex = 2 }
+
+[inference.vllm]
+trust_remote_code = false
+dtype = "bfloat16"
+max_model_len = 8192
+tool_call_parser = "qwen3_coder"
+reasoning_parser = "qwen3"
+tensor_parallel_size = 8
+data_parallel_size = 1
+enable_prefix_caching = true
+gpu_memory_utilization = 0.85
+max_num_batched_tokens = 8192
+max_num_seqs = 8
+
+[ckpt]
+interval = 1
+keep_last = 1
+
+[log]
+level = "info"
+json_logging = false
