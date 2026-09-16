@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -6,13 +7,15 @@ import tomli_w
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_config import ConfigFileError
 
+from prime_rl.configs.env_server import EnvServerConfig
+from prime_rl.configs.evals import EvalsConfig
 from prime_rl.configs.inference import InferenceConfig
 from prime_rl.configs.orchestrator import OrchestratorConfig
 from prime_rl.configs.rl import RLConfig
 from prime_rl.configs.sft import SFTConfig
 from prime_rl.configs.trainer import ModelConfig as TrainerModelConfig
 from prime_rl.configs.trainer import TrainerConfig
-from prime_rl.utils.config import BaseConfig, cli, to_toml_dict
+from prime_rl.utils.config import BaseConfig, cli, dump_resolved_config
 
 # All config config classes
 CONFIG_CLASSES = [
@@ -21,15 +24,20 @@ CONFIG_CLASSES = [
     SFTConfig,
     OrchestratorConfig,
     InferenceConfig,
+    EnvServerConfig,
+    EvalsConfig,
 ]
 
 
 def get_config_files() -> list[Path]:
-    """Any TOML file inside `configs/` or `examples/`."""
+    """Any TOML file inside `configs/`, `examples/` or `k8s/`."""
     config_files = list(Path("configs").rglob("*.toml"))
     example_files = list(Path("examples").rglob("*.toml"))
+    # The k8s example configs are mounted into the chart's containers verbatim, so a
+    # stale key there breaks a deploy with nothing else to catch it.
+    k8s_files = list(Path("k8s").rglob("*.toml"))
 
-    return config_files + example_files
+    return config_files + example_files + k8s_files
 
 
 @pytest.mark.parametrize("config_file", get_config_files(), ids=lambda x: x.as_posix())
@@ -156,20 +164,209 @@ def test_removed_fused_lm_head_chunk_size_field_is_rejected():
         TrainerModelConfig.model_validate({"fused_lm_head_chunk_size": "auto"})
 
 
-def test_to_toml_dict_roundtrips_explicit_none(tmp_path):
-    """An explicit None override survives the write/re-parse round-trip used by SLURM launches."""
+def test_icepop_is_an_optional_loss_with_validated_ratio_bounds():
+    default_config = TrainerConfig()
+    assert default_config.loss.type == "ipo"
+
+    config = TrainerConfig.model_validate({"loss": {"type": "icepop", "ratio_low": 0.2, "ratio_high": 5.0}})
+    assert config.loss.type == "icepop"
+    assert config.loss.ratio_low == 0.2
+    assert config.loss.ratio_high == 5.0
+
+    with pytest.raises(ValidationError, match="ratio_low must not exceed ratio_high"):
+        TrainerConfig.model_validate({"loss": {"type": "icepop", "ratio_low": 5.0, "ratio_high": 0.2}})
+
+
+def test_moe_runtime_defaults_are_independent_from_dense_quantization():
+    config = TrainerModelConfig.model_validate({"quantization": {"type": "mxfp8"}})
+
+    assert config.quantization is not None and config.quantization.type == "mxfp8"
+    assert config.moe.compute.type == "bf16"
+    assert config.moe.dispatch.type == "torch"
+    assert config.moe.dispatch.transport == "bf16"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        {"moe": {"compute": {"type": "deepgemm_fp8"}}},
+        {"moe": {"compute": {"type": "mxfp8", "recipe": "mxfp8_rceil_wgrad_with_hp"}}},
+        {"ep": 2, "moe": {"dispatch": {"type": "deepep", "num_sms": 16, "token_chunk_size": 1024}}},
+        {
+            "ep": 2,
+            "moe": {
+                "compute": {"type": "mxfp8"},
+                "dispatch": {"type": "torch", "transport": "mxfp8"},
+            },
+        },
+    ],
+)
+def test_supported_moe_runtime_configs(model):
+    config = TrainerModelConfig.model_validate(model)
+    assert config.moe.compute.resolve_layers(43) == set(range(43))
+
+
+@pytest.mark.parametrize("backend", ["bf16", "deepgemm_fp8", "mxfp8"])
+@pytest.mark.parametrize(
+    ("selection", "num_layers", "selected"),
+    [
+        ("all", 10, set(range(10))),
+        ("85%", 48, set(range(40))),
+        ("100%", 3, {0, 1, 2}),
+        ("0%", 3, set()),
+        ("33.3%", 10, {0, 1, 2}),
+        ([], 10, set()),
+        ([2, 0], 10, {0, 2}),
+        ([0, 2, 2], 3, {0, 2}),
+    ],
+)
+def test_moe_compute_apply_to(backend, selection, num_layers, selected):
+    config = TrainerModelConfig.model_validate({"moe": {"compute": {"type": backend, "apply_to": selection}}})
+    config = TrainerModelConfig.model_validate_json(config.model_dump_json())
+    assert config.moe.compute.resolve_layers(num_layers) == selected
+
+
+@pytest.mark.parametrize("selection", ["*", "model.layers.*", "", "101%", "-1%", "nan%", [-1], [1.5], [True]])
+def test_moe_compute_rejects_invalid_apply_to(selection):
+    with pytest.raises(ValidationError, match="apply_to"):
+        TrainerModelConfig.model_validate({"moe": {"compute": {"type": "mxfp8", "apply_to": selection}}})
+
+
+def test_moe_compute_rejects_out_of_range_layer():
+    config = TrainerModelConfig.model_validate({"moe": {"compute": {"type": "mxfp8", "apply_to": [3]}}})
+    with pytest.raises(ValueError, match="out of range"):
+        config.moe.compute.resolve_layers(3)
+
+
+@pytest.mark.parametrize(("selection", "selected"), [("all", {0, 1, 2}), ("50%", {0}), ("[0, 2]", {0, 2})])
+def test_moe_compute_apply_to_cli(selection, selected):
+    config = cli(TrainerModelConfig, args=["--moe.compute.type", "mxfp8", "--moe.compute.apply-to", selection])
+    assert config.moe.compute.resolve_layers(3) == selected
+
+
+@pytest.mark.parametrize(
+    ("model", "message"),
+    [
+        (
+            {
+                "ep": 2,
+                "moe": {
+                    "compute": {"type": "bf16"},
+                    "dispatch": {"type": "torch", "transport": "mxfp8"},
+                },
+            },
+            "MXFP8 transport requires",
+        ),
+        (
+            {
+                "ep": 2,
+                "moe": {
+                    "compute": {"type": "mxfp8"},
+                    "dispatch": {"type": "deepep"},
+                },
+            },
+            "does not support DeepEP",
+        ),
+    ],
+)
+def test_invalid_moe_runtime_configs_fail(model, message):
+    with pytest.raises(ValidationError, match=message):
+        TrainerModelConfig.model_validate(model)
+
+
+@pytest.mark.parametrize(
+    "removed",
+    [
+        {"ep_comm_backend": "torch"},
+        {"deepep_num_sms": 20},
+        {"deepep_token_chunk_size": 1024},
+        {"quantization": {"type": "fp8", "enable_grouped_gemm": True}},
+        {"quantization": {"type": "mxfp8", "enable_a2a": True}},
+    ],
+)
+def test_removed_moe_runtime_fields_are_rejected(removed):
+    with pytest.raises(ValidationError):
+        TrainerModelConfig.model_validate(removed)
+
+
+@pytest.mark.parametrize("config_cls", [TrainerConfig, SFTConfig])
+def test_optimizer_state_offload_keeps_legacy_default(config_cls):
+    config = config_cls.model_validate({})
+
+    assert config.model.optim_cpu_offload is True
+    assert config.model.full_offload is None
+
+
+@pytest.mark.parametrize("config_cls", [TrainerConfig, SFTConfig])
+def test_full_optimizer_offload_disables_gradient_clipping(config_cls):
+    with pytest.warns(UserWarning, match="Gradient clipping prevents optimizer-in-backward"):
+        config = config_cls.model_validate(
+            {
+                "model": {"optim_cpu_offload": False, "full_offload": True},
+                "optim": {"max_norm": 1.0},
+            }
+        )
+
+    assert config.optim.max_norm is None
+
+
+@pytest.mark.parametrize("config_cls", [TrainerConfig, SFTConfig])
+def test_full_optimizer_offload_accepts_debug_backend(config_cls):
+    config = config_cls.model_validate(
+        {
+            "model": {
+                "optim_cpu_offload": False,
+                "full_offload": {
+                    "cpu_optimizer_backend": "torch",
+                },
+            },
+            "optim": {"max_norm": None},
+        }
+    )
+
+    assert config.model.full_offload is not None
+    assert config.model.full_offload.cpu_optimizer_backend == "torch"
+
+
+@pytest.mark.parametrize("config_cls", [TrainerConfig, SFTConfig])
+@pytest.mark.parametrize("optimizer_type", ["sgd", "muon"])
+def test_full_optimizer_offload_requires_supported_optimizer(config_cls, optimizer_type):
+    with pytest.raises(ValidationError, match="Full optimizer offload only supports AdamW and SignSGD"):
+        config_cls.model_validate(
+            {
+                "model": {"optim_cpu_offload": False, "full_offload": True},
+                "optim": {"type": optimizer_type, "max_norm": None},
+            }
+        )
+
+
+@pytest.mark.parametrize("config_cls", [TrainerConfig, SFTConfig])
+def test_full_optimizer_offload_accepts_sign_sgd(config_cls):
+    config = config_cls.model_validate(
+        {
+            "model": {"optim_cpu_offload": False, "full_offload": True},
+            "optim": {"type": "sign_sgd", "max_norm": None},
+        }
+    )
+    assert config.model.full_offload is not None
+    assert config.optim.type == "sign_sgd"
+
+
+def test_resolved_json_roundtrips_explicit_none(tmp_path):
+    """An explicit None override survives the write/re-parse round-trip used by launches:
+    resolved configs are JSON, which keeps nulls (TOML cannot)."""
+    import json
+
     config = cli(TrainerConfig, args=["--model.compile", "None", "--optim.max_norm", "None"])
     assert config.model.compile is None
     assert config.optim.max_norm is None
 
-    write_toml(tmp_path / "cfg.toml", to_toml_dict(config))
-    reloaded = cli(TrainerConfig, args=["@", str(tmp_path / "cfg.toml")])
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(dump_resolved_config(config)))
+    reloaded = cli(TrainerConfig, args=["@", str(path)])
     assert reloaded.model.compile is None
     assert reloaded.optim.max_norm is None
     assert reloaded == config
-
-    # Unset None fields stay dropped, so defaults still resolve on re-parse
-    assert "max_steps" not in to_toml_dict(cli(TrainerConfig, args=[]))
 
 
 def test_env_algo_overrides_top_level():
@@ -177,10 +374,15 @@ def test_env_algo_overrides_top_level():
         {
             "renderer": {"name": "qwen3"},  # echo needs the renderer's role attribution
             "algo": {"type": "echo"},
-            "train": {"env": [{"id": "a", "algo": {"type": "grpo"}}, {"id": "b"}]},
+            "train": {
+                "source": [
+                    {"env": {"taskset": {"id": "reverse-text"}}, "algo": {"type": "grpo"}},
+                    {"env": {"taskset": {"id": "reverse-text"}}, "name": "b"},
+                ]
+            },
         }
     )
-    env_a, env_b = config.train.env
+    env_a, env_b = config.train.source
     # Env a sets its own algorithm; only env b inherits the top-level echo algorithm.
     assert env_a.algo is not None and env_a.algo.type == "grpo"
     assert env_b.algo is not None and env_b.algo.type == "echo"
@@ -188,20 +390,79 @@ def test_env_algo_overrides_top_level():
     # Resolved configs round-trip.
     dumped = config.model_dump(exclude_none=True)
     reloaded = OrchestratorConfig.model_validate(dumped)
-    assert reloaded.train.env[0].algo is not None and reloaded.train.env[0].algo.type == "grpo"
+    assert reloaded.train.source[0].algo is not None and reloaded.train.source[0].algo.type == "grpo"
+
+    with pytest.raises(ValidationError, match="env"):
+        OrchestratorConfig.model_validate(
+            {
+                "renderer": {"name": "qwen3"},
+                "train": {"env": [{"env": {"taskset": {"id": "removed"}}}]},
+            }
+        )
+
+    with pytest.raises(ValidationError, match="env"):
+        OrchestratorConfig.model_validate(
+            {
+                "renderer": {"name": "qwen3"},
+                "eval": {"env": [{"env": {"taskset": {"id": "removed"}}}]},
+            }
+        )
 
 
-def test_trainer_enable_token_export_cli_flag():
-    assert not cli(TrainerConfig, args=[]).enable_token_export
-    assert cli(TrainerConfig, args=["--enable-token-export"]).enable_token_export
+def test_policy_sources_accept_different_top_p_values():
+    with pytest.warns(UserWarning, match="defaulting top_k"):
+        config = OrchestratorConfig.model_validate(
+            {
+                "renderer": {"name": "qwen3"},
+                "train": {
+                    "source": [
+                        {
+                            "name": "top-p-95",
+                            "env": {"taskset": {"id": "reverse-text"}},
+                            "sampling": {"top_p": 0.95},
+                        },
+                        {
+                            "name": "top-p-97",
+                            "env": {"taskset": {"id": "reverse-text"}},
+                            "sampling": {"top_p": 0.97},
+                        },
+                    ]
+                },
+            }
+        )
+
+    assert [source.sampling.top_k for source in config.train.source] == [512, 512]
 
 
-def test_single_node_auto_inference_client_dp_rank_count_matches_local_dp():
+def test_policy_sources_reject_mixed_top_k_capture():
+    with pytest.warns(UserWarning, match="defaulting top_k"):
+        with pytest.raises(ValidationError, match="cannot mix top_k > 0 and top_k = -1"):
+            OrchestratorConfig.model_validate(
+                {
+                    "renderer": {"name": "qwen3"},
+                    "train": {
+                        "source": [
+                            {
+                                "name": "truncated",
+                                "env": {"taskset": {"id": "reverse-text"}},
+                                "sampling": {"top_p": 0.95},
+                            },
+                            {
+                                "name": "untruncated",
+                                "env": {"taskset": {"id": "reverse-text"}},
+                            },
+                        ]
+                    },
+                }
+            )
+
+
+def test_single_node_auto_inference_ports_follow_server_port():
     config = RLConfig.model_validate(
         {
             "trainer": {},
             "orchestrator": {},
-            "inference": {"parallel": {"tp": 1}},
+            "inference": {"server": {"port": 8001}, "vllm": {"tensor_parallel_size": 1}},
             "deployment": {
                 "type": "single_node",
                 "gpus_per_node": 4,
@@ -212,16 +473,17 @@ def test_single_node_auto_inference_client_dp_rank_count_matches_local_dp():
     )
 
     assert config.inference is not None
-    assert config.inference.parallel.dp == 2
-    assert config.orchestrator.model.client.dp_rank_count == 2
+    assert config.inference.vllm.data_parallel_size == 2
+    assert config.inference.backend_port == 8101
+    assert config.orchestrator.model.client.admin_base_url == ["http://localhost:8101/v1"]
 
 
-def test_multi_node_auto_inference_client_dp_rank_count_uses_router_url():
+def test_multi_node_auto_inference_parallelism():
     config = RLConfig.model_validate(
         {
             "trainer": {},
             "orchestrator": {},
-            "inference": {"parallel": {"tp": 4}},
+            "inference": {"vllm": {"tensor_parallel_size": 4}},
             "deployment": {
                 "type": "multi_node",
                 "gpus_per_node": 8,
@@ -233,9 +495,8 @@ def test_multi_node_auto_inference_client_dp_rank_count_uses_router_url():
     )
 
     assert config.inference is not None
-    assert config.inference.data_parallel_size_local == 2
-    assert config.inference.parallel.dp == 2
-    assert config.orchestrator.model.client.dp_rank_count == 1
+    assert config.inference.vllm.data_parallel_size_local == 2
+    assert config.inference.vllm.data_parallel_size == 2
 
 
 def test_orchestrator_vlm_requires_renderer():
@@ -268,9 +529,22 @@ def test_orchestrator_vlm_requires_renderer():
     assert config.renderer is not None
 
 
-def test_selective_activation_checkpointing_requires_custom_impl():
-    with pytest.raises(ValidationError, match="Selective activation checkpointing requires model.impl='custom'"):
-        TrainerModelConfig.model_validate({"impl": "hf", "ac": {"mode": "selective"}})
+def test_trainer_rejects_vlm_cp_with_ring():
+    config = {
+        "model": {
+            "cp": 2,
+            "impl": "custom",
+            "optimization_dtype": "bfloat16",
+            "reduce_dtype": "bfloat16",
+            "vlm": {
+                "vision_encoder_attr": "model.visual",
+                "language_model_attr": "model.language_model",
+            },
+        },
+    }
+
+    with pytest.raises(ValidationError, match="cp_style='ulysses'"):
+        TrainerConfig.model_validate(config)
 
 
 def test_shared_model_name_propagates_to_subconfigs():
@@ -285,7 +559,7 @@ def test_shared_model_name_propagates_to_subconfigs():
     )
     assert config.trainer.model.name == model_name
     assert config.orchestrator.model.name == model_name
-    assert config.inference is not None and config.inference.model.name == model_name
+    assert config.inference is not None and config.inference.vllm.model == model_name
     assert config.trainer.tokenizer.name == model_name
     assert config.orchestrator.tokenizer.name == model_name
 
@@ -429,7 +703,7 @@ def test_shared_and_sub_max_steps_conflict_raises():
 def test_trainer_chat_template_cascades_to_inference():
     """``[trainer.tokenizer] chat_template`` set directly (no shared
     ``[tokenizer] chat_template``) must still reach
-    ``inference.model.chat_template`` so vLLM's ``--chat-template`` is wired
+    ``inference.vllm.chat_template`` so vLLM's ``--chat-template`` is wired
     up. Regression: the original ``auto_setup_tokenizer`` cascaded this; the
     refactored propagator must keep doing it."""
     config = RLConfig.model_validate(
@@ -443,29 +717,31 @@ def test_trainer_chat_template_cascades_to_inference():
     assert config.trainer.tokenizer.chat_template == "TPL"
     assert config.orchestrator.tokenizer.chat_template == "TPL"
     assert config.inference is not None
-    assert config.inference.model.chat_template == "TPL"
+    assert config.inference.vllm.chat_template == "TPL"
 
 
 def test_shared_wandb_fields_propagate_to_subconfigs():
     """Every ``SharedWandbConfig`` leaf (project, entity, name, group, tags,
-    offline) propagates to both trainer.wandb and orchestrator.wandb. Regression
-    for a miss in the inline propagator."""
+    offline) propagates to both trainer.monitors.wandb and
+    orchestrator.monitors.wandb. Regression for a miss in the inline propagator."""
     config = RLConfig.model_validate(
         {
             "model": {"name": "Qwen/Qwen3-0.6B"},
-            "wandb": {
-                "project": "shared-proj",
-                "entity": "shared-entity",
-                "name": "shared-name",
-                "group": "shared-group",
-                "tags": ["a", "b"],
-                "offline": False,
+            "monitors": {
+                "wandb": {
+                    "project": "shared-proj",
+                    "entity": "shared-entity",
+                    "name": "shared-name",
+                    "group": "shared-group",
+                    "tags": ["a", "b"],
+                    "offline": False,
+                }
             },
             "trainer": {},
             "orchestrator": {"renderer": {"name": "default"}},
         }
     )
-    for component in (config.trainer.wandb, config.orchestrator.wandb):
+    for component in (config.trainer.monitors.wandb, config.orchestrator.monitors.wandb):
         assert component is not None
         assert component.project == "shared-proj"
         assert component.entity == "shared-entity"
@@ -473,6 +749,24 @@ def test_shared_wandb_fields_propagate_to_subconfigs():
         assert component.group == "shared-group"
         assert component.tags == ["a", "b"]
         assert component.offline is False
+
+
+def test_shared_monitor_disable_and_prime_propagate():
+    """CLI ``--no-monitors.wandb`` / ``--no-monitors.file`` (which land as the string
+    "None") propagate the disable to both sub-configs, whose monitors default to
+    enabled; a shared ``[monitors.prime]`` reaches the orchestrator only."""
+    config = RLConfig.model_validate(
+        {
+            "model": {"name": "Qwen/Qwen3-0.6B"},
+            "monitors": {"wandb": "None", "file": "None", "prime": {"name": "shared-prime"}},
+            "trainer": {},
+            "orchestrator": {"renderer": {"name": "default"}},
+        }
+    )
+    assert config.trainer.monitors.wandb is None and config.trainer.monitors.file is None
+    assert config.orchestrator.monitors.wandb is None and config.orchestrator.monitors.file is None
+    assert config.orchestrator.monitors.prime is not None
+    assert config.orchestrator.monitors.prime.name == "shared-prime"
 
 
 def test_empty_shared_ckpt_block_does_not_conflict_with_subconfig_ckpt():
@@ -503,8 +797,8 @@ def test_shared_and_subconfig_disjoint_fields_coexist():
     assert config.trainer.model.impl == "custom"
 
 
-def test_shared_output_dir_propagates_through_cli(tmp_path):
-    """Shared output_dir from CLI reaches sub-configs even when tyro constructs sub-configs before the before-validator."""
+def test_run_dir_propagates_through_cli(tmp_path):
+    """Sub-configs receive the run directory (output_dir / run.name) resolved from the CLI."""
     toml_path = tmp_path / "cfg.toml"
     write_toml(
         toml_path,
@@ -512,15 +806,21 @@ def test_shared_output_dir_propagates_through_cli(tmp_path):
             "max_steps": 1,
             "seq_len": 128,
             "model": {"name": "Qwen/Qwen3-0.6B"},
+            "monitors": {"wandb": {}},
             "trainer": {},
             "orchestrator": {"batch_size": 16, "group_size": 1},
             "inference": {},
         },
     )
     shared_out = tmp_path / "shared"
-    config = cli(RLConfig, args=["@", str(toml_path), "--output-dir", str(shared_out)])
-    assert config.trainer.output_dir == shared_out
-    assert config.orchestrator.output_dir == shared_out / "run_default"
+    config = cli(RLConfig, args=["@", str(toml_path), "--output-dir", str(shared_out), "--run.name", "my-exp"])
+    assert config.run_dir == shared_out / "my-exp"
+    assert config.trainer.output_dir == shared_out / "my-exp"
+    assert config.orchestrator.output_dir == shared_out / "my-exp"
+    # Unset monitor names inherit run.name
+    assert config.monitors.wandb is not None and config.monitors.wandb.name == "my-exp"
+    assert config.trainer.monitors.wandb is not None and config.trainer.monitors.wandb.name == "my-exp"
+    assert config.orchestrator.monitors.wandb is not None and config.orchestrator.monitors.wandb.name == "my-exp"
 
 
 def test_orchestrator_renderer_auto_rejects_unmapped_model():
@@ -593,7 +893,7 @@ def test_orchestrator_explicit_default_renderer_with_unmapped_model():
 
 
 def test_shared_model_name_resolves_inference_parsers():
-    """Shared [model] name must reach inference.model BEFORE ModelConfig's after-validator
+    """Shared [model] name must reach inference.vllm BEFORE VllmConfig's after-validator
     runs auto_resolve_parsers — i.e. the parsers resolve from the propagated name, not
     from an empty default.
     """
@@ -606,20 +906,36 @@ def test_shared_model_name_resolves_inference_parsers():
         }
     )
     assert config.inference is not None
-    assert config.inference.model.name == "Qwen/Qwen3-Coder-30B-A3B-Instruct"
-    assert config.inference.model.tool_call_parser == "qwen3_coder"
+    assert config.inference.vllm.model == "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+    assert config.inference.vllm.tool_call_parser == "qwen3_coder"
 
 
 def test_explicit_inference_parser_wins_over_auto():
-    """Explicit inference.model.tool_call_parser is preserved even when the shared model
+    """Explicit inference.vllm.tool_call_parser is preserved even when the shared model
     name would otherwise auto-resolve to something else."""
     config = RLConfig.model_validate(
         {
             "model": {"name": "Qwen/Qwen3-Coder-30B-A3B-Instruct"},
             "trainer": {},
             "orchestrator": {"renderer": {"name": "default"}},
-            "inference": {"model": {"tool_call_parser": "hermes"}},
+            "inference": {"vllm": {"tool_call_parser": "hermes"}},
         }
     )
     assert config.inference is not None
-    assert config.inference.model.tool_call_parser == "hermes"
+    assert config.inference.vllm.tool_call_parser == "hermes"
+
+
+def test_combined_replay_uses_v2_runner(monkeypatch):
+    from prime_rl.inference.server import setup_vllm_env
+
+    monkeypatch.delenv("VLLM_USE_V2_MODEL_RUNNER", raising=False)
+    config = InferenceConfig(
+        enable_return_sampling_mask=True,
+        vllm={"enable_return_routed_experts": True},
+    )
+
+    setup_vllm_env(config)
+
+    assert config.enable_return_sampling_mask is True
+    assert config.vllm.enable_return_routed_experts is True
+    assert os.environ["VLLM_USE_V2_MODEL_RUNNER"] == "1"

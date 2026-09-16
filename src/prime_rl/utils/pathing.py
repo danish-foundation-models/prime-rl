@@ -1,5 +1,9 @@
 import asyncio
+import os
+import shlex
 import shutil
+import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -10,10 +14,80 @@ def get_log_dir(output_dir: Path) -> Path:
     return output_dir / "logs"
 
 
+def _attempt_numbers(parent: Path) -> set[int]:
+    return {
+        int(path.name.removeprefix("attempt_"))
+        for path in parent.glob("attempt_*")
+        if path.name.removeprefix("attempt_").isdigit()
+    }
+
+
+def _point_latest(parent: Path, attempt_dir: Path) -> None:
+    """Atomically point ``parent/latest`` at a relative attempt directory."""
+    tmp_link = parent / f".{attempt_dir.name}"
+    if tmp_link.is_symlink() or tmp_link.exists():
+        tmp_link.unlink()
+    os.symlink(attempt_dir.name, tmp_link)
+    os.replace(tmp_link, parent / "latest")
+
+
+def create_attempt_dirs(run_dir: Path) -> tuple[Path, Path]:
+    """Create matching config and log directories for one launch attempt.
+
+    Returns the concrete resolved-config and log directories. The ``latest``
+    symlink under each artifact root points to the new attempt.
+    """
+    configs_dir = run_dir / "configs"
+    logs_dir = get_log_dir(run_dir)
+    configs_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    attempts = _attempt_numbers(configs_dir) | _attempt_numbers(logs_dir)
+    attempt_name = f"attempt_{1 + max(attempts, default=0)}"
+    config_attempt_dir = configs_dir / attempt_name
+    log_dir = logs_dir / attempt_name
+    config_dir = config_attempt_dir / "resolved"
+    config_dir.mkdir(parents=True)
+    log_dir.mkdir()
+    _point_latest(configs_dir, config_attempt_dir)
+    _point_latest(logs_dir, log_dir)
+    return config_dir, log_dir
+
+
+def prepare_attempt_dirs(run_dir: Path) -> tuple[Path, Path]:
+    """Reuse a launcher-pinned attempt or allocate a new one."""
+    config_dir = os.environ.get("PRL_ATTEMPT_CONFIG_DIR")
+    log_dir = os.environ.get("PRL_ATTEMPT_LOG_DIR")
+    if config_dir is None and log_dir is None:
+        return create_attempt_dirs(run_dir)
+    if config_dir is None or log_dir is None:
+        raise RuntimeError("PRL_ATTEMPT_CONFIG_DIR and PRL_ATTEMPT_LOG_DIR must be set together")
+    resolved_config_dir = Path(config_dir)
+    attempt_log_dir = Path(log_dir)
+    resolved_config_dir.mkdir(parents=True, exist_ok=True)
+    attempt_log_dir.mkdir(parents=True, exist_ok=True)
+    return resolved_config_dir, attempt_log_dir
+
+
+def create_attempt_log_dir(run_dir: Path) -> Path:
+    """Create a log-only attempt for standalone processes without config dumps."""
+    logs_dir = get_log_dir(run_dir)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    attempt_dir = logs_dir / f"attempt_{1 + max(_attempt_numbers(logs_dir), default=0)}"
+    attempt_dir.mkdir()
+    _point_latest(logs_dir, attempt_dir)
+    return attempt_dir
+
+
+def latest_log_dir(run_dir: Path) -> Path:
+    """The current attempt's log directory, via the ``logs/latest`` symlink."""
+    return get_log_dir(run_dir) / "latest"
+
+
 def format_log_message(
     log_dir: Path,
     trainer: bool = False,
     orchestrator: bool = False,
+    evals: bool = False,
     inference: bool = False,
     job_log: bool = False,
     train_env_names: list[str] | None = None,
@@ -30,7 +104,7 @@ def format_log_message(
 
     log_lines: list[str] = []
     if job_log:
-        log_lines.append(f"{i1}{'Job:':<{col}}tail -F {log_dir.parent}/job_*.log")
+        log_lines.append(f"{i1}{'Job:':<{col}}tail -F {get_launcher_log_dir(log_dir.parent.parent)}/*job_*.log")
     if trainer:
         log_lines.append(f"{i1}{'Trainer:':<{col}}tail -F {log_dir}/trainer.log")
         if num_train_nodes > 1:
@@ -38,17 +112,20 @@ def format_log_message(
         log_lines.append(f"{i2}{'All ranks:':<{col - 1}}tail -F {log_dir}/trainer/torchrun/*/*/*/*.log")
     if orchestrator:
         log_lines.append(f"{i1}{'Orchestrator:':<{col}}tail -F {log_dir}/orchestrator.log")
+    if evals:
+        log_lines.append(f"{i1}{'Evals:':<{col}}tail -F {log_dir}/evals.log")
     if inference:
         log_lines.append(f"{i1}{'Inference:':<{col}}tail -F {log_dir}/inference.log")
         if num_infer_nodes > 1:
             log_lines.append(f"{i2}{'All nodes:':<{col - 1}}tail -F {log_dir}/inference/node_*.log")
-    if train_env_names:
+    if train_env_names or eval_env_names:
         env_log_dir = log_dir / "envs"
         log_lines.append(f"{i1}{'Envs:':<{col}}tail -F {env_log_dir}/*/*.log")
-        log_lines.append(f"{i2}{'Train:':<{col - 1}}tail -F {env_log_dir}/train/*.log")
-        for name in train_env_names:
-            short = name if len(name) <= max_name else name[: max_name - 3] + "..."
-            log_lines.append(f"{i3}{f'{short}:':<{col - 2}}tail -F {env_log_dir}/train/{name}.log")
+        if train_env_names:
+            log_lines.append(f"{i2}{'Train:':<{col - 1}}tail -F {env_log_dir}/train/*.log")
+            for name in train_env_names:
+                short = name if len(name) <= max_name else name[: max_name - 3] + "..."
+                log_lines.append(f"{i3}{f'{short}:':<{col - 2}}tail -F {env_log_dir}/train/{name}.log")
         if eval_env_names:
             log_lines.append(f"{i2}{'Eval:':<{col - 1}}tail -F {env_log_dir}/eval/*.log")
             for name in eval_env_names:
@@ -57,27 +134,84 @@ def format_log_message(
     return "Logs:\n" + "\n".join(log_lines)
 
 
+def home_dir() -> Path:
+    """Best-effort home directory; fall back to the temp dir so import never fails."""
+    try:
+        return Path.home()
+    except RuntimeError:
+        return Path(tempfile.gettempdir())
+
+
+CACHE_DIR = home_dir() / ".cache" / "prime-rl"
+"""User-scoped cache root."""
+
+
 def get_config_dir(output_dir: Path) -> Path:
-    return output_dir / "configs"
+    """Return the current attempt's resolved config directory.
+
+    The environment override pins child processes to their launch attempt. The
+    legacy path keeps tools compatible with runs created before config attempts.
+    """
+    if config_dir := os.environ.get("PRL_ATTEMPT_CONFIG_DIR"):
+        return Path(config_dir)
+    configs_dir = output_dir / "configs"
+    latest = configs_dir / "latest" / "resolved"
+    legacy = configs_dir / "resolved"
+    return legacy if legacy.is_dir() and not latest.exists() else latest
+
+
+def write_launch_command(config_dir: Path, name: str) -> None:
+    """Write the user-facing launch command once for a config attempt."""
+    attempt_dir = config_dir.parent
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    command_path = attempt_dir / "command.txt"
+    if not command_path.exists():
+        command = shlex.join(["uv", "run", name, *sys.argv[1:]])
+        command_path.write_text(f"{command}\n")
+
+
+def write_launch_toml(config_dir: Path, name: str) -> None:
+    """Copy the root `@` TOML file(s) to the config attempt."""
+    argv = sys.argv[1:]
+    paths = []
+    for i, arg in enumerate(argv):
+        # root config references only: `@ file`; a `--flag @ file` / `--flag @file`
+        # is a nested reference and belongs under its flag, not in the launch copy
+        if arg == "@" and i + 1 < len(argv) and (i == 0 or not argv[i - 1].startswith("--")):
+            paths.append(Path(argv[i + 1]))
+    tomls = [(p, p.read_text()) for p in paths if p.suffix == ".toml" and p.is_file()]
+    if not tomls:
+        return
+    texts = [text for _, text in tomls] if len(tomls) == 1 else [f"# @ {p}\n{text}" for p, text in tomls]
+    (config_dir.parent / f"{name}.toml").write_text("\n".join(texts))
+
+
+def write_launch_artifacts(config_dir: Path, name: str) -> None:
+    """Write the user command and launch TOML for a config attempt."""
+    write_launch_command(config_dir, name)
+    write_launch_toml(config_dir, name)
+
+
+def get_launcher_dir(output_dir: Path) -> Path:
+    return output_dir / "launcher"
+
+
+def get_launcher_log_dir(output_dir: Path) -> Path:
+    return get_launcher_dir(output_dir) / "logs"
 
 
 def get_ckpt_dir(output_dir: Path) -> Path:
     return output_dir / "checkpoints"
 
 
-def get_weights_dir(output_dir: Path) -> Path:
-    return output_dir / "weights"
+def get_batch_dir(output_dir: Path) -> Path:
+    return output_dir / "batches"
 
 
-def get_rollout_dir(output_dir: Path) -> Path:
-    return output_dir / "rollouts"
-
-
-def get_trace_path(output_dir: Path, step: int, kind: str, subset: str) -> Path:
-    """Where one trace file lives: ``rollouts/step_{n}/{train,eval}/{all,effective}/traces.jsonl``.
-    ``all`` is appended per rollout the moment it completes; ``effective`` is written at once
-    per finalized train batch / eval epoch."""
-    return get_step_path(get_rollout_dir(output_dir), step) / kind / subset / "traces.jsonl"
+def get_file_monitor_dir(output_dir: Path) -> Path:
+    """Everything the file monitor dumps locally: the metrics, and the traces with
+    the annotations about them."""
+    return output_dir / "monitors" / "file"
 
 
 def get_eval_dir(output_dir: Path) -> Path:
@@ -96,12 +230,6 @@ def get_all_ckpt_steps(ckpt_dir: Path) -> list[int]:
     """Gets all checkpoint steps from the checkpoint directory, sorted in ascending order."""
     step_dirs = list(ckpt_dir.glob("step_*"))
     return sorted([int(step_dir.name.split("_")[-1]) for step_dir in step_dirs])
-
-
-def get_stable_ckpt_steps(ckpt_dir: Path) -> list[int]:
-    """Gets checkpoint steps that have STABLE file, sorted in ascending order."""
-    steps = get_all_ckpt_steps(ckpt_dir)
-    return [s for s in steps if (ckpt_dir / f"step_{s}" / "STABLE").exists()]
 
 
 def resolve_latest_ckpt_step(ckpt_dir: Path) -> int | None:
@@ -123,53 +251,77 @@ def has_checkpoints(output_dir: Path) -> bool:
     return ckpt_dir.exists() and any(ckpt_dir.iterdir())
 
 
-def validate_output_dir(output_dir: Path, *, resuming: bool, clean: bool, ckpt_output_dir: Path | None = None) -> None:
-    """Validate the output directory before training starts.
+# Launcher artifacts may exist before training starts. Everything else is treated as
+# artifacts of a previous run.
+LAUNCHER_ARTIFACTS = ("configs", "launcher")
 
-    Raises if the directory contains checkpoints from a previous run, unless
-    explicitly resuming or opting into cleaning. Other artifacts (logs,
-    rollouts, configs) are fine and don't trigger the error.
+
+def has_run_artifacts(run_dir: Path) -> bool:
+    """Check if the run directory contains artifacts beyond what the launcher pre-writes."""
+    if not run_dir.exists():
+        return False
+    launcher_entries = {entry for pattern in LAUNCHER_ARTIFACTS for entry in run_dir.glob(pattern)}
+    for entry in run_dir.iterdir():
+        if entry in launcher_entries:
+            continue
+        if entry.name == "logs" and entry.is_dir() and not any(path.is_file() for path in entry.rglob("*")):
+            continue
+        return True
+    return False
+
+
+def validate_run_dir(
+    run_dir: Path, *, output_dir: Path, resuming: bool, clean: bool, ckpt_output_dir: Path | None = None
+) -> None:
+    """Validate the run directory before training starts.
+
+    Raises if the run directory was already used by a previous run, unless explicitly
+    resuming or opting into cleaning — a second run writing into the same run directory
+    would overwrite or interleave with the first run's artifacts.
 
     When ckpt_output_dir is set, checkpoints live there instead of under
-    output_dir, so the guard and clean logic check both locations.
+    run_dir, so the guard and clean logic check both locations.
     """
-    dirs_to_check = [output_dir]
-    if ckpt_output_dir is not None and ckpt_output_dir != output_dir:
-        dirs_to_check.append(ckpt_output_dir)
-
     if resuming:
         return
     if clean:
+        if not run_dir.resolve().is_relative_to(output_dir.resolve()):
+            raise ValueError(f"clean requires the run directory ({run_dir}) to remain under output_dir ({output_dir})")
         logger = get_logger()
-        for d in dirs_to_check:
+        dirs_to_clean = [run_dir]
+        if ckpt_output_dir is not None and ckpt_output_dir != run_dir:
+            dirs_to_clean.append(ckpt_output_dir)
+        for d in dirs_to_clean:
             if d.exists():
                 logger.warning(f"Cleaning existing directory: {d}")
                 shutil.rmtree(d)
         return
-    for d in dirs_to_check:
-        if has_checkpoints(d):
-            raise FileExistsError(
-                f"Directory '{d}' already contains checkpoints from a previous run. "
-                f"To resume the latest step of the previous run, set ckpt.resume_step=-1 or --ckpt.resume-step -1 via CLI. "
-                f"To delete the existing directory and start fresh, set clean_output_dir=true or --clean-output-dir via CLI. "
-                f"Otherwise use a unique output_dir for this experiment."
-            )
+    blocked = None
+    if has_run_artifacts(run_dir):
+        blocked = f"Run directory '{run_dir}' already contains artifacts from a previous run."
+    elif ckpt_output_dir is not None and ckpt_output_dir != run_dir and has_checkpoints(ckpt_output_dir):
+        blocked = f"Checkpoint directory '{ckpt_output_dir}' already contains checkpoints from a previous run."
+    if blocked:
+        raise FileExistsError(
+            f"{blocked} "
+            f"To resume the latest step of the previous run, pass --resume (or --resume.step N). "
+            f"To delete the existing directory and start fresh, set clean=true or --clean via CLI. "
+            f"Otherwise use a unique run name (run.name or --run.name via CLI) or output_dir for this run."
+        )
 
 
 def clean_future_steps(output_dir: Path, resume_step: int) -> None:
-    """Remove stale rollouts, broadcasts, and traces past ``resume_step``.
+    """Remove stale step artifacts past ``resume_step`` and broadcasts from it onward.
 
     Pass ``resume_step=-1`` to wipe every step directory (fresh runs).
     """
-    run_default = output_dir / "run_default"
-    dirs = [
-        get_rollout_dir(output_dir),
-        get_rollout_dir(run_default),
-        get_broadcast_dir(run_default),
+    cleanup_rules = [
+        (get_batch_dir(output_dir), lambda step: step > resume_step),
+        (get_broadcast_dir(output_dir), lambda step: step >= resume_step),
     ]
 
-    for directory in dirs:
-        steps_to_delete = [step for step in get_all_ckpt_steps(directory) if step > resume_step]
+    for directory, should_delete in cleanup_rules:
+        steps_to_delete = [step for step in get_all_ckpt_steps(directory) if should_delete(step)]
         if not steps_to_delete:
             continue
         get_logger().info(

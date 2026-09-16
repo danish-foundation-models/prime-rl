@@ -37,7 +37,7 @@ from transformers.utils.deprecation import deprecate_kwarg
 from prime_rl.trainer.models.base import PreTrainedModelPrimeRL
 from prime_rl.trainer.models.layers.attn import ATTN_IMPL2CLASS, AttentionConfig
 from prime_rl.trainer.models.layers.lm_head import PrimeLmOutput
-from prime_rl.trainer.models.layers.mlp import MLP, MLPConfig
+from prime_rl.trainer.models.layers.mlp import FeedForward
 from prime_rl.trainer.models.layers.norms import RMSNorm, RMSNormConfig
 from prime_rl.trainer.models.layers.rotary_emb import RotaryEmbedding, RotaryEmbeddingConfig
 from prime_rl.utils.sequence import get_cu_seqlens_from_seq_lens
@@ -62,13 +62,12 @@ class LlamaDecoderLayer(GradientCheckpointingLayer):
         )
         self.self_attn = ATTN_IMPL2CLASS[config._attn_implementation](attn_config)
 
-        mlp_config = MLPConfig(
-            hidden_size=config.hidden_size,
-            intermediate_size=config.intermediate_size,
-            gate_act=config.hidden_act,
+        self.mlp = FeedForward(
+            dim=config.hidden_size,
+            hidden_dim=config.intermediate_size,
+            activation=config.hidden_act,
             bias=config.mlp_bias,
         )
-        self.mlp = MLP(mlp_config)
         self.input_layernorm = RMSNorm(RMSNormConfig(hidden_size=config.hidden_size, eps=config.rms_norm_eps))
         self.post_attention_layernorm = RMSNorm(RMSNormConfig(hidden_size=config.hidden_size, eps=config.rms_norm_eps))
 
@@ -124,8 +123,10 @@ class LlamaPreTrainedModel(PreTrainedModelPrimeRL):
 
     @classmethod
     def is_prime_state_dict(cls, state_dict: dict[str, Tensor]) -> bool:
-        """Check if the state dict is in PrimeRL training format."""
-        return True
+        # Dense models use identical key names in HF and PrimeRL format, so we
+        # never claim to be in a separate PrimeRL format. This disables the
+        # auto-conversion path in load_dcp_from_hf and lets DCP load directly.
+        return False
 
     @classmethod
     def convert_to_hf(cls, state_dict: dict[str, Tensor]) -> dict[str, Tensor]:

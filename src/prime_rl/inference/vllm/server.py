@@ -1,6 +1,5 @@
 import asyncio
 from argparse import Namespace
-from typing import Any
 
 import uvloop
 from fastapi import APIRouter, Request
@@ -21,25 +20,17 @@ from prime_rl.utils.logger import get_logger
 logger = get_logger()
 from prime_rl.inference.patches import (
     monkey_patch_dp_coordinator_startup_timeout,
-    monkey_patch_harmony_stop_token_propagation,
     monkey_patch_nano_v3_reasoning_parser,
     monkey_patch_strip_routed_experts_from_chat,
     monkey_patch_tokenize_params_validation,
-    monkey_patch_vllm_padded_input_scrub,
 )
 
-# NOTE: Fix harmony stop token propagation for GPT-OSS models
-# Upstream issue still open: https://github.com/vllm-project/vllm/issues/22519
-monkey_patch_harmony_stop_token_propagation()
 # NOTE: Monkeypatch TokenizeParams to fix overly conservative validation
-# Still needed in vLLM 0.20 — upstream rejects prompt_len > max_model_len - max_tokens
+# Still needed in vLLM 0.28 — upstream rejects prompt_len > max_model_len - max_tokens
 monkey_patch_tokenize_params_validation()
 # NOTE: Register Nano V3 reasoning parser so configs can use
 # `reasoning_parser = "nano_v3"` without a vLLM plugin file.
 monkey_patch_nano_v3_reasoning_parser()
-# NOTE: Optional mitigation for vLLM padded decode inputs until the native fix
-# is available in our pinned runtime.
-monkey_patch_vllm_padded_input_scrub()
 # NOTE: routed_experts are consumed only via the serialized /generate path (router
 # replay). The chat-completions path encodes them as a base64 np.save string the PD
 # router cannot merge, which fails eval rollouts (they use chat completions). Strip
@@ -97,10 +88,14 @@ async def load_lora_adapter(lora_request: LoadLoRAAdapterRequest, raw_request: R
     """Wrapper around vLLM's /v1/load_lora_adapter.
 
     prime-rl reloads a fixed-name adapter with fresh weights every step (the path
-    changes per policy version; the name is constant, see orchestrator.lora_name).
-    vLLM's native loader rejects a same-name reload unless ``load_inplace=True``,
-    so we force it here — that makes the worker re-read the new weights during
-    ``add_lora``, reusing the existing ``lora_int_id``.
+    changes per policy version; the name is constant — the base model name, which
+    the adapter shadows: ``_maybe_get_adapters`` resolves ``lora_requests`` before
+    the base-model match, so requests keep addressing one stable name. If a future
+    vLLM rejects registering an adapter under a served model name, fall back to a
+    distinct constant adapter name set once at startup.) vLLM's native loader
+    rejects a same-name reload unless ``load_inplace=True``, so we force it here —
+    that makes the worker re-read the new weights during ``add_lora``, reusing the
+    existing ``lora_int_id``.
 
     We then reset the stored request's flag back to ``False``. ``load_inplace`` is
     a sticky field on the ``LoRARequest`` that ``_maybe_get_adapters`` hands to
@@ -215,20 +210,18 @@ vllm.v1.utils.run_api_server_worker_proc = custom_run_api_server_worker_proc
 # Adapted from vllm/entrypoints/cli/serve.py
 # Only difference we do some config translation (i.e. pass populated namespace
 # to `parse_args`) and additional arg validation
-def server(config: InferenceConfig, vllm_extra: dict[str, Any] | None = None):
+def server(config: InferenceConfig):
     import os
 
     from vllm.entrypoints.cli.serve import run_headless, run_multi_api_server
     from vllm.entrypoints.openai.api_server import run_server
 
     # Signal worker processes to disable LoRA on MoE layers when LoRA targets don't include experts
-    if config.lora_target_modules and not any("expert" in m for m in config.lora_target_modules):
+    lora_target_modules = config.vllm.lora_target_modules
+    if lora_target_modules and not any("expert" in m for m in lora_target_modules):
         os.environ["PRIME_NO_MOE_LORA"] = "1"
 
-    namespace = config.to_vllm()
-    if vllm_extra:
-        for key, value in vllm_extra.items():
-            setattr(namespace, key, value)
+    namespace = config.to_namespace()
 
     parser = FlexibleArgumentParser(description="vLLM OpenAI-Compatible RESTful API server.")
     parser = make_arg_parser(parser)

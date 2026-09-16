@@ -1,18 +1,16 @@
 name: Sync Docs to Public Docs
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'docs/**'
+  release:
+    types:
+      - published
   workflow_dispatch:
 
 jobs:
   trigger-docs-sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Validate mint.json pages exist
         run: |

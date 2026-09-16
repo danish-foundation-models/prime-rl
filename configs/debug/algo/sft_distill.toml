@@ -1,7 +1,7 @@
 # Start the frozen reference server first (on a separate GPU):
 #   CUDA_VISIBLE_DEVICES=1 uv run inference \
-#     --model.name PrimeIntellect/Qwen3-0.6B-Reverse-Text-RL \
-#     --server.port 8001 --gpu-memory-utilization 0.5 --model.enforce-eager
+#     --vllm.model PrimeIntellect/Qwen3-0.6B-Reverse-Text-RL \
+#     --server.port 8001 --vllm.gpu-memory-utilization 0.5 --vllm.enforce-eager
 # Then:
 #   uv run rl @ configs/debug/algo/sft_distill.toml
 
@@ -11,7 +11,7 @@ seq_len = 2048
 [model]
 name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-SFT"
 
-[wandb]
+[monitors.wandb]
 project = "algorithms-debug"
 name = "debug-sft"
 
@@ -25,7 +25,7 @@ type = "sft"
 # sft's teacher IS the model it samples from.
 [orchestrator.algo.sampling.source]
 name = "PrimeIntellect/Qwen3-0.6B-Reverse-Text-RL"
-base_url = ["http://localhost:8001/v1"]
+base_url = "http://localhost:8001/v1"
 
 # The student's renderer tokenizes the teacher's messages into the student's
 # token space (backfill). Use `prime-qwen3` — it matches this PrimeIntellect
@@ -38,10 +38,11 @@ name = "prime-qwen3"
 [orchestrator.train.sampling]
 max_completion_tokens = 128
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "reverse-text"
-env.taskset = { id = "reverse-text-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [orchestrator.eval]
 interval = 1
@@ -50,10 +51,11 @@ num_examples = 128
 [orchestrator.eval.sampling]
 max_completion_tokens = 128
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "reverse-text"
-env.taskset = { id = "reverse-text-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "reverse-text"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [trainer.optim]
 lr = 3e-6
@@ -61,4 +63,6 @@ lr = 3e-6
 [ckpt]
 
 [inference]
+
+[inference.vllm]
 gpu_memory_utilization = 0.5

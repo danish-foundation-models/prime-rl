@@ -22,42 +22,74 @@ git submodule update --init --recursive
 ## Sync
 
 ```bash
-uv sync                                    # core only
+uv sync                                    # slim
 uv sync --group dev                        # + pytest, ruff, pre-commit
 uv sync --all-extras                       # + extras (flash-attn, flash-attn-cute, …)
 uv sync --all-extras --all-packages        # + all env packages (needed to train on them)
-uv sync --package prime-rl --package gsm8k-v1  # core + just one env
+uv sync --package prime-rl --package gsm8k  # core + just one env
 ```
 
-Environment packages under `deps/research-environments/environments/*/*` and `deps/verifiers/environments/*` are uv **workspace members**, auto-discovered — adding a new env needs no `pyproject.toml` change. They are opt-in: a plain `uv sync` / `--all-extras` does not install them (and would remove them if already present — re-run with `--all-packages`, or `--inexact` to keep them). Install all with `--all-packages`, or a subset with repeated `--package <env>` (include `--package prime-rl` to keep the core). If two envs pin conflicting transitive versions (all members share one lock), add the loser to `[tool.uv.workspace].exclude`.
+`uv sync --group dev` installs the `pre-commit` package but leaves the git hook inert until it's wired up — run `uv run pre-commit install` once per clone (see `README.md`'s Development section).
+
+Environment packages are uv **workspace members**. Those under `deps/prime-envs/environments/*/*` are auto-discovered — adding a new env there needs no `pyproject.toml` change. verifiers' example envs are enumerated explicitly in `[tool.uv.workspace].members` (only the ones prime-rl trains or tests on) — to use another, add its path to the list. Members are opt-in: a plain `uv sync` / `--all-extras` does not install them (and would remove them if already present — re-run with `--all-packages`, or `--inexact` to keep them). Install all with `--all-packages`, or a subset with repeated `--package <env>` (include `--package prime-rl` to keep the core). If two envs pin conflicting transitive versions (all members share one lock), add the loser to `[tool.uv.workspace].exclude`.
 
 When bumping a package past the workspace-wide `exclude-newer = "7 days"` window, add it (and any newly-required transitives) to `[tool.uv.exclude-newer-package]` before refreshing `uv.lock`.
 
 ## Optional extras
 
+### CUDA kernels
+
+Prebuilt wheels, pinned at a release in `[tool.uv.sources]`:
+
+```bash
+uv sync --extra kernels
+```
+
+No plain sync compiles CUDA — building from source stays an explicit, manual step (needs
+`nvcc` whose CUDA major matches torch's and the `deps/prime-kernels` submodule initialized),
+and overrides the wheel until the next sync:
+
+```bash
+git submodule update --init deps/prime-kernels
+uv pip install --no-build-isolation -e deps/prime-kernels
+```
+
+See the `kernels` skill.
+
 ### NemotronH (Mamba SSD kernels)
 
 ```bash
-CUDA_HOME=/usr/local/cuda uv pip install mamba-ssm
+uv sync --extra gpu
 ```
 
-Requires `nvcc`. Without `mamba-ssm`, NemotronH falls back to HF's pure-PyTorch SSD path, which computes softplus in bf16 and yields ~0.4 KL divergence vs vLLM. Do **not** install `causal-conv1d` unless your GPU arch matches the prebuilt kernels — the code falls back to `nn.Conv1d` when it's absent.
+Native NemotronH uses Mamba2 Triton SSD kernels and FLA's packed causal convolution. The pinned `mamba-ssm` source installs without `nvcc`; no separate `causal-conv1d` installation is needed. `uv sync --all-extras` includes these dependencies.
 
 ### Trainer DeepEP backend
 
-`scripts/install_ep_kernels.sh` auto-detects the CUDA toolkit matching torch and the GPU arch, builds NVSHMEM + DeepEP from source, and skips if `deep_ep` already imports.
+The `disagg` extra installs the prebuilt DeepEP wheel pinned in `[tool.uv.sources]`:
 
 ```bash
-bash scripts/install_ep_kernels.sh
+uv sync --extra disagg
 ```
 
-Flags: `--workspace DIR`, `--deepep-ref REF` (default `73b6ea4`), `--nvshmem-ver VER` (default `3.3.24`), `--configure-drivers` (multi-node IBGDA; needs sudo + reboot).
+The prime-kernels repository owns source builds for DeepEP, DeepGEMM, and TorchAO. Use
+its scripts when a local rebuild is required:
+
+```bash
+git submodule update --init deps/prime-kernels
+bash deps/prime-kernels/scripts/install_ep_kernels.sh --wheel-dir /tmp/prime-kernels-wheels
+uv pip install --reinstall --no-deps /tmp/prime-kernels-wheels/deep_ep-*.whl
+```
+
+The build needs a CUDA toolkit whose version matches torch. Set
+`TORCH_CUDA_ARCH_LIST` when the build host has no GPU or when the wheel must support
+more than the local GPU architecture.
 
 Verify: `uv run python -c 'import deep_ep; print(deep_ep.__file__)'`.
 
 ### llm-d router backend
 
-Multi-node / disaggregated deployments can route through the upstream llm-d Endpoint Picker instead of `vllm-router` (set `[...deployment.router] type = "llm-d"`). It needs three native binaries — install once:
+Multi-node / disaggregated deployments can route through the upstream llm-d Endpoint Picker instead of `vllm-router` (set `[inference.router] type = "llm-d"`). It needs three native binaries — install once:
 
 ```bash
 bash scripts/install_llmd.sh   # builds epp + pd-sidecar from a pinned llm-d-router commit (vendored Go), fetches envoy
@@ -70,4 +102,4 @@ Binaries land in `third_party/llmd/bin/{epp,envoy,pd-sidecar}` (a shared path, s
 - `pyproject.toml` — dependencies, extras, dependency groups
 - `uv.lock` — pinned lockfile (refresh with `uv sync --all-extras`)
 - `scripts/install.sh` — bootstrap installer
-- `scripts/install_ep_kernels.sh` — DeepEP build script
+- `deps/prime-kernels/scripts/` — native wheel build scripts

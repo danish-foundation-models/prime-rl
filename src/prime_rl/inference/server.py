@@ -10,15 +10,15 @@ def setup_vllm_env(config: InferenceConfig):
     # spawn is more robust in vLLM nightlies and Qwen3-VL (fork can deadlock with multithreaded processes)
     os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
-    # Force the V1 GPU model runner. vLLM 0.24.0 routes Llama/Mistral/Qwen3 plus MoE archs
-    # (DeepseekV2, Qwen2Moe, GraniteMoe; the 0.23 MoE/quantized guard was removed) to the
-    # V2 runner, which has no `_preprocess` hook for our padded-input scrub (see
-    # inference/vllm/padded_input_scrub.py) and doesn't zero the padded decode tail
-    # itself; that stale tail poisons CUDA-graph replay as NaN logits (reproduced on
-    # Nemotron-Nano SWE, PR #2506; upstream fix vllm#42779 is still unmerged). V1 keeps
-    # the scrub effective for every model and is also required for routed-experts capture
-    # (the NIXL PD path rejects V2). setdefault so it stays overridable.
-    os.environ.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
+    # Standard deployments use V2 for both capture modes. NIXL P/D also uses V2
+    # for sampling-mask capture, but router replay remains on V1 because vLLM
+    # rejects routed-expert capture with KV connectors and prime-rl's stitching
+    # patch is V1-only. setdefault keeps an explicit env-var choice authoritative.
+    if config.enable_return_sampling_mask:
+        os.environ.setdefault("VLLM_USE_V2_MODEL_RUNNER", "1")
+    elif config.vllm.enable_return_routed_experts:
+        use_v2_runner = config.deployment.type != "disaggregated"
+        os.environ.setdefault("VLLM_USE_V2_MODEL_RUNNER", "1" if use_v2_runner else "0")
 
     # vLLM 0.24.0 flipped VLLM_ENFORCE_STRICT_TOOL_CALLING's default to True, which
     # grammar-constrains generation (xgrammar structural tags) for tool_choice
@@ -30,7 +30,7 @@ def setup_vllm_env(config: InferenceConfig):
     os.environ["VLLM_USE_DEEP_GEMM"] = deep_gemm_enabled
     os.environ["VLLM_MOE_USE_DEEP_GEMM"] = deep_gemm_enabled
 
-    if config.enable_lora:
+    if config.vllm.enable_lora:
         os.environ["VLLM_ALLOW_RUNTIME_LORA_UPDATING"] = "True"
 
     if config.log.json_logging:

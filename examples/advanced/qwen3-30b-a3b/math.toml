@@ -20,7 +20,7 @@ job_name = "math-qwen30b"
 [ckpt]
 interval = 100
 
-[wandb]
+[monitors.wandb]
 project = "qwen30b-math"
 
 [trainer.model]
@@ -42,24 +42,28 @@ lr = 1e-6
 
 [orchestrator]
 batch_size = 512
-oversampling_factor = 2
 max_off_policy_steps = 8
+
+[orchestrator.concurrency]
+initial_inflight = 1024
 
 [orchestrator.train.sampling]
 max_completion_tokens = 32768
 
-[[orchestrator.train.env]]
+[[orchestrator.train.source]]
 name = "math"
-env.taskset = { id = "i3_math_v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "i3_math"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
 [orchestrator.eval]
 interval = 25
 
-[[orchestrator.eval.env]]
+[[orchestrator.eval.source]]
 name = "aime2025"
-env.taskset = { id = "aime25-v1" }
-env.agent.harness = { id = "null", runtime = { type = "subprocess" } }
+env.taskset.id = "aime25"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
 
-[inference.parallel]
-tp = 8
+[inference.vllm]
+tensor_parallel_size = 8

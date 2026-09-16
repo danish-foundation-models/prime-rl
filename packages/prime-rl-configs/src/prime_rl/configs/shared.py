@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Annotated, Literal, TypeAlias
 
@@ -10,7 +11,16 @@ from prime_rl.utils.config import BaseConfig
 # and the single shared W&B run. The launcher always sets these last, so allowing them in
 # `env_vars` would be a silent no-op (or, on multi-node, a footgun) — reject them instead.
 PROTECTED_ENV_VARS = frozenset(
-    {"CUDA_VISIBLE_DEVICES", "WANDB_SHARED_MODE", "WANDB_SHARED_RUN_ID", "WANDB_SHARED_LABEL"}
+    {
+        "CUDA_VISIBLE_DEVICES",
+        "PRL_RUN_ID",
+        "PRL_RUN_NAME",
+        "WANDB_RUN_ID",
+        "WANDB_SHARED_MODE",
+        "WANDB_SHARED_LABEL",
+        "WANDB_SHARED_PRIMARY",
+        "WANDB_SHARED_FINISHER",
+    }
 )
 
 
@@ -25,6 +35,47 @@ def reject_protected_env_vars(env_vars: dict[str, str]) -> dict[str, str]:
 
 EnvVars: TypeAlias = Annotated[dict[str, str], AfterValidator(reject_protected_env_vars)]
 """A per-component `env_vars` mapping, validated to not clobber `PROTECTED_ENV_VARS`."""
+
+
+class BaseWeightBroadcastConfig(BaseConfig):
+    timeout: int = 1200
+    """Timeout in seconds for the broadcast handshake and transfer. The trainer
+    fails the run when no consumer acknowledges an offered version in time."""
+
+
+class RunConfig(BaseConfig):
+    name: str | None = None
+    """Run name. Auto-generated as ``<envs>--<model>--<short-id>`` when unset, so every launch gets a fresh, readable run directory; set an explicit name (e.g. an experiment name) to get a predictable run directory, which is also required to resume a previous run. Unless set explicitly, the W&B run name and the Prime platform run name inherit it."""
+
+    dir: str | None = None
+    """Run directory name — the run writes all its artifacts to ``output_dir / dir``. Defaults to ``run.name``; set it only when the directory should differ from the display name."""
+
+
+class ResumeConfig(BaseConfig):
+    """Resume the run from a checkpoint. A bare ``--resume`` (or empty ``[resume]`` block)
+    resumes from the latest checkpoint."""
+
+    step: int | None = Field(None, ge=1)
+    """Checkpoint step to resume from. None resumes from the latest checkpoint."""
+
+    dir: Path | None = None
+    """External checkpoint step directory to resume from (e.g. ``other/run/checkpoints/step_50``) — forks another run's checkpoint into this run. Mutually exclusive with ``step``."""
+
+    @model_validator(mode="after")
+    def validate_step_xor_dir(self):
+        if self.step is not None and self.dir is not None:
+            raise ValueError(
+                "resume.step and resume.dir are mutually exclusive — the step is taken from the directory name"
+            )
+        if self.dir is not None and not re.fullmatch(r"step_\d+", self.dir.name):
+            raise ValueError(f"resume.dir must point at a checkpoint step directory (`.../step_<N>`), got '{self.dir}'")
+        return self
+
+    @property
+    def dir_step(self) -> int:
+        """The step encoded in ``dir``'s name (validated to exist)."""
+        assert self.dir is not None
+        return int(self.dir.name.removeprefix("step_"))
 
 
 class SlurmConfig(BaseConfig):
@@ -54,6 +105,9 @@ class SlurmConfig(BaseConfig):
 
     pre_run_command: str | None = None
     """Shell command to run on the head node after cd, .env sourcing, and venv activation. Useful for cleanup like ``sudo pkill -f vllm``; wrap with ``srun bash -c '...'`` to fan out to all nodes."""
+
+    launch_modelexpress: bool = True
+    """Start a job-scoped ModelExpress service for NIXL weight transfer."""
 
     cleanup_grace_period: int = Field(3600, ge=0)
     """Seconds to wait before tearing down a multi-node RL job that hit a non-zero exit, letting in-flight checkpoints flush. Set to 0 to tear down immediately."""
@@ -108,23 +162,20 @@ class BaseModelConfig(BaseConfig):
     """VLM configuration. Setting this enables vision-language model support."""
 
 
-class ElasticConfig(BaseConfig):
-    hostname: str
-    """DNS hostname that resolves to inference server IPs."""
+class DynamoConfig(BaseConfig):
+    enabled: bool = True
+    """Enable Dynamo worker discovery for the inference admin plane."""
 
-    port: int = 8000
-    """Port that inference servers listen on."""
-
-    sync_interval: float = 5.0
-    """Seconds between server discovery checks."""
+    discovery_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    """Dynamo frontend URL used to discover inference workers for RL control."""
 
 
 class ClientConfig(BaseConfig):
     wait_for_ready_timeout: int = 1800
-    """Seconds to wait at startup for the inference pool to become ready. Applies to both the static health check and elastic DNS-based discovery."""
+    """Seconds to wait at startup for the inference pool to become ready."""
 
-    base_url: list[str] = ["http://localhost:8000/v1"]
-    """Base URLs for the OpenAI API. With more than one URL, the client round-robins (chat) completion requests across all servers. Ignored when ``elastic`` is set."""
+    base_url: str = "http://localhost:8000/v1"
+    """Base URL for the OpenAI API. For multi-replica deployments, point this at a router in front of the replicas."""
 
     api_key_var: str = "VLLM_API_KEY"
     """Environment variable name containing the API key, resolved via ``os.getenv``. Can be any string when the server is not protected by an API key; the same key is used for every URL."""
@@ -135,28 +186,14 @@ class ClientConfig(BaseConfig):
     headers_from_env: dict[str, str] = {}
     """Maps HTTP header names to environment variable names; each entry is resolved via ``os.getenv`` and merged into request headers. e.g. ``{"X-Prime-Team-ID": "PRIME_TEAM_ID"}``."""
 
-    extra_headers_from_state: dict[str, str] = {}
-    """Maps HTTP header names to rollout-state field names. The header value is read from the rollout state dict on every request. e.g. ``{"X-Session-ID": "trajectory_id"}`` enables sticky routing at the inference router."""
-
     skip_model_check: bool = False
     """Skip checking that the model is available in the inference pool. Useful for external APIs or keys that do not expose ``/models``."""
 
-    dp_rank_count: int = Field(1, ge=1)
-    """Number of data-parallel ranks behind each base URL. When > 1, each URL is expanded into ``dp_rank_count`` logical clients pinned via the ``X-data-parallel-rank`` header, so every request within a rollout hits the same DP engine and reuses KV cache. Auto-set from the inference config when using the RL entrypoint."""
-
     admin_base_url: list[str] | None = None
-    """Separate base URLs for admin operations (weight updates, health checks). When set, admin clients bypass routers and hit each server directly — used in disaggregated P/D deployments where the router must not handle admin traffic."""
+    """Separate base URLs for admin operations (weight updates, health checks). When set, admin clients bypass routers and hit each server directly — used in multi-replica or disaggregated P/D deployments where the router must not handle admin traffic."""
 
-    elastic: ElasticConfig | None = None
-    """Elastic inference pool config for DNS-based service discovery. When set, ``base_url`` is ignored and inference servers are discovered dynamically via DNS."""
-
-    router_url: str | None = None
-    """vllm-router URL for load-aware inference routing. With elastic mode, inference requests go through the router while admin ops still hit discovered pods directly."""
-
-    @property
-    def is_elastic(self) -> bool:
-        """Check if elastic mode is enabled."""
-        return self.elastic is not None
+    dynamo: DynamoConfig | None = None
+    """Dynamo RL worker-discovery configuration."""
 
 
 class LogConfig(BaseConfig):
@@ -179,66 +216,6 @@ class LogConfig(BaseConfig):
 class TrainerLogConfig(LogConfig):
     ranks_filter: list[int] = [0]
     """Trainer ranks to show in console output. Passed to ``torchrun --local-ranks-filter``."""
-
-
-class LogExtrasConfig(BaseConfig):
-    samples: bool = True
-    """Log prompt/response samples."""
-
-    distributions: bool = True
-    """Log distributions (rewards, advantages, etc.)."""
-
-    interval: int = Field(10, ge=1)
-    """Step interval between extras logs."""
-
-    sample_ratio: float | None = Field(None, ge=0.0, le=1.0)
-    """Fraction of rollouts to log per step. The effective cap is ``len(rollouts) * sample_ratio``; 1.0 = all, 0.5 = half, 0.0 = none."""
-
-
-class WandbConfig(BaseConfig):
-    # Shared configs (May be overwritten by WandbConfig from `rl.py`)
-    project: str = "prime-rl"
-    """W&B project to log to."""
-
-    entity: str | None = None
-    """W&B entity to log to."""
-
-    name: str | None = None
-    """W&B run name."""
-
-    group: str | None = None
-    """W&B group."""
-
-    tags: list[str] | None = None
-    """W&B tags attached to the run."""
-
-    offline: bool = False
-    """Run W&B in offline mode."""
-
-
-class WandbWithExtrasConfig(WandbConfig):
-    log_extras: LogExtrasConfig | None = LogExtrasConfig()
-    """Extras logging configuration. If None, no extras are logged."""
-
-
-class PrimeMonitorConfig(BaseConfig):
-    base_url: str = "https://api.primeintellect.ai/api/v1/rft"
-    """Base URL for the Prime Intellect monitoring API."""
-
-    api_key_var: str = "PRIME_API_KEY"
-    """Environment variable name containing the Prime Intellect API key, resolved via ``os.getenv``."""
-
-    log_extras: LogExtrasConfig | None = LogExtrasConfig()
-    """Extras logging configuration. If None, no extras are logged."""
-
-    run_name: str | None = None
-    """Run name shown on the platform. Defaults to the W&B run name when set, otherwise the platform auto-generates one."""
-
-    team_id: str | None = None
-    """Team ID to associate the run with."""
-
-    frontend_url: str | None = None
-    """Frontend base URL used for the dashboard link printed after registration. Defaults to the Prime CLI frontend URL when unset."""
 
 
 class HeartbeatConfig(BaseConfig):

@@ -1,7 +1,8 @@
 """Algorithm abstraction: sampling and the per-token training signal.
 
 An algorithm is a named, self-contained config — a discriminated union keyed
-on ``type`` (``grpo``, ``max_rl``, ``opd``, ``opsd``, ``sft``, ``echo``).
+on ``type`` (``grpo``, ``max_rl``, ``rae``, ``hierarchical_grpo``, ``opd``,
+``opsd``, ``sft``, ``echo``, ``debug``).
 The bundle *is* the algorithm: each variant carries
 its sampling component and its credit-assignment / loss-routing parameters,
 and its class defaults are the vetted setting — ``type = "opd"`` with a
@@ -35,6 +36,7 @@ executes them.
 
 from typing import Annotated, Any, ClassVar, Literal, TypeAlias
 
+import verifiers.v1 as vf
 from pydantic import Field, model_validator
 from renderers import AutoRendererConfig, RendererConfig
 
@@ -57,7 +59,7 @@ class FrozenModelConfig(ClientConfig):
 
     @model_validator(mode="after")
     def require_explicit_endpoint(self):
-        if "base_url" not in self.model_fields_set and not self.is_elastic:
+        if "base_url" not in self.model_fields_set:
             raise ValueError(
                 "a frozen model reference needs base_url — frozen models are externally "
                 "hosted; prime-rl only ever hosts the trainable policy."
@@ -188,6 +190,13 @@ class BaseAlgoConfig(BaseConfig):
             )
         return self
 
+    def validate_env(self, env_config: vf.EnvConfig) -> None:
+        """Raise if this algorithm cannot run on the env it is configured for,
+        given that env's resolved config. Most algorithms read only the rollouts
+        and their rewards, so they run on any env and the base does nothing;
+        override where the credit assignment encodes an env's episode structure.
+        Called once per train env after algorithm inheritance resolves."""
+
 
 class GRPOAlgoConfig(BaseAlgoConfig):
     type: Literal["grpo"] = "grpo"
@@ -226,10 +235,63 @@ class MaxRLAlgoConfig(BaseAlgoConfig):
     objective: low-pass-rate examples get ~1/p weight, and ``group_size`` is
     the truncation order interpolating REINFORCE (1) → exact maximum
     likelihood (∞). Designed for non-negative (canonically binary) rewards;
-    a group with mean reward 0 carries zero advantages everywhere (the
-    zero-advantage filter drops it, matching the paper's K=0 convention)."""
+    a group with mean reward 0 carries zero advantages everywhere."""
 
     action_loss_type: ClassVar[ActionLossType] = "rl"
+
+
+class RAEAlgoConfig(BaseAlgoConfig):
+    type: Literal["rae"] = "rae"
+    """RAE — role-conditioned advantage estimation (SPIRAL,
+    https://arxiv.org/abs/2506.24119): scalar advantage = reward minus a
+    per-agent EMA baseline of that agent's own rewards, consumed by the ``rl``
+    loss component. The advantage estimator for multi-agent self-play envs
+    (``kuhn-poker`` and friends): in a zero-sum game the group mean is ~0
+    whatever the policy does, so a group-relative baseline mixes the agents'
+    opposite reward scales — a structural first-mover edge would read as
+    permanent credit. Per-agent baselines measure each agent against its own
+    expected reward instead. Works with any ``group_size`` (including 1)."""
+
+    action_loss_type: ClassVar[ActionLossType] = "rl"
+
+    decay: float = Field(0.95, ge=0.0, lt=1.0)
+    """EMA decay of the per-agent baselines (SPIRAL's α): after a trace is
+    scored, its agent's baseline moves as ``baseline ← decay · baseline +
+    (1 − decay) · reward``. Baselines start at 0 and live in orchestrator
+    memory — a restart re-warms them over ~1/(1 − decay) traces per agent."""
+
+
+class HierarchicalGRPOAlgoConfig(BaseAlgoConfig):
+    type: Literal["hierarchical_grpo"] = "hierarchical_grpo"
+    """GRPO for proposer-solver envs.
+
+    Agents in ``episode_agents`` are compared with same-role attempts on the
+    same proposed problem. Other agents are compared with the same role across
+    proposals generated from one source task. This keeps rewards from different
+    problems and different roles out of the same average."""
+
+    action_loss_type: ClassVar[ActionLossType] = "rl"
+
+    episode_agents: list[str] = Field(min_length=1)
+    """Roles compared within one proposed problem. Use ``["solver"]`` for
+    ``proposer-solver``."""
+
+    def validate_env(self, env_config: vf.EnvConfig) -> None:
+        """Require the proposer-solver structure used by the comparisons."""
+        try:
+            from proposer_solver import ProposerSolverEnvConfig
+        except ImportError as e:
+            raise ValueError(
+                "algorithm 'hierarchical_grpo' requires a proposer-solver env, but the "
+                "proposer-solver package is not installed (`uv sync --all-packages`)."
+            ) from e
+        if not isinstance(env_config, ProposerSolverEnvConfig):
+            raise ValueError(
+                f"algorithm 'hierarchical_grpo' needs a proposer-solver env, but this env resolved to "
+                f"{type(env_config).__name__}. It compares solver attempts on the same proposed "
+                "problem and proposers across proposals. Use 'grpo' for a flat env or 'rae' for "
+                "multi-agent self-play."
+            )
 
 
 class OPDAlgoConfig(BaseAlgoConfig):
@@ -238,8 +300,8 @@ class OPDAlgoConfig(BaseAlgoConfig):
     a reference model, evaluated in the trainer from reference prefill
     logprobs scored over each sample's own context (``ref_logprobs`` on the
     wire, ``ref_kl`` loss component). No scalar advantage is assigned —
-    rollouts keep ``advantages=None`` (advantage-based filters never fire) and
-    samples ship no advantage stream. ``group_size`` only fans out sampling."""
+    rollouts keep ``advantages=None`` and samples ship no advantage stream.
+    ``group_size`` only fans out sampling."""
 
     action_loss_type: ClassVar[ActionLossType] = "ref_kl"
 
@@ -260,8 +322,7 @@ class OPSDAlgoConfig(BaseAlgoConfig):
     prepended as a leading system message. The sample is scored verbatim (no
     re-rendering), so it's robust to tool/multimodal prompts and works for any
     number of turns. No scalar advantage is assigned — rollouts keep
-    ``advantages=None`` (advantage-based filters never fire) and samples ship no
-    advantage stream."""
+    ``advantages=None`` and samples ship no advantage stream."""
 
     action_loss_type: ClassVar[ActionLossType] = "ref_kl"
 
@@ -285,8 +346,8 @@ class SFTAlgoConfig(BaseAlgoConfig):
     type: Literal["sft"] = "sft"
     """SFT distillation: cross-entropy on the sampled tokens. The ``ce`` loss
     ignores advantages and SFT assigns none — it trains on every sampled token.
-    Reward-based filtering, if wanted, is an explicit filter, not smuggled
-    through an unused advantage stream."""
+    A curriculum can reject results using reward or any other finalized
+    rollout data."""
 
     action_loss_type: ClassVar[ActionLossType] = "ce"
 
@@ -304,8 +365,42 @@ class SFTAlgoConfig(BaseAlgoConfig):
         return self
 
 
+class DebugAlgoConfig(BaseAlgoConfig):
+    type: Literal["debug"] = "debug"
+    """Debugging algorithm for infra work: every sampled token of every clean
+    trainable trace gets the same constant ``advantage`` (default 1.0),
+    ignoring rewards entirely. Every admitted rollout is trainable and every
+    action token carries gradient signal, so the full RL path (advantage
+    transport, importance ratios, trust region, optimizer, weight update)
+    can be exercised regardless of the reward function. Not a real training
+    signal — a policy pushed by it drifts monotonically."""
+
+    action_loss_type: ClassVar[ActionLossType] = "rl"
+
+    advantage: float = Field(1.0, allow_inf_nan=False)
+    """The constant per-token advantage. Must be nonzero: a zero advantage
+    makes nothing trainable, the exact failure this debug tool exists to
+    rule out."""
+
+    @model_validator(mode="after")
+    def require_nonzero_advantage(self):
+        if self.advantage == 0.0:
+            raise ValueError(
+                "the 'debug' algorithm needs a nonzero advantage — a zero advantage leaves nothing trainable."
+            )
+        return self
+
+
 AlgoConfig: TypeAlias = Annotated[
-    GRPOAlgoConfig | EchoAlgoConfig | MaxRLAlgoConfig | OPDAlgoConfig | OPSDAlgoConfig | SFTAlgoConfig,
+    GRPOAlgoConfig
+    | EchoAlgoConfig
+    | MaxRLAlgoConfig
+    | RAEAlgoConfig
+    | HierarchicalGRPOAlgoConfig
+    | OPDAlgoConfig
+    | OPSDAlgoConfig
+    | SFTAlgoConfig
+    | DebugAlgoConfig,
     Field(discriminator="type"),
 ]
 """The training algorithm: sampling plus the per-token training signal (credit
@@ -314,10 +409,14 @@ its class defaults are the vetted setting.
 
 - ``grpo`` — policy group sampling, group-relative advantage, RL loss (the default).
 - ``max_rl`` — GRPO with mean-normalized advantages (maximum-likelihood RL).
+- ``rae`` — reward minus a per-agent EMA baseline (SPIRAL), for multi-agent self-play envs.
+- ``hierarchical_grpo`` — GRPO for proposer-solver envs: solvers are compared within one proposed problem and proposers across proposals. Needs ``episode_agents``.
 - ``opd`` — on-policy distillation: policy samples, per-token reverse KL against a reference model. Needs ``teacher``.
 - ``opsd`` — SDFT: policy samples, demo-conditioned reverse KL against the live policy (the teacher is the policy itself).
 - ``sft`` — a frozen model samples, the policy trains with CE on its tokens. Needs a frozen ``sampling.source``.
 - ``echo`` — GRPO on action tokens + weighted CE on tool-response observation tokens.
+- ``debug`` — the same constant advantage on every sampled token, ignoring
+  rewards. Debugging only: for infra work that needs every token trainable.
 
 A new credit-assignment scheme is a new named algorithm in code (subclass
 ``Algorithm``, register it), not a config that points at an import path.

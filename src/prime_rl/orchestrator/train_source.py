@@ -1,64 +1,85 @@
-"""TrainSource: weighted round-robin across train envs, infinite pull.
-
-Weights are each env's configured ``ratio`` (default 1, i.e. equal weight
-per env). A finite env serves a shuffled task-index table, reshuffled on
-cursor exhaustion; an infinite env (``num_tasks is None``) streams a
-monotonic ``task_idx`` — the server generates tasks on demand, so every
-pull is a fresh task and there are no epochs to shuffle."""
+"""Training source selection and curriculum lifecycle."""
 
 from __future__ import annotations
 
 import random
+from collections import defaultdict
+from typing import Any
 
+import verifiers.v1 as vf
+
+from prime_rl.orchestrator.curriculum import Curriculum
 from prime_rl.orchestrator.envs import TrainEnvs
+from prime_rl.orchestrator.types import TaskRequest
+from prime_rl.orchestrator.utils import episode_env_name
 
 
 class TrainSource:
-    """``next_example(available_permits)`` picks a weighted-RR env and
-    returns its next example (or ``None`` when the env's per-call permit
-    cost doesn't fit — the dispatch loop retries when permits free up).
-    Returned dicts carry ``env_name`` + ``task_idx``."""
+    """Mix train envs and host one user-authored curriculum per env."""
 
-    def __init__(self, train_envs: TrainEnvs, *, seed: int | None) -> None:
-        self.rng = random.Random(seed)
+    def __init__(self, train_envs: TrainEnvs) -> None:
+        self.rng = random.Random(42)
         self.envs = list(train_envs)
         if not self.envs:
             raise ValueError("TrainSource needs at least one train env")
 
-        # A finite env's shuffled index table; ``None`` for an infinite env,
-        # whose cursor alone is the (monotonic) task_idx stream.
-        self.examples: dict[str, list[dict] | None] = {}
-        self.cursors: dict[str, int] = {}
-        # Group-scoring envs reserve ``group_size`` permits up front;
-        # per-rollout envs need 1
-        self.env_costs: dict[str, int] = {}
+        self.curricula: dict[str, Curriculum] = {}
         for env in self.envs:
-            # The orchestrator never loads the env: sample over the task-index
-            # range the server reported via info() (num_tasks; None = infinite).
-            if env.num_tasks is None:
-                self.examples[env.name] = None
-            else:
-                rows: list[dict] = [{"task_idx": i, "env_name": env.name} for i in range(env.num_tasks)]
-                self.rng.shuffle(rows)
-                self.examples[env.name] = rows
-            self.cursors[env.name] = 0
-            self.env_costs[env.name] = env.config.group_size if env.requires_group_scoring else 1
+            if env.tasks is None:
+                raise RuntimeError(f"env {env.name} not started")
+            tasks = env.tasks if env.num_tasks is None else list(env.tasks)
+            self.curricula[env.name] = Curriculum(env.config.curriculum, tasks)
 
-        self.env_names = [e.name for e in self.envs]
-        self.weights: list[float] = [float(e.config.ratio) for e in self.envs]
+        self.env_names = [env.name for env in self.envs]
+        self.weights = [float(env.config.ratio) for env in self.envs]
+        self._admitted: dict[str, int] = defaultdict(int)
+        self._rejected: dict[str, int] = defaultdict(int)
 
-    def next_example(self, available_permits: int) -> dict | None:
+    def next_task(self, *, step: int) -> TaskRequest:
         env_name = self.rng.choices(self.env_names, weights=self.weights, k=1)[0]
-        if self.env_costs[env_name] > available_permits:
-            return None
-        rows = self.examples[env_name]
-        cursor = self.cursors[env_name]
-        if rows is None:  # infinite env: the cursor is the task_idx
-            self.cursors[env_name] = cursor + 1
-            return {"task_idx": cursor, "env_name": env_name}
-        if cursor >= len(rows):
-            self.rng.shuffle(rows)
-            cursor = 0
-        example = rows[cursor]
-        self.cursors[env_name] = cursor + 1
-        return example
+        return TaskRequest(env_name=env_name, task=next(self.curricula[env_name].sampler), step=step)
+
+    def on_result(self, group: list[vf.Episode]) -> bool:
+        """Report a finalized group and return whether it should train."""
+        if not group:
+            raise ValueError("Cannot report an empty rollout group")
+        env_name = episode_env_name(group[0])
+        admitted = self.curricula[env_name].on_result(group)
+        if not isinstance(admitted, bool):
+            raise TypeError(f"Curriculum.on_result() must return bool, got {type(admitted).__name__}")
+        if admitted:
+            self._admitted[env_name] += 1
+        else:
+            self._rejected[env_name] += 1
+        return admitted
+
+    def metrics(self) -> dict[str, float]:
+        metrics: dict[str, float] = {}
+        for env_name, curriculum in self.curricula.items():
+            admitted = self._admitted.pop(env_name, 0)
+            rejected = self._rejected.pop(env_name, 0)
+            total = admitted + rejected
+            if total:
+                metrics[f"curriculum/{env_name}/admission_rate"] = admitted / total
+            metrics |= {f"curriculum/{env_name}/{name}": float(value) for name, value in curriculum.metrics().items()}
+        return metrics
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "rng": self.rng.getstate(),
+            "envs": {name: curriculum.state_dict() for name, curriculum in self.curricula.items()},
+        }
+
+    def load_state_dict(self, state_dict: dict[str, Any]) -> None:
+        expected_fields = {"rng", "envs"}
+        if set(state_dict) != expected_fields:
+            raise ValueError(f"Train-source checkpoint fields must be {sorted(expected_fields)}")
+        env_states = state_dict["envs"]
+        if set(env_states) != set(self.curricula):
+            raise ValueError(
+                f"Train-source checkpoint envs {sorted(env_states)} do not match configured envs "
+                f"{sorted(self.curricula)}"
+            )
+        self.rng.setstate(state_dict["rng"])
+        for name, curriculum in self.curricula.items():
+            curriculum.load_state_dict(env_states[name])

@@ -18,9 +18,10 @@ from prime_rl.trainer.models.laguna.configuration_laguna import LagunaConfig
 from prime_rl.trainer.models.laguna.converting_laguna import conversion_chain
 from prime_rl.trainer.models.layers.attn import AttentionConfig, FlashAttention
 from prime_rl.trainer.models.layers.lm_head import PrimeLmOutput
-from prime_rl.trainer.models.layers.mlp import MLP, MLPConfig
-from prime_rl.trainer.models.layers.moe import FeedForward, MoE, MoEArgs
+from prime_rl.trainer.models.layers.mlp import FeedForward
+from prime_rl.trainer.models.layers.moe import MoE, MoEArgs
 from prime_rl.trainer.models.layers.norms import RMSNorm, RMSNormConfig
+from prime_rl.trainer.models.layers.rotary_emb import apply_rotary_pos_emb
 from prime_rl.utils.sequence import get_cu_seqlens_from_seq_lens
 
 
@@ -106,7 +107,16 @@ class LagunaFlashAttention(FlashAttention):
         self.attention_dropout = config.attention_dropout
         self.is_local_attention = config.layer_types[layer_idx] == "sliding_attention"
         self.sliding_window = config.sliding_window if self.is_local_attention else None
-        self.g_proj = nn.Linear(config.hidden_size, num_heads, bias=False)
+        # Attention output gating, mirroring the upstream Laguna implementation:
+        #   True / "per-element" (Laguna M): one gate per (head, head_dim) channel
+        #   "per-head"           (Laguna S): one gate per head, broadcast across head_dim
+        #   False:                           no gating
+        gating = getattr(config, "gating", True)
+        self.gating = bool(gating)
+        self.gate_per_head = gating == "per-head"
+        if self.gating:
+            gate_size = num_heads if self.gate_per_head else num_heads * self.head_dim
+            self.g_proj = nn.Linear(config.hidden_size, gate_size, bias=False)
         self.o_proj = nn.Linear(num_heads * self.head_dim, config.hidden_size, bias=config.attention_bias)
 
     def forward(
@@ -117,18 +127,44 @@ class LagunaFlashAttention(FlashAttention):
         cu_seqlens: torch.LongTensor | None = None,
         max_seqlen: int | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        query_states, key_states, value_states = self.attn_projections(hidden_states, position_embeddings)
-        attn_output = self._attention_core(
-            query_states,
-            key_states,
-            value_states,
-            cu_seqlens=cu_seqlens,
-            max_seqlen=max_seqlen,
-        )
         input_shape = hidden_states.shape[:-1]
-        attn_output = attn_output.view(*input_shape, self.num_heads, self.head_dim)
-        gate = F.softplus(self.g_proj(hidden_states).float()).to(attn_output.dtype)
-        attn_output = (attn_output * gate.unsqueeze(-1)).view(*input_shape, -1)
+        hidden_shape = (*input_shape, -1, self.head_dim)
+
+        query_states, key_states, value_states = self.project_qkv(hidden_states)
+
+        if self.use_qk_norm and self.qk_norm_type == "per_layer":
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)
+
+        query_states = query_states.view(hidden_shape)
+        key_states = key_states.view(hidden_shape)
+        value_states = value_states.view(hidden_shape)
+
+        if self.use_qk_norm and self.qk_norm_type == "per_head":
+            query_states = self.q_norm(query_states)
+            key_states = self.k_norm(key_states)
+
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
+
+        if position_embeddings is not None:
+            cos, sin = position_embeddings
+            query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin)
+
+        query_states = query_states.transpose(1, 2)
+        key_states = key_states.transpose(1, 2)
+        value_states = value_states.transpose(1, 2)
+
+        attn_output = self._compute_attention(query_states[0], key_states[0], value_states[0], cu_seqlens, max_seqlen)
+        attn_output = attn_output.contiguous().view(*input_shape, self.num_heads, self.head_dim)
+        if self.gating:
+            gate = F.softplus(self.g_proj(hidden_states).float()).to(attn_output.dtype)
+            # per-head gates broadcast across head_dim; per-element gates are already
+            # one-per-channel and line up with the [..., num_heads, head_dim] view.
+            gate = gate.unsqueeze(-1) if self.gate_per_head else gate.view(*attn_output.shape)
+            attn_output = attn_output * gate
+        attn_output = attn_output.view(*input_shape, -1)
         return self.o_proj(attn_output), None
 
 
@@ -157,32 +193,34 @@ class LagunaDecoderLayer(GradientCheckpointingLayer):
         if self.mlp_layer_type == "sparse":
             moe_args = MoEArgs(
                 num_experts=config.num_experts,
-                num_shared_experts=0,
+                expert_type="gated",
+                activation=config.hidden_act,
                 score_func="sigmoid",
                 route_norm=True,
                 route_scale=config.moe_routed_scaling_factor,
                 score_before_experts=False,
                 top_k=config.num_experts_per_tok,
-                use_grouped_mm=config.use_grouped_mm,
                 load_balance_coeff=config.load_balance_coeff,
-                fp8=getattr(config, "fp8", False),
             )
             if config.moe_router_logit_softcapping:
                 raise NotImplementedError("Laguna router logit softcapping is not supported by PrimeRL MoE yet.")
-            self.mlp = MoE(moe_args, dim=config.hidden_size, hidden_dim=config.moe_intermediate_size)
-            self.shared_expert = FeedForward(
+            self.mlp = MoE.from_args(
+                moe_args,
                 dim=config.hidden_size,
-                hidden_dim=config.shared_expert_intermediate_size,
+                hidden_dim=config.moe_intermediate_size,
+                shared_expert=FeedForward(
+                    dim=config.hidden_size,
+                    hidden_dim=config.shared_expert_intermediate_size,
+                    expert_type=moe_args.expert_type,
+                    activation=moe_args.activation,
+                ),
             )
         else:
-            mlp_config = MLPConfig(
-                hidden_size=config.hidden_size,
-                intermediate_size=config.intermediate_size,
-                gate_act=config.hidden_act,
-                bias=False,
+            self.mlp = FeedForward(
+                dim=config.hidden_size,
+                hidden_dim=config.intermediate_size,
+                activation=config.hidden_act,
             )
-            self.mlp = MLP(mlp_config)
-            self.shared_expert = None
 
         self.input_layernorm = RMSNorm(RMSNormConfig(hidden_size=config.hidden_size, eps=config.rms_norm_eps))
         self.post_attention_layernorm = RMSNorm(RMSNormConfig(hidden_size=config.hidden_size, eps=config.rms_norm_eps))
@@ -210,10 +248,6 @@ class LagunaDecoderLayer(GradientCheckpointingLayer):
         residual = hidden_states
         mlp_input = self.post_attention_layernorm(hidden_states)
         hidden_states = self.mlp(mlp_input, routed_experts=routed_experts)
-        if self.shared_expert is not None:
-            bs, slen, dim = hidden_states.shape
-            shared_output = self.shared_expert(mlp_input.view(-1, dim)).view(bs, slen, dim)
-            hidden_states = hidden_states + shared_output
         hidden_states = residual + hidden_states
         return hidden_states
 
@@ -243,7 +277,7 @@ class LagunaPreTrainedModel(PreTrainedModelPrimeRL):
 
     @classmethod
     def is_prime_state_dict(cls, state_dict: dict[str, Tensor]) -> bool:
-        return any("mlp.experts.w1" in name for name in state_dict)
+        return any("mlp.experts.gate_proj" in name for name in state_dict)
 
     @classmethod
     def conversion_chain(cls, config):
@@ -388,8 +422,8 @@ class LagunaForCausalLM(LagunaPreTrainedModel, GenerationMixin):
         for module in self.modules():
             if isinstance(module, MoE) and module.tokens_per_expert.device.type != "meta":
                 module.tokens_per_expert.zero_()
-                if module.expert_bias is not None:
-                    module.expert_bias.zero_()
+                if module.router.selection_bias is not None:
+                    module.router.selection_bias.zero_()
 
 
 __all__ = [
