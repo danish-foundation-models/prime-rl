@@ -1,4 +1,5 @@
 import asyncio
+import os
 from argparse import Namespace
 
 import uvloop
@@ -189,6 +190,11 @@ def custom_build_app(args: Namespace, supported_tasks: tuple, model_config=None)
     """
     app = _original_build_app(args, supported_tasks, model_config)
     app.include_router(router)
+    if os.environ.get("PRIME_RL_CACHE_DIAGNOSTICS") == "1":
+        # Enabling all vLLM dev routes would shadow PRIME's /update_weights.
+        from vllm.entrypoints.serve.dev.cache.api_router import router as cache_router
+
+        app.include_router(cache_router)
     return app
 
 

@@ -1,0 +1,1758 @@
+# Full publisher task pools; task images prepared on demand, without oracle admission gates.
+# Pilot: 16 trainer nodes (SFT topology), eight TP8 inference replicas.
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training"
+clean = false
+max_steps = 20
+seq_len = 131072
+
+[run]
+name = "rl-super-r5-step2619-sc-pilot20-r22-20260920"
+
+[deployment]
+type = "multi_node"
+num_train_nodes = 16
+num_infer_nodes = 1
+num_infer_replicas = 8
+gpus_per_node = 8
+orchestrator_on_inference = true
+
+[slurm]
+exclude = "nid006371"
+job_name = "super-rl-sc-pilot-r22"
+template_path = "src/prime_rl/templates/multi_node_rl_lumi.sbatch.j2"
+partition = "standard-g"
+account = "project_465002751"
+time = "06:00:00"
+cleanup_grace_period = 60
+
+[model]
+name = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-base-r5-16n-cp8-ep8-bs32-lr1e5-r1/eval-exports/step_2619"
+
+[weight_broadcast]
+type = "nccl"
+timeout = 1800
+
+[trainer]
+enable_router_replay = false
+dist_timeout_seconds = 1800
+
+[trainer.model]
+conversion_dir = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-final-sc-20260919/conversion"
+attn = "flash_attention_2"
+impl = "custom"
+optim_cpu_offload = false
+fsdp_cpu_offload = false
+ac_offloading = "None"
+reshard_after_forward = true
+ep = 8
+cp = 8
+cp_style = "ulysses"
+fused_lm_head_token_chunk_size = 2048
+
+[trainer.model.ac]
+mode = "full"
+
+[trainer.model.compile]
+fullgraph = false
+
+[trainer.optim]
+type = "adamw"
+lr = 1e-6
+weight_decay = 0.1
+max_norm = 1.0
+
+[trainer.loss]
+type = "score_centering"
+top_k = 32
+importance_sampling = "none"
+
+[orchestrator]
+batch_size = 64
+group_size = 8
+max_off_policy_steps = 5
+
+[orchestrator.concurrency]
+initial_inflight = 256
+min_inflight = 128
+max_inflight = 512
+
+[orchestrator.renderer]
+name = "nemotron-3"
+enable_thinking = true
+truncate_history_thinking = false
+low_effort = false
+
+[orchestrator.algo]
+type = "grpo"
+
+[orchestrator.train.sampling]
+reasoning_effort = "high"
+temperature = 1.0
+max_completion_tokens = 4096
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "scaleswe-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "scaleswe"
+env.taskset.filter_unavailable_images = false
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr247', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "scaleswe-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "scaleswe"
+env.taskset.filter_unavailable_images = false
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr247', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "scaleswe-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "scaleswe"
+env.taskset.filter_unavailable_images = false
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr247', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "scaleswe-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "scaleswe"
+env.taskset.filter_unavailable_images = false
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr247', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "r2e-gym-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "r2e-gym"
+env.taskset.filter_fn = "lambda row: row.get('commit_hash') not in ['71b7f3daf388e7657f58bc05d2105dce0cdf12f0', '948f95756c79543bb089a94a85e73011a3730b2d', '99cddecd2812b142dc9d7fb05870745b6595896b', 'fef3ceb2c02ef241a508ee020fe2617e10e33e42']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "r2e-gym-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "r2e-gym"
+env.taskset.filter_fn = "lambda row: row.get('commit_hash') not in ['71b7f3daf388e7657f58bc05d2105dce0cdf12f0', '948f95756c79543bb089a94a85e73011a3730b2d', '99cddecd2812b142dc9d7fb05870745b6595896b', 'fef3ceb2c02ef241a508ee020fe2617e10e33e42']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "r2e-gym-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "r2e-gym"
+env.taskset.filter_fn = "lambda row: row.get('commit_hash') not in ['71b7f3daf388e7657f58bc05d2105dce0cdf12f0', '948f95756c79543bb089a94a85e73011a3730b2d', '99cddecd2812b142dc9d7fb05870745b6595896b', 'fef3ceb2c02ef241a508ee020fe2617e10e33e42']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "r2e-gym-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "r2e-gym"
+env.taskset.filter_fn = "lambda row: row.get('commit_hash') not in ['71b7f3daf388e7657f58bc05d2105dce0cdf12f0', '948f95756c79543bb089a94a85e73011a3730b2d', '99cddecd2812b142dc9d7fb05870745b6595896b', 'fef3ceb2c02ef241a508ee020fe2617e10e33e42']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swelego-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swelego"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['ResearchObject__ro-crate-py-169', 'encode__starlette-1041', 'fgmacedo__python-statemachine-392', 'pydata__xarray-3173', 'sphinx-doc__sphinx-5203', 'sympy__sympy-13553', 'sympy__sympy-13726', 'sympy__sympy-14278', 'sympy__sympy-15338', 'sympy__sympy-15602', 'sympy__sympy-17635', 'sympy__sympy-24219']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swelego-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swelego"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['ResearchObject__ro-crate-py-169', 'encode__starlette-1041', 'fgmacedo__python-statemachine-392', 'pydata__xarray-3173', 'sphinx-doc__sphinx-5203', 'sympy__sympy-13553', 'sympy__sympy-13726', 'sympy__sympy-14278', 'sympy__sympy-15338', 'sympy__sympy-15602', 'sympy__sympy-17635', 'sympy__sympy-24219']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swelego-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swelego"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['ResearchObject__ro-crate-py-169', 'encode__starlette-1041', 'fgmacedo__python-statemachine-392', 'pydata__xarray-3173', 'sphinx-doc__sphinx-5203', 'sympy__sympy-13553', 'sympy__sympy-13726', 'sympy__sympy-14278', 'sympy__sympy-15338', 'sympy__sympy-15602', 'sympy__sympy-17635', 'sympy__sympy-24219']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swelego-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swelego"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['ResearchObject__ro-crate-py-169', 'encode__starlette-1041', 'fgmacedo__python-statemachine-392', 'pydata__xarray-3173', 'sphinx-doc__sphinx-5203', 'sympy__sympy-13553', 'sympy__sympy-13726', 'sympy__sympy-14278', 'sympy__sympy-15338', 'sympy__sympy-15602', 'sympy__sympy-17635', 'sympy__sympy-24219']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "multiswe-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "multiswe"
+env.taskset.resources = { cpu = 4, memory = 8, disk = 20 }
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "multiswe-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "multiswe"
+env.taskset.resources = { cpu = 4, memory = 8, disk = 20 }
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "multiswe-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "multiswe"
+env.taskset.resources = { cpu = 4, memory = 8, disk = 20 }
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "multiswe-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "multiswe"
+env.taskset.resources = { cpu = 4, memory = 8, disk = 20 }
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "terminal-lego-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "terminal-lego"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/terminal-lego.jsonl"
+env.taskset.require_image = true
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "terminal-lego-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "terminal-lego"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/terminal-lego.jsonl"
+env.taskset.require_image = true
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "terminal-lego-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "terminal-lego"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/terminal-lego.jsonl"
+env.taskset.require_image = true
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "terminal-lego-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "terminal-lego"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/terminal-lego.jsonl"
+env.taskset.require_image = true
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swesmith-env-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swesmith-env"
+env.taskset.revisions.php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
+env.taskset.revisions.cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
+env.taskset.revisions.rs = "1ae20d63edd611309d86133466247e3a9723a27d"
+env.taskset.revisions.ts = "c243d86f112d01b8507d311af912668aa1d74449"
+env.taskset.revisions.js = "d6aeb41ba9fb045c39e1c6d2322a8f08ee31cef4"
+env.taskset.revisions.java = "1172df9919a8232e066562dfdb6e0193156de0c4"
+env.taskset.revisions.go = "d2f6ecc2cf8ae1af00fc790801bbacfa2913e015"
+env.taskset.revisions.py = "77cab9055d42ab4a5c25c89a8f937096db13558e"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swesmith-env-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swesmith-env"
+env.taskset.revisions.php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
+env.taskset.revisions.cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
+env.taskset.revisions.rs = "1ae20d63edd611309d86133466247e3a9723a27d"
+env.taskset.revisions.ts = "c243d86f112d01b8507d311af912668aa1d74449"
+env.taskset.revisions.js = "d6aeb41ba9fb045c39e1c6d2322a8f08ee31cef4"
+env.taskset.revisions.java = "1172df9919a8232e066562dfdb6e0193156de0c4"
+env.taskset.revisions.go = "d2f6ecc2cf8ae1af00fc790801bbacfa2913e015"
+env.taskset.revisions.py = "77cab9055d42ab4a5c25c89a8f937096db13558e"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swesmith-env-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swesmith-env"
+env.taskset.revisions.php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
+env.taskset.revisions.cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
+env.taskset.revisions.rs = "1ae20d63edd611309d86133466247e3a9723a27d"
+env.taskset.revisions.ts = "c243d86f112d01b8507d311af912668aa1d74449"
+env.taskset.revisions.js = "d6aeb41ba9fb045c39e1c6d2322a8f08ee31cef4"
+env.taskset.revisions.java = "1172df9919a8232e066562dfdb6e0193156de0c4"
+env.taskset.revisions.go = "d2f6ecc2cf8ae1af00fc790801bbacfa2913e015"
+env.taskset.revisions.py = "77cab9055d42ab4a5c25c89a8f937096db13558e"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swesmith-env-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swesmith-env"
+env.taskset.revisions.php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
+env.taskset.revisions.cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
+env.taskset.revisions.rs = "1ae20d63edd611309d86133466247e3a9723a27d"
+env.taskset.revisions.ts = "c243d86f112d01b8507d311af912668aa1d74449"
+env.taskset.revisions.js = "d6aeb41ba9fb045c39e1c6d2322a8f08ee31cef4"
+env.taskset.revisions.java = "1172df9919a8232e066562dfdb6e0193156de0c4"
+env.taskset.revisions.go = "d2f6ecc2cf8ae1af00fc790801bbacfa2913e015"
+env.taskset.revisions.py = "77cab9055d42ab4a5c25c89a8f937096db13558e"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "openswe-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "openswe"
+env.taskset.workdir_overrides = { "ansible-collections__hetzner.hcloud-161" = "/ansible_collections/hetzner/hcloud", "nosarthur__gita-236" = "/gita" }
+env.taskset.revision = "a8db93af5335df2c8baac0cd1ff367e4d475d3d7"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "openswe-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "openswe"
+env.taskset.workdir_overrides = { "ansible-collections__hetzner.hcloud-161" = "/ansible_collections/hetzner/hcloud", "nosarthur__gita-236" = "/gita" }
+env.taskset.revision = "a8db93af5335df2c8baac0cd1ff367e4d475d3d7"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "openswe-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "openswe"
+env.taskset.workdir_overrides = { "ansible-collections__hetzner.hcloud-161" = "/ansible_collections/hetzner/hcloud", "nosarthur__gita-236" = "/gita" }
+env.taskset.revision = "a8db93af5335df2c8baac0cd1ff367e4d475d3d7"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "openswe-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "openswe"
+env.taskset.workdir_overrides = { "ansible-collections__hetzner.hcloud-161" = "/ansible_collections/hetzner/hcloud", "nosarthur__gita-236" = "/gita" }
+env.taskset.revision = "a8db93af5335df2c8baac0cd1ff367e4d475d3d7"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swerebench-v2-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swerebench-v2"
+env.taskset.revision = "03cc767ee33126b7fc7890ad57047e9dd6914cca"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swerebench-v2-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swerebench-v2"
+env.taskset.revision = "03cc767ee33126b7fc7890ad57047e9dd6914cca"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swerebench-v2-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swerebench-v2"
+env.taskset.revision = "03cc767ee33126b7fc7890ad57047e9dd6914cca"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swerebench-v2-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swerebench-v2"
+env.taskset.revision = "03cc767ee33126b7fc7890ad57047e9dd6914cca"
+env.taskset.split = "train"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "tmax-opencode"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "tmax"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/tmax.jsonl"
+env.taskset.require_image = true
+env.taskset.task_root = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/expanded-sources/prime-tasks/datasets/tmax"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "opencode"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/opencode-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "tmax-pi"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "tmax"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/tmax.jsonl"
+env.taskset.require_image = true
+env.taskset.task_root = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/expanded-sources/prime-tasks/datasets/tmax"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "pi"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/pi-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "tmax-prime-agent"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "tmax"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/tmax.jsonl"
+env.taskset.require_image = true
+env.taskset.task_root = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/expanded-sources/prime-tasks/datasets/tmax"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "prime-agent"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.offline_harness_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/prime-agent-assets.tar.gz"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "tmax-bash"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "tmax"
+env.taskset.task_data_file = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata/tmax.jsonl"
+env.taskset.require_image = true
+env.taskset.task_root = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/expanded-sources/prime-tasks/datasets/tmax"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 7500.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/images.v6.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/image-cache"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.allow = []
+env.agent.runtime.block = ["*"]
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 512
+
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "bird-sql"
+ratio = 1.0
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "text2sql"
+env.taskset.dataset = "bird"
+env.taskset.data_dir = "/scratch/project_465002751/oliver/data/bird"
+env.taskset.split = "train"
+env.taskset.db_split = "train"
+env.taskset.max_examples = -1
+env.taskset.task.mode = "agentic"
+env.agent.harness.id = "text2sql"
+env.agent.runtime.type = "subprocess"
+env.agent.max_turns = 10
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 64
+
+[inference]
+use_deep_gemm = false
+enable_fp32_lm_head = true
+enable_fp32_router_logits = true
+
+# Host prefix cache: aggregate across the eight TP workers on each node.
+[inference.kv_cache_offload]
+type = "native"
+[inference.kv_cache_offload.cpu]
+num_bytes = 206158430208 # 192 GiB per inference replica/node
+
+[inference.deployment]
+type = "multi_node"
+num_nodes = 1
+gpus_per_node = 8
+
+[inference.router]
+type = "llm-d"
+
+[inference.router.scorers]
+kv-cache-utilization-scorer = 3.0
+queue-scorer = 2.0
+active-request-scorer = 1.0
+prefix-cache-scorer = 1.0
+
+[inference.vllm]
+# Validated with empty and 81%-occupied reloads plus isolated 128K output parity.
+kv_cache_memory_bytes = 15032385536
+worker_cls = "dfm_evals.nemotron_worker.VerifiedSuperWorker"
+attention_backend = "ROCM_AITER_FA"
+safetensors_load_strategy = "prefetch"
+trust_remote_code = true
+dtype = "bfloat16"
+max_model_len = 131072
+tool_call_parser = "qwen3_coder"
+reasoning_parser = "nemotron_v3"
+tensor_parallel_size = 8
+data_parallel_size = 1
+enable_prefix_caching = true
+mamba_cache_mode = "align"
+gpu_memory_utilization = 0.65
+enable_expert_parallel = true
+all2all_backend = "allgather_reducescatter"
+enable_eplb = false
+enable_dbo = false
+language_model_only = true
+max_num_batched_tokens = 32768
+max_num_seqs = 64
+block_size = 2048
+mamba_ssm_cache_dtype = "float32"
+
+[ckpt]
+interval = 10
+
+[monitors.file]
+
+[log]
+level = "info"
+
+[orchestrator.eval]
+interval = 10
+num_examples = 4
+group_size = 1
+skip_first_step = false
+
+[orchestrator.eval.sampling]
+reasoning_effort = "high"
+temperature = 1.0
+max_completion_tokens = 4096
+
+[[orchestrator.eval.source]]
+name = "scaleswe-heldout"
+env.taskset.id = "scaleswe"
+env.taskset.filter_unavailable_images = false
+env.taskset.filter_fn = "lambda row: row.get('instance_id') in ['miguelgrinberg_flask-migrate_pr523', 'materialsvirtuallab_monty_pr152', 'k2-fsa_sherpa-onnx_pr247', 'spyoungtech_json-five_pr19']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 2
+
+[[orchestrator.eval.source]]
+name = "r2e-gym-heldout"
+env.taskset.id = "r2e-gym"
+env.taskset.filter_fn = "lambda row: row.get('commit_hash') in ['71b7f3daf388e7657f58bc05d2105dce0cdf12f0', 'fef3ceb2c02ef241a508ee020fe2617e10e33e42', '99cddecd2812b142dc9d7fb05870745b6595896b', '948f95756c79543bb089a94a85e73011a3730b2d']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 2
+
+[[orchestrator.eval.source]]
+name = "swelego-heldout"
+env.taskset.id = "swelego"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') in ['encode__starlette-1041', 'sphinx-doc__sphinx-5203', 'fgmacedo__python-statemachine-392', 'ResearchObject__ro-crate-py-169']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 2
+
+
+[[orchestrator.eval.source]]
+name = "swebench-verified"
+num_examples = 32
+interval = 20
+env.taskset.id = "swebench-verified"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "swebench-multilingual"
+num_examples = 24
+interval = 20
+env.taskset.id = "swebench-multilingual"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "terminal-bench-2"
+num_examples = 16
+interval = 20
+env.taskset.id = "terminal-bench-2"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "openthoughts-tblite"
+num_examples = 16
+interval = 10
+env.taskset.id = "openthoughts-tblite"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/eval-images-v2.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/eval-image-cache"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "senior-swe-bench-glm53-judge"
+num_examples = 10
+interval = 20
+env.taskset.id = "senior-swe-bench"
+env.taskset.task.upstream_judges = true
+env.taskset.task.judge_client.base_url = "https://inference.alexandra.dk/v1"
+env.taskset.task.judge_client.api_key_var = "ALEXANDRA_API_KEY"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 1800.0
+env.agent.timeout.scoring = 1800.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.image_recipe_db = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/eval-images-v2.sqlite"
+env.agent.runtime.image_build_cache = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/eval-image-cache"
+env.agent.runtime.parkable = true
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-harness-v3/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-step2619-sc-pilot20-r22-20260920"
+env.agent.runtime.creates_per_sec = 0.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 16
+
+
+[[orchestrator.eval.source]]
+name = "bird-dev-sql"
+num_examples = 64
+interval = 10
+env.taskset.id = "text2sql"
+env.taskset.dataset = "bird"
+env.taskset.data_dir = "/scratch/project_465002751/oliver/data/bird"
+env.taskset.split = "dev"
+env.taskset.db_split = "dev"
+env.taskset.max_examples = -1
+env.taskset.task.mode = "agentic"
+env.agent.harness.id = "text2sql"
+env.agent.runtime.type = "subprocess"
+env.agent.max_turns = 10
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 64
+
+[env_vars]
+SSB_OVERRIDE_ALL_JUDGE_MODEL = "openai/glm-5.3-flash"
+SSB_OVERRIDE_CLASSIFIER_MODEL = "openai/glm-5.3-flash"
+SSB_OVERRIDE_VA_MODEL = "openai/glm-5.3-flash"
+PRIME_RL_ENVIRONMENT_SITE_PACKAGES = "/scratch/project_465002751/rasmus/.runtime/layers/swesmith-9b74ac0-validate-v1"
+HF_DATASETS_OFFLINE = "1"
+NCCL_DEBUG = "INFO"
+NCCL_DEBUG_SUBSYS = "INIT,NET"
+PYTHONFAULTHANDLER = "1"
+PRIME_RL_FAIL_ON_INFERENCE_EXIT = "1"
+NCCL_DMABUF_ENABLE = "0"
+TORCH_NCCL_HIGH_PRIORITY = "1"
+GPU_MAX_HW_QUEUES = "2"
+PRIME_RL_WEIGHT_NCCL_ALGO = "Ring"
+PRIME_RL_WEIGHT_NCCL_PROTO = "Simple"
+PRIME_RL_WEIGHT_HIGH_PRIORITY = "1"
+PRIME_RL_WEIGHT_BUCKET_BYTES = "268435456"
+PRIME_RL_PAUSE_NCCL_INIT = "1"
+
+[trainer.env_vars]
+HSA_ENABLE_SDMA = "1"
+PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+HF_HUB_OFFLINE = "1"
+TORCHINDUCTOR_CACHE_DIR = "/scratch/project_465002751/rasmus/.cache/torchinductor/rl-main-t211"
+
+[inference.env_vars]
+PRIME_RL_RELOAD_FILTER_NEMOTRON_EXPERTS = "1"
+PRIME_RL_RELOAD_SKIP_MOE_EMPTY_CACHE = "1"
+PRIME_RL_RELOAD_SKIP_BUFFER_DIAGNOSTICS = "1"
+HSA_ENABLE_SDMA = "0"
+PRIME_RL_SUPER_PROFILE = "/scratch/project_465002751/rasmus/artifacts/runtime/nemotron-super-production-reload/2c274f9dbb00008c"

@@ -27,12 +27,27 @@ class StandardSampler(TaskSampler):
             self.task_iterator = itertools.cycle(self.tasks)
         else:
             self.task_iterator = tasks
+        self.task_keys = tuple(keys) if self.tasks is not None else ()
+        self.excluded_keys: set[str] = set()
         self.cursor = 0
 
     def __next__(self) -> vf.Task:
-        task = next(self.task_iterator)
-        self.cursor += 1
-        return task
+        if not self.has_available_tasks:
+            raise StopIteration
+        while True:
+            index = self.cursor % len(self.tasks) if self.tasks is not None else None
+            task = next(self.task_iterator)
+            self.cursor += 1
+            key = self.task_keys[index] if index is not None else task.key
+            if key not in self.excluded_keys:
+                return task
+
+    @property
+    def has_available_tasks(self) -> bool:
+        return self.tasks is None or len(self.excluded_keys) < len(self.tasks)
+
+    def exclude_tasks(self, task_keys: set[str]) -> None:
+        self.excluded_keys.update(task_keys if self.tasks is None else task_keys & set(self.task_keys))
 
     def state_dict(self) -> dict[str, Any]:
         return {"cursor": self.cursor}

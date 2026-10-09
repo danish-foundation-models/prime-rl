@@ -650,10 +650,14 @@ def rl(config: RLConfig):
     resuming = config.resume is not None
     clean = config.clean and not os.environ.get("NEVER_CLEAN")
     ckpt_output_dir = config.ckpt.output_dir if config.ckpt else None
+    validate_run_dir(
+        config.run_dir,
+        output_dir=config.output_dir,
+        resuming=resuming,
+        clean=clean and not config.dry_run,
+        ckpt_output_dir=ckpt_output_dir,
+    )
     if not config.dry_run:
-        validate_run_dir(
-            config.run_dir, output_dir=config.output_dir, resuming=resuming, clean=clean, ckpt_output_dir=ckpt_output_dir
-        )
         if ckpt_output_dir is not None:
             ckpt_output_dir.mkdir(parents=True, exist_ok=True)
 

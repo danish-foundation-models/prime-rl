@@ -53,6 +53,11 @@ class WeightWatcher:
             self.policy.version = step
             await self._notify_update(step)
 
+    async def notify_current_policy(self) -> None:
+        """Initialize observers registered after the startup transfer completed."""
+        async with self.update_lock:
+            await self._notify_update(self.policy.version)
+
     async def start(self) -> None:
         self.task = asyncio.current_task()
         try:

@@ -378,6 +378,7 @@ class LagunaForCausalLM(LagunaPreTrainedModel, GenerationMixin):
         cache_position: torch.LongTensor | None = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         temperature: torch.Tensor | None = None,
+        selected_token_ids: torch.Tensor | None = None,
         routed_experts: torch.LongTensor | None = None,
         *,
         seq_lens: torch.LongTensor,
@@ -402,6 +403,7 @@ class LagunaForCausalLM(LagunaPreTrainedModel, GenerationMixin):
             hidden_states[:, slice_indices, :],
             labels[:, slice_indices] if labels is not None else None,
             temperature=temperature,
+            selected_token_ids=selected_token_ids,
         )
 
     def init_buffers_post_meta(self) -> None:

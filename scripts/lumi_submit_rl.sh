@@ -4,8 +4,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
 set -a
-for ENV_FILE in "$REPO_DIR/../post/.env" "$REPO_DIR/.env"; do
+for ENV_FILE in "$LUMI_ROOT/post/.env" "$LUMI_ROOT/prime-rl/.env" "$REPO_DIR/.env"; do
   if [[ -f "$ENV_FILE" ]]; then
     source "$ENV_FILE"
   fi
@@ -35,6 +36,11 @@ CONFIG=$(readlink -f "$CONFIG")
 CONTAINER_CONFIG=$CONFIG
 if [[ "$CONFIG" == "$REPO_DIR/"* ]]; then
   CONTAINER_CONFIG=/workdir/${CONFIG#"$REPO_DIR/"}
+else
+  HOST_LUMI_ROOT=$(readlink -f "$LUMI_ROOT")
+  if [[ "$CONFIG" == "$HOST_LUMI_ROOT/"* ]]; then
+    CONTAINER_CONFIG=$LUMI_ROOT/${CONFIG#"$HOST_LUMI_ROOT/"}
+  fi
 fi
 
 USER_DRY_RUN=false
@@ -49,16 +55,19 @@ if [[ "$USER_DRY_RUN" == false ]]; then
   RENDER_ARGS+=(--dry-run)
 fi
 
+export PRIME_RL_METADATA_DIR=$("$SCRIPT_DIR/lumi_prepare_runtime.sh")
+[[ -f "$PRIME_RL_METADATA_DIR/.ready" ]]
+
+"$SCRIPT_DIR/lumi_run_in_container.sh" \
+  python /workdir/scripts/lumi_refresh_offline_manifests.py \
+  --config "$CONTAINER_CONFIG" --check
+
 render_log=$(mktemp "$TMPDIR/prime-rl-render.XXXXXX")
 trap 'rm -f "$render_log"' EXIT
 "$SCRIPT_DIR/lumi_run_in_container.sh" \
   rl @ "$CONTAINER_CONFIG" \
   --slurm.project-dir "$REPO_DIR" \
   "${RENDER_ARGS[@]}" 2>&1 | tee "$render_log"
-
-if [[ "$USER_DRY_RUN" == true ]]; then
-  exit 0
-fi
 
 SBATCH_PATH=$(sed -E 's/\x1B\[[0-9;]*[mK]//g' "$render_log" \
   | sed -nE 's/^[[:space:]]*sbatch ([^[:space:]]+).*$/\1/p' \
@@ -67,6 +76,20 @@ SBATCH_PATH=$(sed -E 's/\x1B\[[0-9;]*[mK]//g' "$render_log" \
   echo "FATAL: could not find rendered RL sbatch path in launcher output" >&2
   exit 1
 }
+# Check the actual rendered backend, including any CLI overrides, during dry-runs too.
+if grep -q 'epp --pool-name' "$SBATCH_PATH"; then
+  ROUTER_CHECK_ARGS=()
+  if grep -q '^[[:space:]]*pd-sidecar ' "$SBATCH_PATH"; then ROUTER_CHECK_ARGS+=(--pd); fi
+  "$SCRIPT_DIR/lumi_run_in_container.sh" bash /workdir/scripts/lumi_check_router.sh "${ROUTER_CHECK_ARGS[@]}"
+fi
+if [[ "$USER_DRY_RUN" == true ]]; then
+  exit 0
+fi
+
+RESOLVED_CONFIG_DIR=$(sed -n 's/^export CONFIG_DIR=//p' "$SBATCH_PATH")
+[[ -d "$RESOLVED_CONFIG_DIR" ]] || { echo "FATAL: resolved config directory missing" >&2; exit 1; }
+"$LUMI_ROOT/bin/uv" run --offline --no-project --python /usr/bin/python3.11 \
+  python "$SCRIPT_DIR/lumi_check_rl_credentials.py" "$RESOLVED_CONFIG_DIR"
 SBATCH_BIN=${SBATCH_BIN:-sbatch}
 command -v "$SBATCH_BIN" >/dev/null || {
   echo "FATAL: host sbatch command not found: $SBATCH_BIN" >&2

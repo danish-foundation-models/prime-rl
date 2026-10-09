@@ -554,3 +554,25 @@ For the full design rationale (failure modes ruled out, empirical token-identity
 ### Discontinuous Trajectories
 
 Some envs are discontinuous by design — e.g. a main agent delegating to a sub-agent and getting back only a summarized result, not the sub-agent's whole conversation. Best-effort interleaving handles this naturally: each agent's contiguous turns merge, the handoff starts a new sample. The trainer never sees fabricated extension where there is none.
+
+### ECHO with rewritten agent histories
+
+ECHO recognizes context-only restatements of earlier sampled assistant messages
+using verifiers' full message hash, including canonical tool arguments. This
+recovers observation supervision when a harness rewrites an exact token prefix.
+It does not change sampled masks, tokens, or action logprobs. Tool-call IDs alone
+are insufficient because harnesses may reuse them. Initial observation examples
+remain excluded, and shared graph nodes still receive CE once.
+
+The advantage-range admission gate preserves groups with CE or reference-KL
+weights on trainable branches. Zero-advantage action tokens are pruned downstream,
+while their independent observation supervision remains. ECHO emits
+`echo/observation_tokens`, `echo/restated_actions`, `echo/ce_only`, and
+`echo/rl_bearing`; monitor the latter two alongside category balance so an increase
+in observation-only training is visible.
+
+For the Nemotron LUMI run, source overrides use `roles.tool.alpha = 0.02` and
+explicitly retain `behavior_penalty.penalty = 0.1`. Source algorithm overrides
+replace the global algorithm rather than merging its fields. PRIME normalizes CE
+by selected tokens globally; the original ECHO paper uses a different observation
+normalization, so coefficients are not directly interchangeable.

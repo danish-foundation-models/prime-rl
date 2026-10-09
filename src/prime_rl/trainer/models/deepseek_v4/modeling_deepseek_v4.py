@@ -305,6 +305,7 @@ class DeepseekV4ForCausalLM(DeepseekV4PreTrainedModel, GenerationMixin):
         labels: torch.LongTensor | None = None,
         logits_to_keep: int | torch.Tensor = 0,
         temperature: torch.Tensor | None = None,
+        selected_token_ids: torch.Tensor | None = None,
         routed_experts: torch.LongTensor | None = None,
         *,
         seq_lens: torch.LongTensor,
@@ -315,6 +316,8 @@ class DeepseekV4ForCausalLM(DeepseekV4PreTrainedModel, GenerationMixin):
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels used by PrimeRL's wrapped LM head to optionally compute per-token
             logprobs/entropy.
+        selected_token_ids (`torch.Tensor`, *optional*):
+            Label-aligned token IDs whose log probabilities are needed for score centering.
         temperature (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
             Per-token temperatures for logprobs/entropy computation when `labels` are given.
         seq_lens (`torch.LongTensor` of shape `(num_documents,)`):
@@ -337,6 +340,7 @@ class DeepseekV4ForCausalLM(DeepseekV4PreTrainedModel, GenerationMixin):
             hidden_states[:, slice_indices, :],
             labels[:, slice_indices] if labels is not None else None,
             temperature=temperature,
+            selected_token_ids=selected_token_ids,
         )
 
 

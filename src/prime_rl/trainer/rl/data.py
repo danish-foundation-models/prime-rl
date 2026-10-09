@@ -45,6 +45,8 @@ class TensorMicroBatch(TypedDict):
     # Sampling-mask token ids per position, padded with -1 to the micro batch's
     # maximum mask size. A row containing only -1 has no mask.
     sampling_mask: Int[Tensor, "batch seq mask"] | None
+    sampler_topk_ids: Tensor | None
+    sampler_topk_logprobs: Tensor | None
 
     # Generic multimodal kwargs — flat dict matching the model's forward
     # signature (e.g. ``{"pixel_values": ..., "image_grid_thw": ...}`` for
@@ -255,6 +257,18 @@ class DataLoader:
             else None,
             routed_experts=routed_experts,
             sampling_mask=sampling_mask,
+            sampler_topk_ids=torch.frombuffer(bytearray(micro_batch.sampler_topk_ids.data), dtype=torch.int32)
+            .reshape(micro_batch.sampler_topk_ids.shape)
+            .unsqueeze(0)
+            if micro_batch.sampler_topk_ids is not None
+            else None,
+            sampler_topk_logprobs=torch.frombuffer(
+                bytearray(micro_batch.sampler_topk_logprobs.data), dtype=torch.float32
+            )
+            .reshape(micro_batch.sampler_topk_logprobs.shape)
+            .unsqueeze(0)
+            if micro_batch.sampler_topk_logprobs is not None
+            else None,
             rl_weights=torch.tensor(micro_batch.rl_weights, dtype=torch.float).unsqueeze(0)
             if micro_batch.rl_weights is not None
             else None,

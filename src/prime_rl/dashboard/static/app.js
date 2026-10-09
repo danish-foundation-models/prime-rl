@@ -3163,7 +3163,26 @@ function renderMeta(ep, trace, branches) {
       parts.push(`<div class="meta-sec">rewards</div>`);
       for (const [name, r] of rewards) parts.push(metaRow(name, `${fmtReward(r?.score)} × ${fmtNum(r?.weight ?? 1)}`));
     }
-    const metrics = Object.entries(trace.metrics || {});
+    const loops = trace.info?.loop_annotations;
+    if (loops) {
+      parts.push(`<div class="meta-sec">loop observations</div>`);
+      parts.push(metaRow("assessment", loops.suspected ? "repetition persists to trace end — diagnostic only" : "no repetition flagged"));
+      if (loops.ending) parts.push(metaRow("ending", `${loops.ending.stop_condition || "unknown"}${loops.ending.has_error ? " · error" : ""}${loops.ending.truncated || loops.ending.last_finish_reason === "length" ? " · truncated" : ""}`));
+      if (loops.scan_incomplete) parts.push(metaRow("coverage", "partial: reasoning scan limit reached"));
+      for (const event of loops.events || []) {
+        if (event.kind === "text_repetition") {
+          parts.push(metaRow(event.field + " node " + event.node, (event.persistent_to_trace_end ? "persistent tail" : "repetition only") + (event.mode === "low_novelty" ? "; low novelty: " + (100 * event.prose_trigram_fraction_512).toFixed(0) + "% repeated phrase coverage in last 512 prose words" : "; last 128 prose words " + (100 * event.tail_repeated_fraction).toFixed(0) + "% repeated")));
+        } else if (event.kind === "repeated_action_cycle") {
+          parts.push(metaRow("action cycle (" + event.period + " turns)", (event.persistent_to_trace_end ? "persistent tail" : "repetition only") + "; at least " + event.repetitions + " repeats; assistant nodes " + (event.assistant_nodes || []).join(", ") + "; outputs may differ"));
+        } else if (event.kind === "reasoning_repetition") {
+          parts.push(metaRow(`reasoning node ${event.node}`, `${event.persistent_to_trace_end ? "persistent tail" : "repetition only"}; ${event.repeated_words} repeated words; word spans ${JSON.stringify(event.word_spans)}`));
+        } else if (event.kind === "unchanged_tool_cycle") {
+          parts.push(metaRow(`tool cycle (${event.period} calls)`, `${event.persistent_to_trace_end ? "persistent tail" : "repetition only"}; ≥${event.repetitions} repeats; tool nodes ${(event.tool_nodes || []).join(", ")}`));
+        }
+      }
+      if (loops.events_omitted) parts.push(metaRow("additional observations", loops.events_omitted));
+    }
+    const metrics = Object.entries({ ...(trace.info?.loop_metrics || {}), ...(trace.metrics || {}) });
     if (metrics.length) {
       parts.push(`<div class="meta-sec">metrics</div>`);
       for (const [name, value] of metrics)

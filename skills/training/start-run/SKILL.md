@@ -179,3 +179,192 @@ Interactive launches auto-start one shared dashboard daemon per user (process ti
 that URL to the researcher. Discovery: `~/.cache/prime-rl/dashboard/daemon.json` holds
 the live `url` (the port can differ from 7788 when it was taken). `--no-dashboard`
 opts a run out.
+
+## LUMI Super RL
+
+Follow `docs/lumi-rl-super.md` for the shared SIF and external UCloud provider.
+Prepare and pin runtime metadata before submitting GPUs; do not change active
+job source. Use the native LUMI dry-run and inspect attempt-specific JSON configs.
+
+For the Super ROCm stack, test router capture with
+`scripts/lumi_super_router_probe.py`, then compare saved samples using
+`scripts/lumi_super_replay_parity.py` under the target CP/EP trainer topology.
+The latter performs frozen-weight forwards with replay off/on and a replay
+backward check without optimizer updates. Do not infer replay correctness from
+successful config validation. Test NCCL/RCCL startup and changed-weight transfer
+in a separate bounded two-update run before scheduling a longer pilot.
+
+LUMI weight transfer uses the dedicated `PRIME_RL_WEIGHT_NCCL_ALGO`,
+`PRIME_RL_WEIGHT_NCCL_PROTO`, and `PRIME_RL_WEIGHT_HIGH_PRIORITY` settings from
+`docs/lumi-rl-super.md`. Keep overrides scoped to the weight communicator;
+forcing Ring/LL across the whole trainer changes its collective performance.
+The complete OFI host-staging, DMA-BUF, high-priority, and hardware-queue bundle
+still applies. Use Super Mamba prefix caching in `align` mode with FP32 SSM
+states. Validate cache hits and cold/warm parity serially at7K/32K/130K using
+`scripts/lumi_super_prefix_verify.py`; do not run a competing stress client.
+
+When disabling Super prefix caching, also omit `vllm.mamba_block_size`.
+The optimized vLLM stack rejects a prefix-cache block size with caching off,
+before loading the model. Keep `mamba_ssm_cache_dtype=float32`.
+
+Super NCCL reload needs GPU headroom beyond the inference cache budget.
+Use an explicit `vllm.kv_cache_memory_bytes` budget validated by
+`scripts/lumi_super_capacity.sbatch`, including occupied-cache reloads. A
+utilization fraction alone can leave almost no usable cache after profiling.
+Set `PRIME_RL_WEIGHT_BUCKET_BYTES=268435456` to bound transient receive buffers;
+deploy the matching versioned-wire receiver first. Whole tensors are not split.
+The private nonlocal-expert reload overlay is built with
+`scripts/lumi_prepare_super_reload_overlay.py`; select it through
+`PRIME_RL_SUPER_RELOAD_OVERLAY` before sourcing the Super bootstrap. NCCL update RPCs are single-attempt, including timeouts: a
+partly consumed receive stream cannot safely be replayed. On failure leave the
+engines paused and restart the failed run; never serve partially loaded weights.
+
+NCCL receive tensors must own storage for only that weight. Deferred vLLM
+layer processing can retain small gate weights until finalization; returning
+views into a flat dtype bucket pins a whole multi-gigabyte MoE layer per gate.
+`receive_state_dict` clones slices of multi-weight buckets before yielding them.
+The wire probe retains small BF16 weights across repeated transfers and checks
+exact storage size and values; headroom alone does not fix bucket retention.
+
+For multiple inference replicas, combine llm-d KV-utilization, queue and active-
+request scorers with prefix affinity. Validate both HTTP routes with
+`scripts/lumi_kv_router_probe.py --prefix --output <artifact-directory>`.
+Prefix affinity is approximate and must yield to heavy KV occupancy.
+
+For LUMI Super NCCL startup, enable `PRIME_RL_PAUSE_NCCL_INIT=1` alongside
+`HSA_ENABLE_SDMA=0`. Engines pause before communicator creation and resume only
+on success. Keep the bounded weight buckets and private reload overlay when
+using the validated 14 GiB/device cache profile; validate multi-replica transfer
+and trainer 128K memory before submitting the full pilot.
+
+For Nemotron Super parallelism preflight, validate `ParallelDims` on CPU and
+inspect the model's Mamba group count. EP must be divisible by CP, and this
+Mamba implementation requires its state groups to be divisible by CP. Super
+has eight groups: CP16/EP16 passes the generic mesh check but is not supported
+by the current model implementation. Keep CP8 when using the existing kernels.
+
+For the SFT-matched Super 128K RL pilot, use the 16t8i config and retain CP8/EP8.
+Eight training nodes double persistent shard sizes relative to sixteen; batch
+one is already in use. Select the consolidated `PRIME_RL_SUPER_PROFILE` before
+sourcing the inference bootstrap; its manifest preserves the validated kernels,
+helper modules, and reload fix. Keep the eight inference replicas and validate
+host-cache restoration plus weight reload before releasing dependent training.
+
+Before a LUMI trainer-only diagnostic, check the rendered script includes the
+same OFI bundle as SFT/pilot: DMA-BUF disabled, high-priority RCCL streams and
+two GPU hardware queues. These are template defaults, not just pilot config
+settings. A topology comparison without them is not a valid memory test.
+
+Scope Super's SDMA-off workaround to inference. For the SFT-matched trainer,
+use SDMA=1 and omit forced RCCL channel counts; validate at least three updates
+with the full OFI/high-priority/queue bundle. A Python stack snapshot inside
+GEMM or a collective is not proof of deadlock: compare successive snapshots,
+GPU activity and completed updates. `py-spy` can collect Python stacks from the
+allocated node without modifying the runtime image.
+
+For trainer-to-inference RCCL, use identical channel policy from process startup.
+The RL inference bootstrap must clear the evaluation profile's fixed16-channel
+settings; both roles use automatic selection. A late context-manager env change
+can be ineffective because RCCL caches parameters. Validate heterogeneous sender
+and receiver roles; sourcing the inference bootstrap on both probe nodes masks
+this mismatch. Keep the CPU-store channel-settings agreement check enabled.
+
+For agentic capacity changes, check both orchestrator concurrency and per-source
+`serve.pool.multiplex`. Measure active decoding separately from episode count.
+Use full publisher task pools with prepared images or recipe-backed image caching.
+Do not require individual oracle validation for task admission; representative
+environment checks are sufficient. TMax includes its own hidden verifiers. Keep
+image build failures separate from rewards. See docs/lumi-rl-expanded-sources.md.
+The sandbox
+harness Python must use isolated imports to avoid task checkout packages
+shadowing its bundled dependencies.
+
+For full-pool LUMI agentic RL, startup inference synchronization must precede
+materializing tasksets; otherwise trainer ranks can expire their collective
+watchdog while the orchestrator is still loading data. Use bounded batch decoding
+and sequential off-loop source loading. Verify full task counts without restoring
+small image-validation allowlists. See `docs/lumi-rl-expanded-sources.md`.
+
+For Terminal-Lego, use a fresh recipe index after verifier/preparation changes.
+Validate candidate execution and reward exit-status behavior, then syntax-check all
+rendered verifiers. Restore only declared empty workspace directories; never fabricate
+missing task input assets. Keep unknown runtime logic out of dependency bootstrap.
+Do not call an offline syntax/context check a live sandbox validation. Inspect UCloud
+capacity/DNS failures separately from task packaging and verifier failures.
+
+For the UCloud agentic pilot, validate parking via the managed agent and real
+harness probes documented in `docs/lumi-rl-expanded-sources.md` before submission.
+`parkable=true` alone is insufficient: the adapter must use `start_agent()` and
+bind relay registration to the gateway-confirmed sandbox handle/generation.
+Keep explicit parking in both train/eval runtime configs and capacity preparation.
+
+When diagnosing parked-rollout failures, distinguish generation latency from
+response-commit/wake latency. Verify bounded idempotent response retries and
+concurrent park/resume before restarting. Stale image-build receipts require
+backend validation; see the recovery section in docs/lumi-rl-expanded-sources.md.
+
+Live image-cache validation must exercise an existing receipt using the real SDK
+client. Tiny parking probes do not exercise long-running lease-renewal races;
+cover the completed-request renewal race through the SDK worker lifecycle.
+
+Start pilot observation with `lumi_watch_rl_pilot.py --stop-on-infra-failure`
+and explicit job/run paths. Use `--max-failed-episodes 15 --poll-seconds 15`
+for these runs. Confirmed failed images are quarantined across training
+harnesses and excluded from the global failure window; backend failures still
+count. Enable the progress guard (default 600 seconds after useful work starts,
+3600 seconds for initial startup). See `docs/lumi-rl-expanded-sources.md` for
+resume filtering and exact stop semantics. Zero reward is never a stop signal.
+
+## Score-centering RL loss
+
+Use `[trainer.loss] type = "score_centering"` with `top_k = 32` to opt into
+standalone SC (`importance_sampling = "none"`); `"tis"` composes truncated IS.
+The combined RL config enables generation-time sampler head capture and the
+inference logprob capacity. Follow `docs/score-centering.md` for separate process
+configs, supported full-vocabulary sampling, transport requirements, and checks.
+SC requires additional sampler evidence; existing sampled-token-only traces are
+not sufficient. Keep the default loss unless SC is explicitly selected.
+
+When mixing harnesses over the same deterministic finite tasksets, enable
+`share_taskset = true` on the train sources. The orchestrator caches by resolved
+taskset class and full config within the collection; source cursors and curriculum
+state remain independent. Keep sharing disabled for stochastic loaders. Infinite
+streams are never shared. Confirm `Reusing finite task pool` in startup logs and
+check host memory alongside inference CPU cache; duplicating large coding datasets
+per harness can consume tens of GiB and repeat minutes of Arrow decoding.
+
+When node loss is explicitly tolerated, use native whole-episode retries restricted
+to `SandboxNodeLost` and bounded attempts. Monitor with `--tolerate-node-lost` so
+those exhausted attempts are counted but excluded from the automatic-stop window.
+Other errors and mixed failures retain the stop rule. Never resume a lost sandbox.
+
+For mixed-duration agent pilots, use the optional taskset-family lookahead and eval
+concurrency budget described in `docs/lumi-rl-harnesses.md`. Validate streaming
+harness requests through TrainClient with exact token/logprob/top-k capture before
+launch; EvalClient-only harness acceptance does not prove train compatibility.
+
+Offline coding-harness bundles must include executable rg/fd, with their directory
+on the agent PATH. Before a pilot, run the real tool-chain probe described in
+`docs/lumi-rl-harnesses.md`; a single shell echo does not validate glob/grep or edit.
+
+### LUMI sandbox SDK updates
+
+Pin the released wheel in `scripts/lumi_prepare_runtime.sh` and the local
+verifiers-ucloud package dependency, and refresh that package's lockfile. Rebuild
+the immutable metadata layer and check the actual SDK import from the container
+used by the job; standalone probe/cleanup helpers must resolve that layer too.
+Run adapter compatibility tests and the bench image check before the native
+launcher dry-run. Keep existing metadata layers available for rollback.
+
+For ECHO-enabled runs, source `algo` overrides replace global settings: copy any
+required behavior shaping explicitly. Verify that the advantage gate admits
+nonzero auxiliary CE supervision, that rewritten assistant histories retain
+observation supervision without resampling action tokens, and that initial tool
+demonstrations remain masked. On restricted-network harnesses, synthetic policy
+notices must occupy a stable prefix position rather than moving with each turn.
+
+For shared task-difficulty replay across harnesses, use `difficulty_pool` with
+`strategy = "smoothed_replay"` and the same explicit `shared_group` for the same
+taskset. Keep different source seeds; outcomes share by task identity while
+sampling and gates remain separate. Verify history/RNG checkpoint restore and
+image quarantine after sampler changes. See `docs/throughput-scheduling.md`.

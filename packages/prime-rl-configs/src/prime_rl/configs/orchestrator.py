@@ -59,6 +59,9 @@ class TrainSamplingConfig(BaseConfig):
     max_completion_tokens: int | None = None
     """Maximum output tokens per turn. If None, generates until max context length or EOS."""
 
+    reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    """Reasoning mode advertised to the agent harness and model endpoint."""
+
     # Strictly speaking, extra_body is not a sampling parameter, but it is the
     # easiest way to pass arbitrary extra parameters to the server via verifiers
     extra_body: dict[str, Any] = {}
@@ -97,6 +100,9 @@ class TrainSamplingConfig(BaseConfig):
         }
         if self.max_completion_tokens is not None:
             args["max_completion_tokens"] = self.max_completion_tokens
+
+        if self.reasoning_effort is not None:
+            args["reasoning_effort"] = self.reasoning_effort
 
         # top_k rides extra_body (like EvalSamplingConfig), overriding the sentinel.
         extra_body = dict(self.extra_body)
@@ -156,6 +162,9 @@ class EvalSamplingConfig(BaseConfig):
 class EnvConfig(BaseConfig):
     """One environment a run pulls from: the verifiers blocks it composes (``env`` — what
     runs, ``serve`` — how it's hosted) plus this orchestrator's own per-env knobs."""
+
+    share_taskset: bool = False
+    """Reuse identical finite tasksets within this train/eval collection. Opt in only for deterministic loaders; tasks are read-only in the orchestrator, with independent source iterators and curriculum state."""
 
     env: SerializeAsAny[vf.EnvConfig] = vf.SingleAgentEnvConfig()
     """The verifiers environment — which env, its seed taskset, each agent, its knobs. Narrowed to the selected env's config class by the env id, else the taskset id."""
@@ -221,6 +230,15 @@ class DifficultyPoolSamplerConfig(BaseConfig):
     """Named pools ordered by their reward thresholds."""
 
     seed: int = 42
+    strategy: Literal["pools", "smoothed_replay"] = "pools"
+    """Smoothed replay balances observed tasks by reward variation and explores unseen tasks."""
+    shared_group: str | None = None
+    """Share task outcomes across source harnesses with this explicitly matching identity."""
+    history_size: int = Field(default=64, ge=1)
+    """Maximum recent valid rollout rewards retained per task."""
+    replay_fraction: float = Field(default=0.5, ge=0, le=1)
+    replay_warmup_tasks: int = Field(default=16, ge=1)
+    """Ramp replay to its target fraction as this many observed tasks become available."""
 
     @model_validator(mode="after")
     def validate_pools(self):
@@ -266,6 +284,9 @@ class CurriculumConfig(BaseConfig):
 
 
 class TrainSourceConfig(EnvConfig):
+    balance_category: str | None = None
+    """Coarse batch-mixture category; defaults to the taskset id."""
+
     sampling: TrainSamplingConfig = TrainSamplingConfig()
     """Per-env sampling overrides. Unset fields inherit from the group-level train sampling config."""
 
@@ -455,9 +476,42 @@ WeightBroadcastConfig: TypeAlias = Annotated[
 
 
 class ConcurrencyConfig(BaseConfig):
-    """Adaptive in-flight concurrency control. The orchestrator sizes the
-    in-flight episode cap from engine KV capacity and learned per-env episode
-    costs; these fields only bound and seed it."""
+    """Engine-pressure-driven active concurrency and optional balanced rollout scheduling.
+    The adaptive controller owns the active cap; the scheduler allocates work within it."""
+
+    scheduler_target_mix: float = Field(0.5, ge=0, le=1)
+    """MiMo eq. 7: target-demand weight; the remainder weights current-batch deficit."""
+
+    scheduler_oversampling: float = Field(3.0, ge=0, allow_inf_nan=False)
+    scheduler_min_oversampling: float = Field(0.0, ge=0, allow_inf_nan=False)
+    scheduler_max_oversampling: float = Field(16.0, ge=0, allow_inf_nan=False)
+    """MiMo eq. 6 mean and per-source bounds. Mean can grow with the adaptive cap."""
+
+    scheduler_acceptance_floor: float = Field(0.05, gt=0, le=1)
+    """Lower bound for effective group acceptance in scheduling estimates."""
+
+    scheduler_inventory_factor: float = Field(2.0, ge=1, allow_inf_nan=False)
+    """Target unfinished episode reservations per active slot, allowing group tails."""
+
+    category_targets: dict[str, float] = Field(default_factory=dict)
+    """Explicit positive mixture weights for coarse categories, normalized to sum to one."""
+
+    category_batch_tolerance: int = Field(2, ge=1)
+    """Maximum per-category deviation in traces from its target for each batch (rounding inward)."""
+
+    category_max_surplus: int = Field(8, ge=1)
+    """Maximum cumulative excess trained traces per category above its configured target."""
+
+    throughput_balancing: bool = False
+    """Balance completed traces and keep rollout inventory independent of active permits."""
+
+    lookahead_batches: int | None = Field(None, ge=1)
+    """Inventory window in batches; requires trace-count batches. With throughput_balancing,
+    this bounds ready inventory separately from active rollouts. Otherwise it caps ready
+    and unfinished groups together by taskset."""
+
+    eval_fraction: float = Field(0.125, gt=0, lt=1)
+    """Share of rollout permits reserved for eval while balanced training is active."""
 
     initial_inflight: int | None = Field(None, ge=1)
     """Optional initial in-flight episodes to start from. Set it when a good value is known to skip the initial ramp; otherwise auto-derive a pessimistic bound at runtime."""
@@ -470,6 +524,15 @@ class ConcurrencyConfig(BaseConfig):
 
     @model_validator(mode="after")
     def validate_bounds(self):
+        if not self.scheduler_min_oversampling <= self.scheduler_oversampling <= self.scheduler_max_oversampling:
+            raise ValueError("Require scheduler_min_oversampling <= scheduler_oversampling <= scheduler_max_oversampling")
+        if self.category_targets:
+            if not self.throughput_balancing:
+                raise ValueError("category_targets requires throughput_balancing")
+            if any(not (0 < weight < float("inf")) for weight in self.category_targets.values()):
+                raise ValueError("category_targets must have finite positive weights")
+        if self.throughput_balancing and self.lookahead_batches is None:
+            raise ValueError("throughput_balancing requires lookahead_batches for bounded ready inventory")
         if self.max_inflight is not None:
             if self.initial_inflight is not None and self.initial_inflight > self.max_inflight:
                 raise ValueError("concurrency.initial_inflight must not exceed concurrency.max_inflight")

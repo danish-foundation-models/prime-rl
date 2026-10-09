@@ -475,3 +475,43 @@ def test_echo_filter_narrows_selection():
     episode = _two_turn_episode()
     with pytest.raises(ValueError, match="span the branch's tokens"):
         asyncio.run(_echo_algorithm(filter_fn=lambda trace: [[True] * 6]).score_episode(episode))
+
+
+@pytest.mark.parametrize("same_action", [True, False])
+def test_echo_recovers_restatement_without_trusting_reused_tool_ids(same_action):
+    def action(arguments):
+        return AssistantMessage(tool_calls=[{"id": "call_0", "type": "function", "name": "bash", "arguments": arguments}])
+
+    nodes = [
+        _node(UserMessage(content="task"), parent=None, sampled=False, token_ids=[1]),
+        _node(action('{"command":"demo"}'), parent=0, sampled=False, token_ids=[2]),
+        _node(ToolMessage(tool_call_id="call_0", content="demo output"), parent=1, sampled=False, token_ids=[3]),
+        _node(action('{"command": "pwd"}'), parent=2, sampled=True, token_ids=[4]),
+        _node(action('{"command":"pwd"}' if same_action else '{"command":"ls"}'), parent=2, sampled=False, token_ids=[5]),
+        _node(ToolMessage(tool_call_id="call_0", content="real output"), parent=4, sampled=False, token_ids=[6], is_content=[True]),
+        _node(AssistantMessage(content="done"), parent=5, sampled=True, token_ids=[7]),
+    ]
+    episode = _two_turn_episode()
+    trace = episode.traces[0]
+    trace.nodes = nodes
+    asyncio.run(_echo_algorithm().score_episode(episode))
+    selected = [token for sample in trace_to_samples(trace) for token, weight in zip(sample.token_ids, sample.ce_weights or [0]*len(sample.token_ids)) if weight]
+    assert selected == ([6] if same_action else [])
+    assert nodes[2].loss_weights is None  # Initial tool demonstrations stay masked.
+    assert nodes[4].loss_weights is None  # Restated assistant never gets supervised.
+    assert nodes[3].sampled and not nodes[4].sampled
+
+
+def test_echo_excludes_repeated_initial_observation_after_restatement():
+    episode = _two_turn_episode()
+    trace = episode.traces[0]
+    demo = ToolMessage(tool_call_id="t", content="demonstration output")
+    trace.nodes = [
+        _node(demo, parent=None, sampled=False, token_ids=[1]),
+        _node(AssistantMessage(content="A"), parent=0, sampled=True, token_ids=[2]),
+        _node(AssistantMessage(content="A"), parent=0, sampled=False, token_ids=[3]),
+        _node(demo, parent=2, sampled=False, token_ids=[4]),
+        _node(AssistantMessage(content="done"), parent=3, sampled=True, token_ids=[5]),
+    ]
+    asyncio.run(_echo_algorithm().score_episode(episode))
+    assert all(sample.ce_weights is None for sample in trace_to_samples(trace))

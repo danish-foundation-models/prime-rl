@@ -172,6 +172,9 @@ class Dispatcher:
         # Starting value of the dynamic cap (the concurrency controller moves
         # it); ``max_inflight_ceiling`` is the configured hard maximum, used to
         # bound ``out_q``
+        self.train_admission: Callable[[], set[str]] | None = None
+        self.eval_fraction: float = 0.125
+        self.train_reservations: dict[str, tuple[str, int]] = {}
         self.max_inflight = initial_max_inflight
         self.current_inflight = 0
         self.rate_limiter: AsyncLimiter | None = (
@@ -212,6 +215,8 @@ class Dispatcher:
         self.dispatch_allowed = asyncio.Event()
         self.dispatch_allowed.set()
         self.policy_update_pending = False
+        self.policy_pause_started: float | None = None
+        self.policy_paused_seconds = 0.0
         self.scheduling_lock = asyncio.Lock()
 
         self.stopped = asyncio.Event()
@@ -360,6 +365,14 @@ class Dispatcher:
             await safe_cancel(self.task)
             self.task = None
 
+    def policy_pause_seconds(self, now: float) -> float:
+        return self.policy_paused_seconds + (now - self.policy_pause_started if self.policy_pause_started is not None else 0)
+
+    def begin_policy_pause(self) -> None:
+        if self.policy_pause_started is None:
+            self.policy_pause_started = time.monotonic()
+        self.policy_update_pending = True
+
     async def on_version_pending(self, step: int) -> None:
         """Drop train groups past ``max_off_policy_steps``: a group dispatched at
         v{k} ships at earliest in the batch currently collecting, at staleness
@@ -374,7 +387,7 @@ class Dispatcher:
         the resulting aborts are processed while the engine is still stepping —
         otherwise the orphaned KV transfers crash the decode engine on resume
         (see ``WeightWatcher.apply_policy_update``)."""
-        self.policy_update_pending = True
+        self.begin_policy_pause()
         # Wait for a scheduling call that started before the pending update.
         # No rollout can cross the inference weight swap after this barrier.
         async with self.scheduling_lock:
@@ -402,6 +415,8 @@ class Dispatcher:
 
     async def on_new_version(self, step: int) -> None:
         """Resume rollout scheduling after inference applies the new policy."""
+        self.policy_paused_seconds = self.policy_pause_seconds(time.monotonic())
+        self.policy_pause_started = None
         self.policy_update_pending = False
 
     async def fill_inflight(self) -> None:
@@ -419,6 +434,22 @@ class Dispatcher:
             async with self.scheduling_lock:
                 if self.policy_update_pending:
                     return
+                if self.train_admission is not None:
+                    train_open = self.dispatch_allowed.is_set() and not self.train_scheduling_disabled
+                    eval_limit = max(1, int(self.max_inflight * self.eval_fraction)) if train_open else self.max_inflight
+                    kinds = []
+                    if self.eval_has_work and self.inflight_eval_count < eval_limit:
+                        kinds.append("eval")
+                    if train_open:
+                        kinds.append("train")
+                    scheduled = False
+                    for kind in kinds:
+                        if await self.try_schedule(kind):
+                            scheduled = True
+                            break
+                    if not scheduled:
+                        return
+                    continue
                 if self.mode == DispatcherMode.PREFER_EVAL:
                     # PREFER_EVAL is only entered when the orchestrator triggers
                     # eval, which requires ``eval_source`` to be configured
@@ -460,6 +491,9 @@ class Dispatcher:
         for gid, group in list(self.groups.items()):
             if group.kind != kind or group.episodes_to_schedule <= 0:
                 continue
+            if kind == "train" and self.train_source.is_quarantined(group.env_name, group.task):
+                await self.drop_group(gid, reason="unavailable_task")
+                continue
             return await self.schedule_group_episode(gid, group)
 
         fresh = self.next_fresh_group(kind, envs)
@@ -467,6 +501,8 @@ class Dispatcher:
             return False
         gid = uuid.uuid4()
         self.groups[gid] = fresh
+        if kind == "train" and self.train_admission is not None:
+            self.train_reservations[str(gid)] = (fresh.env_name, fresh.target_episodes)
         if fresh.source_index is not None:
             self.source_indices_by_group[str(gid)] = fresh.source_index
         return await self.schedule_group_episode(gid, fresh)
@@ -478,7 +514,10 @@ class Dispatcher:
             assert self.train_source is not None
             if self.progress is None:
                 raise RuntimeError("Train dispatch requires progress state")
-            request = self.train_source.next_task(step=self.progress.step)
+            if self.train_admission is None:
+                request = self.train_source.next_task(step=self.progress.step)
+            else:
+                request = self.train_source.next_task(step=self.progress.step, allowed=self.train_admission())
         else:
             assert self.eval_source is not None
             request = self.eval_source.next_task()
@@ -545,6 +584,7 @@ class Dispatcher:
             )
         )
 
+        dispatched_at = time.monotonic()
         self.inflight[task] = InflightEpisode(
             kind=group.kind,
             env_name=group.env_name,
@@ -554,7 +594,8 @@ class Dispatcher:
             step=group.step,
             source_index=group.source_index,
             client_config=client,
-            started_at=time.monotonic(),
+            started_at=dispatched_at,
+            pause_seconds_at_start=self.policy_pause_seconds(dispatched_at) if live_sourced else None,
         )
         return True
 
@@ -630,10 +671,21 @@ class Dispatcher:
         if not episode.ok and not episode.traces:
             self.metrics.record_error(kind=meta.kind, env_name=meta.env_name)
         if self.on_episode_complete is not None and meta.started_at > 0:
+            finished_at = time.monotonic()
+            paused = (self.policy_pause_seconds(finished_at) - meta.pause_seconds_at_start
+                      if meta.pause_seconds_at_start is not None else 0.0)
             self.on_episode_complete(
-                meta.env_name, meta.kind, episode.num_total_tokens, time.monotonic() - meta.started_at
+                meta.env_name, meta.kind, episode.num_total_tokens, max(0.0, finished_at - meta.started_at - paused)
             )
         await self.emit_episode(meta, group, episode)
+        if meta.kind == "train" and self.train_source is not None:
+            errors = [*episode.errors, *(error for trace in episode.traces for error in trace.errors)]
+            failure = next((error for error in errors if error.type == "ImageBuildFailure"), None)
+            if failure is not None:
+                self.train_source.quarantine_image(meta.env_name, meta.task, failure.message)
+                for group_id, pending in list(self.groups.items()):
+                    if pending.kind == "train" and self.train_source.is_quarantined(pending.env_name, pending.task):
+                        await self.drop_group(group_id, reason="unavailable_task")
 
     def complete_group_member(self, meta: InflightEpisode, group: GroupState | None) -> int:
         """Advance group accounting and return the attempt's pinned policy version."""
@@ -765,7 +817,7 @@ class Dispatcher:
         if self.eval_source is None or self.eval_envs is None:
             return 0
 
-        self.policy_update_pending = True
+        self.begin_policy_pause()
         async with self.scheduling_lock:
             queued = self.eval_source.cancel_step(step)
             group_ids = [gid for gid, group in self.groups.items() if group.kind == "eval" and group.step == step]
@@ -800,6 +852,7 @@ class Dispatcher:
             "dispatcher/inflight/eval": float(self.inflight_eval_count),
             "dispatcher/queued/eval": float(self.queued_eval_examples),
             "dispatcher/mode": float(self.mode == DispatcherMode.PREFER_EVAL),
+            "dispatcher/policy_update_pending": float(self.policy_update_pending),
             "dispatcher/off_policy/max": float(max(staleness, default=0)),
             "dispatcher/off_policy/mean": sum(staleness) / len(staleness) if staleness else 0.0,
         }

@@ -21,6 +21,8 @@ class Curriculum:
         self,
         config: CurriculumConfig | None,
         tasks: Sequence[vf.Task] | Iterator[vf.Task],
+        *,
+        task_key_cache: dict[int, str] | None = None,
     ) -> None:
         from prime_rl.configs.orchestrator import (
             AdvRangeGateConfig,
@@ -35,7 +37,7 @@ class Curriculum:
         if isinstance(config.sampler, StandardSamplerConfig):
             self.sampler: TaskSampler = StandardSampler(tasks)
         elif isinstance(config.sampler, DifficultyPoolSamplerConfig):
-            self.sampler = DifficultyPoolSampler(config.sampler, tasks)
+            self.sampler = DifficultyPoolSampler(config.sampler, tasks, task_key_cache=task_key_cache)
         else:
             raise TypeError(f"Unsupported task sampler config: {type(config.sampler).__name__}")
 

@@ -1,3 +1,4 @@
+import os
 import pickle
 from typing import TYPE_CHECKING, Generator, cast
 
@@ -13,6 +14,7 @@ from prime_rl.inference.vllm.worker.weight_transfer import (
     update_mla_absorbed_weights,
 )
 from prime_rl.utils.nccl import disable_nccl_p2p_if_unavailable
+from prime_rl.utils.weight_broadcast import WeightBroadcastCommunicator
 
 # This is to get type hints for the Worker class but not actually extend it at runtime as this is required by vLLM worker extension
 if TYPE_CHECKING:
@@ -23,6 +25,9 @@ else:
     Worker = object
 
 logger = init_logger("vllm.inference.vllm.worker_nccl")
+
+
+RELOAD_SKIP_NAMES = frozenset()
 
 
 def receive_integer(communicator: PyNcclCommunicator) -> int:
@@ -41,8 +46,15 @@ def receive_state_dict(communicator: PyNcclCommunicator) -> Generator[tuple[str,
 
     metadata = pickle.loads(bytes(state_tensor.cpu().numpy()))
 
-    # Receive concatenated tensors per dtype and split them back
-    for dtype, tensor_info_list in metadata.items():
+    if isinstance(metadata, tuple):
+        version, buckets = metadata
+        if version != "bounded-buckets-v1":
+            raise ValueError(f"Unsupported weight wire format: {version}")
+    else:
+        buckets = metadata.items()
+
+    # Small buckets bound transient memory while deferred loaders retain weights.
+    for dtype, tensor_info_list in buckets:
         # Receive concatenated tensor for this dtype
         total_elements = sum(numel for _, _, numel in tensor_info_list)
         concatenated = torch.empty(total_elements, dtype=dtype, device=communicator.device)
@@ -51,7 +63,14 @@ def receive_state_dict(communicator: PyNcclCommunicator) -> Generator[tuple[str,
         # Split concatenated tensor back into individual tensors
         offset = 0
         for key, shape, numel in tensor_info_list:
+            if key in RELOAD_SKIP_NAMES:
+                offset += numel
+                continue
             tensor = concatenated[offset : offset + numel].view(shape)
+            # Deferred layer loaders can retain a small weight until finalization.
+            # Do not let that weight pin the entire receive bucket.
+            if numel != total_elements:
+                tensor = tensor.clone()
             offset += numel
             try:
                 yield key, tensor
@@ -75,7 +94,7 @@ class NCCLWeightBroadcastReceiver:
         disable_nccl_p2p_if_unavailable()
 
         pg = StatelessProcessGroup.create(host=host, port=port, rank=rank, world_size=world_size, store_timeout=timeout)
-        self.communicator = PyNcclCommunicator(pg, device=device)
+        self.communicator = WeightBroadcastCommunicator(pg, device=device)
 
     @torch.no_grad()
     def receive_state_dict(self):
@@ -122,6 +141,7 @@ class NCCLWeightUpdateWorker(Worker):
             f"-> [global_rank={global_rank_inference} inference_world_size={inference_world_size}]"
         )
 
+        torch.cuda.synchronize(self.device)
         self.nccl_broadcast_receiver = NCCLWeightBroadcastReceiver(
             host=host,
             port=port,
@@ -137,6 +157,16 @@ class NCCLWeightUpdateWorker(Worker):
 
     def update_weights_from_path(self, weight_dir: str) -> None:
         """Update weights with the nccl communicator."""
+        memory_probe = os.environ.get("PRIME_RL_WEIGHT_MEMORY_PROBE") == "1"
+        if memory_probe:
+            torch.cuda.synchronize()
+            torch.cuda.reset_peak_memory_stats()
+            logger.info(
+                "RELOAD_MEMORY_BEFORE allocated=%d reserved=%d free=%d",
+                torch.cuda.memory_allocated(),
+                torch.cuda.memory_reserved(),
+                torch.cuda.mem_get_info()[0],
+            )
         model_runner = self.model_runner
         if hasattr(model_runner.model, "runnable"):
             model = model_runner.model.runnable
@@ -156,3 +186,12 @@ class NCCLWeightUpdateWorker(Worker):
             self.model_runner.model_config,
             self.vllm_config,
         )
+
+        if memory_probe:
+            torch.cuda.synchronize()
+            logger.info(
+                "RELOAD_MEMORY_AFTER peak_allocated=%d peak_reserved=%d free=%d",
+                torch.cuda.max_memory_allocated(),
+                torch.cuda.max_memory_reserved(),
+                torch.cuda.mem_get_info()[0],
+            )

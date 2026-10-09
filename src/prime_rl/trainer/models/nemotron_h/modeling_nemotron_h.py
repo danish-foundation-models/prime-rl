@@ -214,6 +214,7 @@ class NemotronHForCausalLM(NemotronHPreTrainedModel):
         position_ids: torch.LongTensor | None = None,
         labels: torch.LongTensor | None = None,
         temperature: torch.Tensor | None = None,
+        selected_token_ids: torch.Tensor | None = None,
         sampling_mask: torch.Tensor | None = None,
         routed_experts: torch.LongTensor | None = None,
         *,
@@ -230,6 +231,7 @@ class NemotronHForCausalLM(NemotronHPreTrainedModel):
             outputs.last_hidden_state,
             labels,
             temperature=temperature,
+            selected_token_ids=selected_token_ids,
             sampling_mask=sampling_mask,
         )
 

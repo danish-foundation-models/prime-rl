@@ -189,7 +189,12 @@ def setup_torch_distributed(timeout: timedelta = DEFAULT_TIMEOUT, enable_gloo: b
     # module default so every subsequently created PG inherits it.
     dist.distributed_c10d.default_pg_timeout = timeout
 
-    dist.init_process_group(backend=backend, timeout=timeout, device_id=device_id)
+    if torch.version.hip:
+        # RCCL communicator splitting can deadlock on overlapping CP/EP meshes.
+        # Keep rank-to-device affinity, but construct independent process groups.
+        dist.init_process_group(backend=backend or "nccl", timeout=timeout)
+    else:
+        dist.init_process_group(backend=backend, timeout=timeout, device_id=device_id)
     get_logger().debug(f"Initialized torch distributed in {format_time(time.perf_counter() - t0)}")
 
 

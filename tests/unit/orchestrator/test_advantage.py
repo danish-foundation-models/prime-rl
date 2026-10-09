@@ -268,3 +268,102 @@ def test_assign_advantages_rejects_misaligned():
     # full length is 3 (prompt + 2 sampled); a 1-element list must be rejected
     with pytest.raises(ValueError, match="align"):
         assign_advantages(episode.traces[0], [0.5])
+
+
+# Behavior shaping must not relabel task results or make failed rewards negative.
+@pytest.mark.parametrize(
+    "opener",
+    ["<SPECIAL_954>", "<SPECIAL_157>", "<SPECIAL_882>", "<SPECIAL_999999>", "<wrong>", "nonsense", "", "<tool_call>"],
+)
+def test_behavior_penalty_unparsed_calls_any_opener(opener):
+    from prime_rl.configs.algorithm import BehaviorPenaltyConfig
+
+    group = _make_group([1.0, 1.0, 0.0])
+    broken = opener + "\n<function=bash>\n<parameter=command>ls</parameter>\n</function>\n</tool_call>"
+    for episode in [group[0], group[2]]:
+        episode.traces[0].nodes[-1].message = vf.AssistantMessage(content=broken)
+    algo = GRPOAlgorithm(GRPOAlgoConfig(behavior_penalty=BehaviorPenaltyConfig()), clients=None)
+    asyncio.run(algo.score_group(group))
+    assert [e.traces[0].reward for e in group] == [1.0, 1.0, 0.0]
+    assert [e.traces[0].metrics["behavior/training_reward"] for e in group] == pytest.approx([0.9, 1.0, 0.0])
+    assert [_scalar(e) for e in group] == pytest.approx([0.9 - 1.9 / 3, 1 - 1.9 / 3, -1.9 / 3])
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["valid_call", "fenced_example", "inline_example", "quoted_example", "observation", "unsampled", "plain_final"],
+)
+def test_behavior_detector_excludes_legitimate_text(case):
+    from prime_rl.orchestrator.algo.behavior import detect_behavior
+
+    trace = _make_episode(1).traces[0]
+    text = "<SPECIAL_123>\n<function=bash>\n<parameter=command>ls</parameter>\n</function>\n</tool_call>"
+    if case == "fenced_example":
+        text = "```xml\n" + text + "\n```"
+    elif case == "inline_example":
+        text = "`" + text.replace("\n", "") + "`"
+    elif case == "quoted_example":
+        text = "\n".join("> " + line for line in text.splitlines())
+    elif case == "plain_final":
+        text = "The task is complete."
+    if case == "valid_call":
+        trace.nodes[-1].message = vf.AssistantMessage(
+            tool_calls=[{"id": "x", "name": "bash", "arguments": '{"command":"ls"}'}]
+        )
+    elif case == "observation":
+        trace.nodes[-1].message = vf.ToolMessage(content=text, tool_call_id="x")
+    else:
+        trace.nodes[-1].message = vf.AssistantMessage(content=text)
+    if case == "unsampled":
+        trace.nodes[-1].sampled = False
+    assert not detect_behavior(trace).penalize
+
+
+@pytest.mark.parametrize(
+    "stop,finish,expected",
+    [
+        ("agent_completed", "stop", True),
+        ("max_turns", "stop", False),
+        ("max_context_tokens", "stop", False),
+        ("agent_completed", "length", False),
+    ],
+)
+def test_behavior_reasoning_only_normal_exit(stop, finish, expected):
+    from prime_rl.orchestrator.algo.behavior import detect_behavior
+
+    trace = _make_episode(0).traces[0]
+    trace.nodes[-1].message = vf.AssistantMessage(reasoning_content="Now I should run a test.")
+    trace.stop_condition = stop
+    trace.calls[-1].finish_reason = finish
+    assert detect_behavior(trace).reasoning_only_end == expected
+    trace.ok = False
+    assert not detect_behavior(trace).penalize
+
+
+def test_behavior_penalty_zero_floor_and_single_cap():
+    from prime_rl.configs.algorithm import BehaviorPenaltyConfig
+
+    group = _make_group([0.0, 0.05, 1.0])
+    for episode in group:
+        trace = episode.traces[0]
+        trace.nodes[-1].message = vf.AssistantMessage(
+            reasoning_content="<SPECIAL_2><function=bash><parameter=command>ls</parameter></function></tool_call>"
+        )
+        trace.stop_condition = "agent_completed"
+        trace.calls[-1].finish_reason = "stop"
+    algo = GRPOAlgorithm(GRPOAlgoConfig(behavior_penalty=BehaviorPenaltyConfig()), clients=None)
+    asyncio.run(algo.score_group(group))
+    assert [e.traces[0].metrics["behavior/training_reward"] for e in group] == pytest.approx([0.0, 0.0, 0.9])
+    assert all(e.traces[0].info["behavior_shaping"]["requested_penalty"] == 0.1 for e in group)
+    from prime_rl.orchestrator.annotations import stamp_batch
+
+    updates = stamp_batch(group, 1)
+    assert [u["info"]["behavior_shaping"]["training_reward"] for u in updates] == pytest.approx([0, 0, 0.9])
+
+
+def test_behavior_penalty_default_off():
+    group = _make_group([1.0, 1.0])
+    group[0].traces[0].nodes[-1].message = vf.AssistantMessage(
+        content="<SPECIAL_7><function=bash><parameter=command>ls</parameter></function></tool_call>"
+    )
+    assert _grpo(group) == pytest.approx([0.0, 0.0])

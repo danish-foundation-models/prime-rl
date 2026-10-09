@@ -433,6 +433,7 @@ class AfmoeForCausalLM(AfmoePreTrainedModel, GenerationMixin):
         logits_to_keep: Union[int, torch.Tensor] = 0,
         token_type_ids: Optional[torch.Tensor] = None,  # will be ignored
         temperature: Optional[torch.Tensor] = None,
+        selected_token_ids: torch.Tensor | None = None,
         routed_experts: Optional[torch.LongTensor] = None,
         *,
         seq_lens: torch.LongTensor,
@@ -443,6 +444,8 @@ class AfmoeForCausalLM(AfmoePreTrainedModel, GenerationMixin):
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
             Labels used by PrimeRL's wrapped LM head to optionally compute per-token logprobs/entropy.
             If not provided, the wrapped LM head returns logits only.
+        selected_token_ids (`torch.Tensor`, *optional*):
+            Label-aligned token IDs whose log probabilities are needed for score centering.
         temperature (`torch.Tensor` of shape `(batch_size, sequence_length)`, *optional*):
             Per-token temperatures for logprobs/entropy computation when `labels` are provided.
         routed_experts (`torch.LongTensor` of shape `(batch_size, sequence_length, num_hidden_layers, num_experts_per_tok)`, *optional*):
@@ -468,6 +471,7 @@ class AfmoeForCausalLM(AfmoePreTrainedModel, GenerationMixin):
             hidden_states[:, slice_indices, :],
             labels[:, slice_indices] if labels is not None else None,
             temperature=temperature,
+            selected_token_ids=selected_token_ids,
         )
 
     def init_buffers_post_meta(self):

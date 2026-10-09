@@ -1,0 +1,57 @@
+# Small free-quota trial; verify provider capacity before enabling training.
+model = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-base-r5-16n-cp8-ep8-bs32-lr1e5-r1/eval-exports/step_2619"
+num_tasks = 4
+num_rollouts = 1
+max_concurrent = 2
+push = false
+output_dir = "/scratch/project_465002751/rasmus/artifacts/evals/search"
+
+[client]
+type = "eval"
+base_url = "http://localhost:8000/v1"
+api_key_var = "VLLM_API_KEY"
+
+[sampling]
+max_tokens = 4096
+temperature = 0.6
+
+[env.taskset]
+id = "openseeker"
+
+[env.taskset.tools]
+provider = "tinyfish"
+credentials_file = "/scratch/project_465002751/rasmus/prime-rl/.env"
+cache_dir = "/scratch/project_465002751/rasmus/.cache/tinyfish"
+
+[[env.taskset.task.judges]]
+id = "openseeker"
+name = "correct"
+choices = ["A", "B"]
+model = "glm-5.3-flash"
+base_url = "https://inference.alexandra.dk/v1"
+api_key_var = "ALEXANDRA_API_KEY"
+question_field = "question"
+
+[env.agent]
+max_turns = 30
+max_output_tokens = 24576
+max_total_tokens = 131072
+
+[env.agent.timeout]
+setup = 300.0
+rollout = 1800.0
+scoring = 120.0
+
+[env.agent.harness]
+id = "null"
+
+[env.agent.runtime]
+type = "subprocess"
+
+[env.interception]
+type = "server"
+
+[serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 2

@@ -198,7 +198,20 @@ class BaseAlgoConfig(BaseConfig):
         Called once per train env after algorithm inheritance resolves."""
 
 
+class BehaviorPenaltyConfig(BaseConfig):
+    """One bounded deduction for unparsed tool syntax or voluntary reasoning-only exit.
+
+    Applied before the group baseline with a zero reward floor. Task scores are
+    preserved. This does not create a signal in all-zero task-reward groups.
+    """
+
+    penalty: float = Field(0.1, ge=0, le=1, allow_inf_nan=False)
+
+
 class GRPOAlgoConfig(BaseAlgoConfig):
+    behavior_penalty: BehaviorPenaltyConfig | None = None
+    """Opt-in non-negative behavior shaping; applies to successful rollouts too."""
+
     type: Literal["grpo"] = "grpo"
     """GRPO: scalar advantage = reward minus the per-group mean baseline,
     consumed by the ``rl`` loss component on the rollout's action tokens."""

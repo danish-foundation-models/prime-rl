@@ -181,6 +181,7 @@ class GptOssForCausalLM(GptOssPreTrainedModel):
         labels: torch.LongTensor | None = None,
         logits_to_keep: int | torch.Tensor = 0,
         temperature: torch.Tensor | None = None,
+        selected_token_ids: torch.Tensor | None = None,
         routed_experts: torch.LongTensor | None = None,
         *,
         seq_lens: torch.LongTensor,
@@ -203,6 +204,7 @@ class GptOssForCausalLM(GptOssPreTrainedModel):
             hidden_states[:, slice_indices],
             labels[:, slice_indices] if labels is not None else None,
             temperature=temperature[:, slice_indices] if temperature is not None else None,
+            selected_token_ids=selected_token_ids[:, slice_indices] if selected_token_ids is not None else None,
         )
 
     def init_buffers_post_meta(self) -> None:

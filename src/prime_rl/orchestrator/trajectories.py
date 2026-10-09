@@ -133,6 +133,33 @@ def _loss_weights(branch: vf.Branch, name: str, trained_nodes: set[int]) -> list
     return weights if any(weights) else None
 
 
+def _encode_sampler_topk(branch):
+    nodes = [n for n in branch.nodes if n.sampler_topk_ids is not None]
+    if not nodes:
+        return None, None
+    k = nodes[0].sampler_topk_ids.shape[1]
+    all_ids, all_logps = [], []
+    for node in branch.nodes:
+        ids = np.full((len(node.token_ids), k), -1, dtype=np.int32)
+        logps = np.zeros(ids.shape, dtype=np.float32)
+        if node.sampler_topk_ids is not None:
+            if (
+                node.sampler_topk_ids.shape != (sum(node.mask), k)
+                or node.sampler_topk_logprobs.shape != node.sampler_topk_ids.shape
+            ):
+                raise ValueError("Misaligned sampler top-k evidence in trace")
+            ids[np.asarray(node.mask)] = node.sampler_topk_ids
+            logps[np.asarray(node.mask)] = node.sampler_topk_logprobs
+        all_ids.append(ids)
+        all_logps.append(logps)
+
+    def encode(parts):
+        a = np.concatenate(parts)
+        return EncodedTensor(dtype=str(a.dtype), shape=list(a.shape), data=a.tobytes())
+
+    return encode(all_ids), encode(all_logps)
+
+
 def trace_to_samples(trace: vf.Trace, *, env_name: str = "") -> list[TrainingSample]:
     """Convert a v1 `Trace` into `TrainingSample`s — one per branch.
 
@@ -153,6 +180,7 @@ def trace_to_samples(trace: vf.Trace, *, env_name: str = "") -> list[TrainingSam
         mmd = branch.multi_modal_data
         if mmd is not None:
             mm_kwargs = _encode_mm_kwargs(mmd.mm_items)
+        sampler_ids, sampler_logps = _encode_sampler_topk(branch)
         samples.append(
             TrainingSample(
                 token_ids=token_ids,
@@ -171,6 +199,8 @@ def trace_to_samples(trace: vf.Trace, *, env_name: str = "") -> list[TrainingSam
                 sampling_mask=_encode_sampling_mask(branch.sampling_mask, len(token_ids)),
                 trace_id=trace.id,
                 branch_index=branch.index,
+                sampler_topk_ids=sampler_ids,
+                sampler_topk_logprobs=sampler_logps,
             )
         )
     if not samples:

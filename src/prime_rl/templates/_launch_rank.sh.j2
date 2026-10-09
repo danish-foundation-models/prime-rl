@@ -38,6 +38,10 @@ launch_inference_rank() {
             "${cmd[@]}"
             status=$?
             echo "[inference-rank] exited status=$status port=$port gpus=$gpus"
+            if [ "$status" -eq 0 ] && [ "${PRIME_RL_FAIL_ON_INFERENCE_EXIT:-0}" = 1 ]; then
+                echo "[inference-rank] persistent inference service exited; failing the allocation"
+                status=1
+            fi
             exit "$status"
         ) 2>&1 | tee -a "$log" &
     else
@@ -47,6 +51,10 @@ launch_inference_rank() {
             "${cmd[@]}"
             status=$?
             echo "[inference-rank] exited status=$status port=$port gpus=$gpus"
+            if [ "$status" -eq 0 ] && [ "${PRIME_RL_FAIL_ON_INFERENCE_EXIT:-0}" = 1 ]; then
+                echo "[inference-rank] persistent inference service exited; failing the allocation"
+                status=1
+            fi
             exit "$status"
         ) 2>&1 | tee -a "$log" &
     fi

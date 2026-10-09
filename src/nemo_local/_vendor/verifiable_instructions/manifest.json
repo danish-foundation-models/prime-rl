@@ -1,0 +1,32 @@
+{
+  "repository": "https://github.com/abukharin-nv/verifiable-instructions",
+  "revision": "f46a5ac87b1400a4f8973039844b6be9b56e3faf",
+  "files": [
+    {
+      "path": "__init__.py",
+      "sha256": "0f8b1fdbba9a423c66ba1b33658449b56cec8eb41e3f5b55e0471abe3caf8126",
+      "local_sha256": "9653b3d84124306165e95565430b767cd9d4b704ad53ea4d1314507e8da9bc06"
+    },
+    {
+      "path": "instructions_registry.py",
+      "sha256": "47e23a19aa3943a73de354636618eb8b51adc0da1542d17920fdc2228ac1387d",
+      "local_sha256": "47e23a19aa3943a73de354636618eb8b51adc0da1542d17920fdc2228ac1387d"
+    },
+    {
+      "path": "instructions.py",
+      "sha256": "79261b3c02e16f57c8da2bb429da016999945d53f2056e4c4001733032e4b001",
+      "local_sha256": "79261b3c02e16f57c8da2bb429da016999945d53f2056e4c4001733032e4b001"
+    },
+    {
+      "path": "instructions_util.py",
+      "sha256": "472a1ad29d312336fe824f0f3e0237d76a8d33ad4ca03a1eb053e68825dc1559",
+      "local_sha256": "472a1ad29d312336fe824f0f3e0237d76a8d33ad4ca03a1eb053e68825dc1559"
+    },
+    {
+      "path": "synthesis.py",
+      "sha256": "ee15d506eb45ab1467d93c6d4229cabbfa1c434a34ff6b343278353ff26c5117",
+      "local_sha256": "ee15d506eb45ab1467d93c6d4229cabbfa1c434a34ff6b343278353ff26c5117"
+    }
+  ],
+  "changes": "__init__.py does not import synthesis, which globally suppresses warnings and logs."
+}

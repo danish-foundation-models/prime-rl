@@ -38,9 +38,11 @@ In W&B, each project auto-gets an **"overview" saved view** (train / eval / stab
 
 ### Restarting a run
 
-**Never restart unless the researcher explicitly asked.** Confirm the exact restart command and the conditions that warrant one.
-
-**Never** run kill or launch commands yourself. Hand the researcher the exact command and let them run it; after a restart, verify all processes are back up and progress resumed before the next check-in.
+Stop or restart only within the researcher's authorization, including an
+explicitly approved automatic health policy. Match the exact job/run identity;
+never cancel unrelated work. Do not ask again for authorization already given.
+A health-triggered stop does not itself authorize a restart. After an authorized
+restart, verify processes and useful progress before reporting the run healthy.
 
 ---
 
@@ -152,6 +154,20 @@ All metrics print to the console log (and W&B when configured).
 | orchestrator | `off_policy/{mean,max}`, `off_policy/{in_flight,in_queue}/{mean,max}`, `off_policy/dropped` | per-step staleness of trained rollouts |
 | env server | event loop lag (min/mean/p90/p99/max), active task distribution | periodic |
 
+With `concurrency.throughput_balancing`, inspect `scheduler/ready_traces`,
+`partial_group_episodes`, `buffered_tokens`, and `scheduler/blocked/*` before
+attributing idle inference to too few nodes. Compare `scheduler/trained_share/*`
+against `target_share/*`, plus `batch_share_total_variation` and stale drops.
+With explicit category targets, inspect `batch_balance_blocked` and
+`batch_shortfall/*`: total ready count alone does not imply a shippable batch, and
+a missing category intentionally stalls training instead of changing the mixture.
+The MiMo allocator logs `scheduler/group_budget/*`, `launch_share/*`, and
+`mean_oversampling`; `blocked/source_group_budget` means pending groups exhausted
+those budgets even if active slots remain. Distinguish that from the engine controller
+reducing its active cap. Duration estimates exclude live-policy replacement pauses.
+Episode slots include tool and verification waits; compare them with actual vLLM
+requests. See [throughput scheduling](../../../docs/throughput-scheduling.md).
+
 The trainer warns when batch wait time exceeds active trainer time. Add inference nodes when this warning persists. The orchestrator warns when policy wait time exceeds active orchestrator time. Add trainer nodes when this warning persists. The orchestrator also warns when it discards more than half of an episode window and reports stale, errored, and no-signal counts.
 
 `orchestrator.constant_trainer_batch_size` defaults to `true`. It keeps each rollout batch at `orchestrator.batch_size` effective episodes. Set it to `false` for faster collection with variable trainer batch sizes.
@@ -238,3 +254,63 @@ PRL::Launcher
 ```
 
 For multi-node runs, trainer and inference processes are on separate nodes — use `srun` or `ssh` to inspect them.
+
+### Behavior-shaped runs
+
+When `orchestrator.algo.behavior_penalty` is enabled, compare
+`behavior/task_reward` with `behavior/training_reward`. The raw task score remains
+unchanged; ship-time `info.behavior_shaping` records the training reward and
+malformed message indices. This bounded penalty floors rewards at zero, while
+GRPO advantages may still be negative. All-zero task-reward groups receive no
+new signal from a zero-floored penalty. See `docs/lumi-rl-super.md`.
+
+### Task-image failures and backend health
+
+A confirmed `ImageBuildFailure` is a task-local input failure. The training source
+quarantines the image/recipe-index pair across harnesses, cancels affected groups,
+and persists exclusions in `quarantined-images.json` and checkpoints. Keep the
+failure visible in traces and exclusion metrics; do not count it as poor reward
+or as a backend-wide failure. A repaired index version is independently eligible.
+
+For these LUMI runs, use `lumi_watch_rl_pilot.py --stop-on-infra-failure
+--max-failed-episodes 15 --poll-seconds 15`. Fatal components and sustained
+non-image execution failures still stop the specified job. The threshold counts
+independent incidents within the last 50 eligible episodes: typed
+`ImageBuildPollingError` records with the same incident ID count once. Every
+other failing episode counts independently. Status reports both affected episodes
+and incident counts. Do not deduplicate generic errors by message or task ID;
+new polling attempts get new incident IDs. This avoids treating one shared build
+failure as eight independent outages. The progress guard
+allows 3600 seconds for startup, then 600 seconds without token, successful
+rollout, or optimizer progress. Long generating trajectories remain healthy;
+failed rollouts and fresh timestamps alone do not count as progress. Ignore
+prior-attempt records on resume. See `docs/lumi-rl-expanded-sources.md` for limits.
+
+The eight-replica default also stops below 500 generated tokens/s over a full
+ten-minute window after twenty minutes of generation warmup. Weight transfers
+reset the window. Adjust `--min-generation-tps` for other allocation sizes;
+use zero only when explicitly disabling throughput enforcement. Isolated slow
+polls do not trigger this guard. A slow-rate stop reports measured evidence;
+it does not establish whether the backend, scheduler or model caused the rate.
+
+The generation-throughput floor applies only while training is active. After
+the current attempt publishes `launcher/.trainer.done`, final eval drain can have
+few active requests and low aggregate tokens/s. Keep fatal, infrastructure, and
+no-progress checks active, but disable the throughput floor during that drain.
+
+### Sandbox cleanup after cancellation
+
+A terminal Slurm job and one empty sandbox listing do not prove backend create
+requests have drained. Requests accepted before cancellation can produce
+sandboxes later. Release only the job's capacity/builder reservations, then
+repeat exact-run-label cleanup with fresh ended-job proof and an ownership
+recheck before each deletion. Preserve the initial cleanup record and record
+follow-up sweeps separately. Require repeated successful empty listings over a
+quiet observation period; gateway errors are unknown state, never an empty
+result. Report the observation window and any unresolved API errors rather
+than claiming that future creations are impossible. Do not delete unlabelled
+or other-run sandboxes to compensate for delayed provisioning.
+
+If an ended-job query times out, skip deletion for that sweep and retry later;
+do not terminate the remaining cleanup sweeps. Query the user queue successfully
+and match the exact job ID: `squeue -j` can fail once Slurm purges a finished ID.

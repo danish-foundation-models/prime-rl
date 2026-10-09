@@ -167,6 +167,7 @@ class CheckpointManager:
         self.config = config
         self.skip_optimizer = config.skip_optimizer
         self.ckpt_dir = get_ckpt_dir(output_dir)
+        self.resolved_ckpt_dir = self.ckpt_dir.resolve()
         self.logger = get_logger()
         self.world = get_world()
 
@@ -315,6 +316,19 @@ class CheckpointManager:
                 trainer_ckpt_path = self.get_ckpt_path(ckpt_step)
                 ckpt_path = trainer_ckpt_path.parent
                 if ckpt_path.exists():
+                    # Retention owns only complete, direct step directories in this run.
+                    # Refuse redirected roots/steps and interrupted checkpoint writes.
+                    expected = self.resolved_ckpt_dir / f"step_{ckpt_step}"
+                    if (
+                        self.ckpt_dir.is_symlink()
+                        or self.ckpt_dir.resolve() != self.resolved_ckpt_dir
+                        or ckpt_path.is_symlink()
+                        or ckpt_path.resolve() != expected
+                        or trainer_ckpt_path.is_symlink()
+                        or not (trainer_ckpt_path / ".metadata").is_file()
+                    ):
+                        self.logger.warning(f"Refusing cleanup of unexpected or incomplete checkpoint: {ckpt_path}")
+                        continue
                     self.logger.debug(f"Removing past checkpoint for step {ckpt_step} ({ckpt_path})")
                     _try_rmtree(ckpt_path, self.logger)
 

@@ -17,6 +17,14 @@ class TaskSampler(Iterator[vf.Task], ABC):
         """Choose the next task."""
         raise NotImplementedError
 
+    @property
+    def has_available_tasks(self) -> bool:
+        return True
+
+    def exclude_tasks(self, task_keys: set[str]) -> None:
+        """Exclude unavailable task inputs without changing reward estimates."""
+        raise NotImplementedError("This sampler does not support task exclusions")
+
     def observe(self, group: list[vf.Episode]) -> None:
         """Update sampling state from a finalized group."""
 

@@ -641,6 +641,24 @@ class RLConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def auto_setup_score_centering(self):
+        if self.trainer.loss.type != "score_centering":
+            return self
+        if self.orchestrator.renderer is None:
+            raise ValueError("Score centering requires the renderer train client")
+        samplings = [self.orchestrator.train.sampling] + [s.sampling for s in self.orchestrator.train.source]
+        for sampling in samplings:
+            if sampling.truncates_distribution() or sampling.temperature <= 0:
+                raise ValueError("Score centering currently requires positive temperature and untruncated sampling")
+            sampling.extra_body = {**sampling.extra_body, "score_centering_top_k": self.trainer.loss.top_k}
+        if self.inference is not None:
+            self.inference.vllm.max_logprobs = max(
+                getattr(self.inference.vllm, "max_logprobs", 0) or 0, self.trainer.loss.top_k + 1
+            )
+            self.inference.vllm.logprobs_mode = "processed_logprobs"
+        return self
+
+    @model_validator(mode="after")
     def auto_setup_sampling_mask_capture(self):
         """Truncated train sampling needs the inference server to return the sampling
         masks the trainer replays (OrchestratorConfig guarantees truncating

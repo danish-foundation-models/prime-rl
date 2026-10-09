@@ -1,0 +1,87 @@
+{
+  "repository": "https://github.com/NVIDIA-NeMo/Gym",
+  "revision": "d4c0f86c73c9d9aae46bdb3520bcd8511ed6eaf2",
+  "changes": "Python import prefix only; local adaptations live outside _vendor",
+  "files": [
+    {
+      "upstream_path": "LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "local_sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "upstream_path": "resources_servers/calendar/utils.py",
+      "sha256": "055626c5849f329f081ff6843111839cc89f025d0b2a1ef2b42ecc12975b27f4",
+      "local_sha256": "055626c5849f329f081ff6843111839cc89f025d0b2a1ef2b42ecc12975b27f4"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/utils.py",
+      "sha256": "3d0f578251c25226a006c45ea2988eed61de45d8858a5eed79cc74ac63dce5d6",
+      "local_sha256": "923b9b3ac502c1c9508fbcd9e6166016350e05ae17473097d812c8f88eb7c545"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/csv_data/processed/analytics_data.csv",
+      "sha256": "4a0df10aabc07980f1cc074dc9ab36406ce98dead7e14fe11f72a9f1ba788688",
+      "local_sha256": "4a0df10aabc07980f1cc074dc9ab36406ce98dead7e14fe11f72a9f1ba788688"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/csv_data/processed/calendar_events.csv",
+      "sha256": "6c9df1872d54d0b0d068d1b066766a8ddbc29c3933f1d56c9efd554926312295",
+      "local_sha256": "6c9df1872d54d0b0d068d1b066766a8ddbc29c3933f1d56c9efd554926312295"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/csv_data/processed/customer_relationship_manager_data.csv",
+      "sha256": "599057e4eec3a7c25ac04b4d655ea2c034b7b7782205dc367a28122756e04c41",
+      "local_sha256": "599057e4eec3a7c25ac04b4d655ea2c034b7b7782205dc367a28122756e04c41"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/csv_data/processed/emails.csv",
+      "sha256": "1809e341a0e4f1fd78cf1b759964a42abd28db8c9b9dca364456efc31f82bb31",
+      "local_sha256": "1809e341a0e4f1fd78cf1b759964a42abd28db8c9b9dca364456efc31f82bb31"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/csv_data/processed/project_tasks.csv",
+      "sha256": "fa0c05d5609f49e905342bd12592b09f23eff6147dcf607b808703f45ddbeaeb",
+      "local_sha256": "fa0c05d5609f49e905342bd12592b09f23eff6147dcf607b808703f45ddbeaeb"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/csv_data/raw/email_addresses.csv",
+      "sha256": "1f3465b92eb41b90a973a9b00f35757a23d16839652b5e352e9d217d8e404b0b",
+      "local_sha256": "1f3465b92eb41b90a973a9b00f35757a23d16839652b5e352e9d217d8e404b0b"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/csv_data/raw/events.csv",
+      "sha256": "04ba8c0dddd619bce9683dd3f2565dc0f83ef7ebc07699b62391171df497b548",
+      "local_sha256": "04ba8c0dddd619bce9683dd3f2565dc0f83ef7ebc07699b62391171df497b548"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/workplace_assistant_tools/analytics.py",
+      "sha256": "96fc35e61ceed6dc323485960cdf644ec8c7390421bb65eadab86b28a6a919e0",
+      "local_sha256": "96fc35e61ceed6dc323485960cdf644ec8c7390421bb65eadab86b28a6a919e0"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/workplace_assistant_tools/calendar.py",
+      "sha256": "88016c51f7fcecc98897c1a4060bece2ee3804d60b5f85a80f85869303088fef",
+      "local_sha256": "88016c51f7fcecc98897c1a4060bece2ee3804d60b5f85a80f85869303088fef"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/workplace_assistant_tools/company_directory.py",
+      "sha256": "7d5f3bbe1b2e6d6f41d1b8a06db0bc1c4eaacb423915b44e058af15fcd09c7dd",
+      "local_sha256": "7d5f3bbe1b2e6d6f41d1b8a06db0bc1c4eaacb423915b44e058af15fcd09c7dd"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/workplace_assistant_tools/customer_relationship_manager.py",
+      "sha256": "1db9d57324ce097aeb41cbdde06655442de0a34138293e90bdfeca6ae44a2b2c",
+      "local_sha256": "1db9d57324ce097aeb41cbdde06655442de0a34138293e90bdfeca6ae44a2b2c"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/workplace_assistant_tools/email.py",
+      "sha256": "2c710f6cc5d6d7d3b2830b4567dec8ab34bb04b2249765152bc41f2864a64ac5",
+      "local_sha256": "2c710f6cc5d6d7d3b2830b4567dec8ab34bb04b2249765152bc41f2864a64ac5"
+    },
+    {
+      "upstream_path": "resources_servers/workplace_assistant/workplace_assistant_tools/project_management.py",
+      "sha256": "1eccec5636e01dee6fcda583dbb6189b3a998c3f5572c2038194ac223995dbc9",
+      "local_sha256": "1eccec5636e01dee6fcda583dbb6189b3a998c3f5572c2038194ac223995dbc9"
+    }
+  ]
+}

@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 from verifiers.v1.configs.client import EvalClientConfig
 
 from prime_rl.configs.shared import ClientConfig
@@ -56,7 +57,9 @@ def test_load_lora_adapter_succeeds_on_first_attempt():
     )
 
 
-def test_admin_plane_initializes_nccl():
+@pytest.mark.parametrize("pause_for_init", [False, True])
+def test_admin_plane_initializes_nccl(monkeypatch, pause_for_init):
+    monkeypatch.setenv("PRIME_RL_PAUSE_NCCL_INIT", str(int(pause_for_init)))
     admin_plane = AdminPlane(ClientConfig())
     client = AsyncMock()
     response = MagicMock()
@@ -73,7 +76,9 @@ def test_admin_plane_initializes_nccl():
         )
     )
 
-    client.post.assert_awaited_once_with(
+    paths = [call.args[0] for call in client.post.await_args_list]
+    assert paths == (["/pause", "/init_broadcaster", "/resume"] if pause_for_init else ["/init_broadcaster"])
+    client.post.assert_any_await(
         "/init_broadcaster",
         json={
             "host": "trainer",
@@ -155,3 +160,94 @@ def test_setup_client_preserves_chat_client_defaults():
         base_url="http://worker-a:8000/v1",
         headers={},
     )
+
+
+@pytest.mark.parametrize("outcome", ["server_error", "timeout", "write_timeout", "success"])
+def test_nccl_update_does_not_retry_or_resume_a_failed_receive(outcome):
+    requests = []
+
+    def handle(request):
+        requests.append(request.url.path)
+        if request.url.path == "/update_weights":
+            if outcome == "timeout":
+                raise httpx.ReadTimeout("Lost update acknowledgement", request=request)
+            if outcome == "write_timeout":
+                raise httpx.WriteTimeout("Partial request write", request=request)
+            if outcome == "server_error":
+                return httpx.Response(500, json={"error": "weight receiver OOM"})
+        return httpx.Response(200, json={"status": "ok"})
+
+    async def run():
+        plane = AdminPlane(ClientConfig())
+        await plane.aclose()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url="http://engine") as client:
+            plane.clients = [client]
+            if outcome == "success":
+                await plane.update_weights(None, transport="nccl")
+            else:
+                error = {"timeout": httpx.ReadTimeout, "write_timeout": httpx.WriteTimeout, "server_error": httpx.HTTPStatusError}[outcome]
+                with pytest.raises(error):
+                    await plane.update_weights(None, transport="nccl")
+
+    asyncio.run(run())
+    expected = ["/pause", "/update_weights"]
+    if outcome == "success":
+        expected.append("/resume")
+    assert requests == expected
+
+
+@pytest.mark.parametrize("status_code", [400, 500, 503])
+@pytest.mark.parametrize("pause_for_init", [False, True])
+def test_nccl_initialization_propagates_http_failure(status_code, monkeypatch, pause_for_init):
+    monkeypatch.setenv("PRIME_RL_PAUSE_NCCL_INIT", str(int(pause_for_init)))
+
+    async def run():
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            if request.url.path == "/pause":
+                return httpx.Response(200, json={})
+            return httpx.Response(status_code, json={"error": "broadcaster failed"})
+
+        admin = AdminPlane(ClientConfig())
+        await admin.aclose()
+        async with httpx.AsyncClient(base_url="http://inference", transport=httpx.MockTransport(respond)) as client:
+            admin.clients = [client]
+            with pytest.raises(httpx.HTTPStatusError):
+                await admin.initialize_nccl(host="trainer", port=29501, timeout=1200, inference_world_size=8)
+        assert [request.url.path for request in requests] == (
+            ["/pause", "/init_broadcaster"] if pause_for_init else ["/init_broadcaster"]
+        )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("error_type", [httpx.ConnectTimeout, httpx.ConnectError])
+@pytest.mark.parametrize("persistent", [False, True])
+def test_nccl_update_retries_only_connection_establishment(error_type, persistent):
+    requests = []
+    attempts = 0
+
+    def handle(request):
+        nonlocal attempts
+        requests.append(request.url.path)
+        if request.url.path == "/update_weights":
+            attempts += 1
+            if persistent or attempts == 1:
+                raise error_type("Connection not established", request=request)
+        return httpx.Response(200, json={"status": "ok"})
+
+    async def run():
+        plane = AdminPlane(ClientConfig())
+        await plane.aclose()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handle), base_url="http://engine") as client:
+            plane.clients = [client]
+            if persistent:
+                with pytest.raises(error_type):
+                    await plane.update_weights(None, transport="nccl")
+            else:
+                await plane.update_weights(None, transport="nccl")
+
+    asyncio.run(run())
+    assert requests == ["/pause"] + ["/update_weights"] * (3 if persistent else 2) + ([] if persistent else ["/resume"])

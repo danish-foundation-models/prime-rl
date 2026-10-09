@@ -1,0 +1,65 @@
+# Online-eval smoke cohort. For the full benchmark use num_tasks=830, max_turns=100,
+# sampling.max_tokens=10000; report the chosen judge and retrieval implementation.
+model = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-base-r5-16n-cp8-ep8-bs32-lr1e5-r1/eval-exports/step_2619"
+num_tasks = 32
+num_rollouts = 1
+max_concurrent = 8
+push = false
+output_dir = "/scratch/project_465002751/rasmus/artifacts/evals/search"
+
+[client]
+type = "eval"
+base_url = "http://localhost:8000/v1"
+api_key_var = "VLLM_API_KEY"
+
+[sampling]
+max_tokens = 4096
+temperature = 0.6
+
+[env.taskset]
+id = "browsecomp-plus"
+
+[env.taskset.tools]
+k = 5
+snippet_max_tokens = 512
+include_get_document = false
+
+[env.taskset.task.judge]
+model = "glm-5.3-flash"
+base_url = "https://inference.alexandra.dk/v1"
+api_key_var = "ALEXANDRA_API_KEY"
+question_field = "question"
+
+[env.agent]
+max_turns = 30
+max_output_tokens = 24576
+max_total_tokens = 131072
+
+[env.agent.timeout]
+setup = 300.0
+rollout = 1800.0
+scoring = 120.0
+
+[env.agent.harness]
+id = "null"
+
+[env.agent.runtime]
+type = "ucloud"
+image = "python:3.11-slim"
+cpu = 1.0
+memory = 2.0
+disk = 2.0
+parkable = true
+guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/harnesses-20260920/offline-python.tar.gz"
+labels.run = "browsecomp-plus-search-eval"
+
+
+[env.interception]
+type = "ucloud"
+guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+
+[serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 8

@@ -116,6 +116,9 @@ class AdminPlane:
         inference_world_size: int,
         quantize_in_weight_transfer: bool = False,
     ) -> None:
+        pause_for_init = os.environ.get("PRIME_RL_PAUSE_NCCL_INIT") == "1"
+        if pause_for_init:
+            await _pause_engines(self.clients, step=0)
         gpus_per_server = inference_world_size // len(self.clients)
         get_logger().info(
             f"Initializing NCCL broadcast: {len(self.clients)} servers, "
@@ -141,6 +144,8 @@ class AdminPlane:
                     get_logger().warning(
                         "The route /init_broadcaster does not exist. Skipping NCCL broadcast initialization."
                     )
+                else:
+                    raise
 
         await asyncio.gather(
             *(
@@ -148,6 +153,10 @@ class AdminPlane:
                 for client_num, admin_client in enumerate(self.clients)
             )
         )
+
+        # A failed collective initialization leaves the engines paused.
+        if pause_for_init:
+            await _resume_engines(self.clients)
 
     async def update_weights(
         self,
@@ -161,6 +170,7 @@ class AdminPlane:
         weight_dir_posix = weight_dir.as_posix() if weight_dir is not None else None
 
         await _pause_engines(self.clients, step=step)
+        update_complete = False
         try:
             if on_paused is not None:
                 on_paused()
@@ -171,12 +181,17 @@ class AdminPlane:
                         "/update_weights",
                         json={"weight_dir": weight_dir_posix},
                         timeout_s=UPDATE_WEIGHTS_TIMEOUT_S,
+                        retry_transient=transport != "nccl",
                     )
                     for admin_client in self.clients
                 ]
             )
+            update_complete = True
         finally:
-            await _resume_engines(self.clients)
+            # A failed NCCL receive may have consumed part of the wire stream
+            # and replaced only some model weights. Keep that engine paused.
+            if update_complete or transport != "nccl":
+                await _resume_engines(self.clients)
 
     async def aclose(self) -> None:
         for client in self.clients + self._router_clients:
@@ -254,7 +269,10 @@ def setup_admin_clients(client_config: ClientConfig) -> list[AsyncClient]:
         return AsyncClient(
             base_url=base_url,
             headers=headers,
-            limits=httpx.Limits(max_connections=4, max_keepalive_connections=1),
+            # Dataset decoding can delay this event loop beyond the engine's
+            # keep-alive timeout. A stale pooled socket must not lose a one-shot
+            # collective initialization request; use fresh control connections.
+            limits=httpx.Limits(max_connections=4, max_keepalive_connections=0),
             timeout=httpx.Timeout(None),
         )
 
@@ -339,14 +357,26 @@ ADMIN_TIMEOUT_S = 300.0
 UPDATE_WEIGHTS_TIMEOUT_S = 720.0
 
 
-async def _admin_post(client: AsyncClient, path: str, *, timeout_s: float = ADMIN_TIMEOUT_S, **kwargs) -> None:
+async def _admin_post(
+    client: AsyncClient,
+    path: str,
+    *,
+    timeout_s: float = ADMIN_TIMEOUT_S,
+    retry_transient: bool = True,
+    **kwargs,
+) -> None:
     """POST an admin op with a bounded per-attempt timeout, retrying transient errors.
 
     The total wall-clock budget across all retries is twice the per-attempt timeout.
+    Non-idempotent operations retry only connection establishment failures;
+    ambiguous read/write failures and server responses are never replayed.
     """
     async for attempt in AsyncRetrying(
-        retry=retry_if_exception(_is_retryable_admin_error),
-        stop=stop_after_delay(2 * timeout_s) | stop_after_attempt(10),
+        retry=retry_if_exception(
+            _is_retryable_admin_error if retry_transient
+            else lambda error: isinstance(error, (httpx.ConnectTimeout, httpx.ConnectError))
+        ),
+        stop=stop_after_delay(2 * timeout_s) | stop_after_attempt(10 if retry_transient else 3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     ):

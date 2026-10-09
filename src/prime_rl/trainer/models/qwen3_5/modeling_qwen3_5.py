@@ -335,6 +335,7 @@ class Qwen3_5ForCausalLM(Qwen3_5PreTrainedModel):
         inputs_embeds: torch.Tensor | None = None,
         labels: torch.LongTensor | None = None,
         temperature: torch.Tensor | None = None,
+        selected_token_ids: torch.Tensor | None = None,
         sampling_mask: torch.Tensor | None = None,
         routed_experts: torch.LongTensor | None = None,
         pixel_values: torch.Tensor | None = None,
@@ -369,6 +370,7 @@ class Qwen3_5ForCausalLM(Qwen3_5PreTrainedModel):
             outputs.last_hidden_state,
             labels,
             temperature=temperature,
+            selected_token_ids=selected_token_ids,
             sampling_mask=sampling_mask,
         )
 

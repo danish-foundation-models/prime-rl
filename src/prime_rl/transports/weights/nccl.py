@@ -1,3 +1,4 @@
+import os
 import pickle
 from pathlib import Path
 from typing import Callable, Generator
@@ -18,6 +19,7 @@ from prime_rl.transports.weights.base import WeightReceiver, WeightSender
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.nccl import disable_nccl_p2p_if_unavailable
 from prime_rl.utils.vlm import get_layer_prefix
+from prime_rl.utils.weight_broadcast import WeightBroadcastCommunicator
 from prime_rl.utils.weights import resolve_wire_dtype
 
 
@@ -40,10 +42,24 @@ def broadcast_state_dict(state_dict: dict[str, Tensor], communicator: PyNcclComm
             dtype_groups[dtype] = []
         dtype_groups[dtype].append((key, value))
 
-    # Build metadata: for each dtype group, store keys and shapes
-    metadata = {}
+    bucket_bytes = int(os.environ.get("PRIME_RL_WEIGHT_BUCKET_BYTES", "0"))
+    if bucket_bytes < 0:
+        raise ValueError("PRIME_RL_WEIGHT_BUCKET_BYTES must be nonnegative")
+    buckets = []
     for dtype, items in dtype_groups.items():
-        metadata[dtype] = [(key, value.shape, value.numel()) for key, value in items]
+        bucket, size = [], 0
+        for key, value in items:
+            nbytes = value.numel() * value.element_size()
+            if bucket_bytes and bucket and size + nbytes > bucket_bytes:
+                buckets.append((dtype, bucket))
+                bucket, size = [], 0
+            bucket.append((key, value))
+            size += nbytes
+        if bucket:
+            buckets.append((dtype, bucket))
+    entries = [(dtype, [(key, value.shape, value.numel()) for key, value in items]) for dtype, items in buckets]
+    # Zero preserves the legacy wire format. Whole tensors are never split.
+    metadata = ("bounded-buckets-v1", entries) if bucket_bytes else dict(entries)
 
     # Send metadata
     state = pickle.dumps(metadata)
@@ -53,7 +69,7 @@ def broadcast_state_dict(state_dict: dict[str, Tensor], communicator: PyNcclComm
     communicator.broadcast(state_tensor, src=0)
 
     # Concatenate and broadcast tensors grouped by dtype
-    for dtype, items in dtype_groups.items():
+    for dtype, items in buckets:
         # Flatten all tensors and concatenate
         flat_tensors = [value.flatten() for _, value in items]
         concatenated = torch.cat(flat_tensors)
@@ -146,7 +162,7 @@ class NCCLBroadcaster:
             pg = StatelessProcessGroup.create(
                 host=host, port=port, rank=rank, world_size=world_size, store_timeout=timeout
             )
-            self.communicator = PyNcclCommunicator(pg, device=device)
+            self.communicator = WeightBroadcastCommunicator(pg, device=device)
             self.logger.debug("Initialized NCCL broadcast on master rank")
         else:
             self.logger.debug("Initialized NCCL broadcast on non-master rank (no communicator)")

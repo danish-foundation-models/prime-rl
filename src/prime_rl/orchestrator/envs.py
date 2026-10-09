@@ -20,6 +20,7 @@ keeps the env's task-specific fields as extras (``WireTaskData`` allows them).
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Iterator, Sequence
 from itertools import islice
@@ -66,7 +67,11 @@ class Env:
             raise RuntimeError(f"Env {self.name} not started — call start() first.")
         return self._env_client
 
-    async def start(self) -> None:
+    @property
+    def task_limit(self) -> int | None:
+        return None
+
+    async def start(self, task_cache: dict | None = None) -> None:
         """Connect to the env server and load the taskset client-side."""
         get_logger().debug(f"Connecting {self.name} to env server {self.address}")
         t0 = time.perf_counter()
@@ -74,13 +79,21 @@ class Env:
         # The server may still be coming up (the launcher spawns it concurrently with
         # the orchestrator), so poll until it answers.
         await self.env_client.wait_for_server_startup(timeout=ENV_SERVER_STARTUP_TIMEOUT)
-        taskset = vf.load_taskset(self.config.env.taskset)
+        taskset = await asyncio.to_thread(vf.load_taskset, self.config.env.taskset)
         if type(taskset).INFINITE:
             self.tasks = iter(taskset)
             self.num_tasks = None
         else:
             # Materialize off the event loop — iterating may pull a dataset.
-            materialized = await asyncio.to_thread(lambda: list(taskset))
+            key = (type(taskset), json.dumps(taskset.config.model_dump(mode="json"), sort_keys=True), self.task_limit)
+            cache = task_cache if self.config.share_taskset else None
+            if cache is not None and key in cache:
+                materialized = cache[key]
+                get_logger().info(f"Reusing finite task pool for {self.name}")
+            else:
+                materialized = await asyncio.to_thread(lambda: tuple(islice(taskset, self.task_limit)))
+                if cache is not None:
+                    cache[key] = materialized
             self.tasks = iter(materialized)
             self.num_tasks = len(materialized)
         num_tasks = self.num_tasks if self.num_tasks is not None else "infinite"
@@ -147,8 +160,13 @@ class EvalEnv(Env):
         self.sampling_args = config.sampling.to_sampling_args()
         self.examples: list[vf.Task] = []
 
-    async def start(self) -> None:
-        await super().start()
+    @property
+    def task_limit(self) -> int | None:
+        n = self.config.num_examples
+        return n if n >= 0 else None
+
+    async def start(self, task_cache: dict | None = None) -> None:
+        await super().start(task_cache)
         n = self.config.num_examples
         if self.num_tasks is None and n < 0:
             raise ValueError(f"Eval env {self.name} has an infinite taskset — set num_examples to bound it")
@@ -183,16 +201,16 @@ class Envs(Generic[EnvT]):
         return len(self._envs)
 
     async def start(self) -> None:
-        """Connect to all env servers in parallel — every address is known up front,
-        so there's nothing to serialize on."""
-        # When several env.start()s load_dataset() concurrently, datasets' parallel arrow read
-        # (tqdm thread_map) races in ensure_lock's `del tqdm_class._lock` and crashes with
-        # `AttributeError: type object 'tqdm' has no attribute '_lock'`. Pre-seed the lock so it
-        # isn't created-and-deleted per call.
-        from datasets.utils import tqdm as hf_tqdm
+        """Load sources without concurrent Arrow/Python decoders contending for the GIL."""
+        # Dataset formatting repeatedly crosses the GIL; parallel loader threads
+        # slow even in-memory tasksets and race on datasets/tqdm global state.
+        # Materialization still runs off the event loop in Env.start().
+        # Servers reconstruct tasks from serialized data for every episode; only
+        # read-only client tasks are shared, never runtime or curriculum state.
+        task_cache: dict = {}
+        for env in self:
+            await env.start(task_cache)
 
-        hf_tqdm.set_lock(hf_tqdm.get_lock())
-        await asyncio.gather(*(env.start() for env in self))
 
 
 class TrainEnvs(Envs[TrainEnv]):

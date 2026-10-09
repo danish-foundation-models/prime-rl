@@ -35,7 +35,7 @@ class Progress:
 
 WorkKind = Literal["train", "eval"]
 
-CancelReason = Literal["stale", "overload", "superseded"]
+CancelReason = Literal["stale", "overload", "superseded", "unavailable_task"]
 
 
 @dataclass
@@ -96,6 +96,8 @@ class InflightEpisode:
     step: int
     source_index: int | None = None
     client_config: vf.ClientConfig | None = None
+    pause_seconds_at_start: float | None = None
+    """Cumulative policy-update pause clock at dispatch; None for frozen sources."""
     started_at: float = 0.0
     """``time.monotonic()`` at dispatch; feeds episode-duration estimates."""
 

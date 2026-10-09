@@ -578,6 +578,15 @@ class IPOLossConfig(BaseConfig):
     """Temperature for the KL term."""
 
 
+class ScoreCenteringLossConfig(BaseConfig):
+    type: Literal["score_centering"] = "score_centering"
+    top_k: int = Field(32, ge=1)
+    """Number of sampler head probabilities retained per generated token."""
+    importance_sampling: Literal["none", "tis"] = "none"
+    tis_cap: float = Field(2.0, gt=0)
+    tail_epsilon: float = Field(1e-6, gt=0, lt=1)
+
+
 class IcePopLossConfig(BaseConfig):
     type: Literal["icepop"] = "icepop"
 
@@ -607,7 +616,9 @@ class CustomLossConfig(BaseConfig):
     """Kwargs forwarded to the loss function."""
 
 
-LossConfig: TypeAlias = Annotated[IPOLossConfig | IcePopLossConfig | CustomLossConfig, Field(discriminator="type")]
+LossConfig: TypeAlias = Annotated[
+    IPOLossConfig | IcePopLossConfig | ScoreCenteringLossConfig | CustomLossConfig, Field(discriminator="type")
+]
 
 
 class FakeDataLoaderConfig(BaseConfig):

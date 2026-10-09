@@ -166,3 +166,18 @@ Before handoff, reload the report and verify through the dashboard API that
 every referenced citation resolves uniquely to its episode, node, and quote.
 Confirm zero broken citations, one rendered title, and no unsupported relative
 links.
+
+Loop diagnostics live in trace metadata under **loop observations** and `loop/*` metrics.
+Treat flags as review candidates, not confirmed loops. Node references are zero-based;
+reasoning spans use whitespace words. The backfill tool writes a separate versioned
+annotation stream and refuses overwrite; it does not revise historical rewards or
+training metrics. See docs/lumi-rl-expanded-sources.md for thresholds and limitations.
+
+Loop flags require repetition persisting to the last observed activity. Repetition
+followed by further activity stays evidence only. The ending shows cutoff/error
+context; a censored trace cannot establish that recovery would never occur.
+
+Text observations cover reasoning and content jointly; `low_novelty` labels recurring
+prose with varying wording. Action cycles can flag changing outputs or pending calls.
+Inspect the evidence: repeated polling is not necessarily a stuck agent. Quoted code
+and XML edit payloads are excluded from the prose detector.

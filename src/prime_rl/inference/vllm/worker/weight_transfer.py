@@ -1,3 +1,6 @@
+import os
+import time
+from prime_rl.inference.vllm.worker.expert_reload_map import snapshot_expert_maps
 from typing import Generator, Iterable
 
 import torch
@@ -16,12 +19,28 @@ def load_weights_checkpoint_layerwise(
     model_config,
     vllm_config,
 ) -> None:
-    logger.info("Reloading checkpoint-format weights with vLLM layerwise processing")
+    """Reload paused inference weights with one CPU snapshot of expert placement."""
+    from prime_rl.inference.vllm.worker import nccl as wire
+
     device = next(model.parameters()).device
-    with torch.device(device), set_current_vllm_config(vllm_config):
-        initialize_layerwise_reload(model)
-        model.load_weights(state_iter)  # type: ignore
-        finalize_layerwise_reload(model, model_config)
+    previous_skip = wire.RELOAD_SKIP_NAMES
+    wire.RELOAD_SKIP_NAMES = (
+        nonlocal_expert_names(model)
+        if os.environ.get("PRIME_RL_RELOAD_FILTER_NEMOTRON_EXPERTS") == "1"
+        else frozenset()
+    )
+    torch.cuda.synchronize(device)
+    started = time.perf_counter()
+    try:
+        with torch.device(device), set_current_vllm_config(vllm_config), snapshot_expert_maps(model):
+            initialize_layerwise_reload(model)
+            model.load_weights(state_iter)
+            finalize_layerwise_reload(model, model_config)
+            torch.cuda.synchronize(device)
+    finally:
+        wire.RELOAD_SKIP_NAMES = previous_skip
+    logger.info("Checkpoint reload completed in %.3fs", time.perf_counter() - started)
+
 
 
 def _invert_logical_to_physical_map(logical_to_physical_map: torch.Tensor, num_physical_experts: int) -> torch.Tensor:
@@ -163,3 +182,25 @@ def update_mla_absorbed_weights(model: Module) -> None:
             module.W_UK_T.copy_(w_uk.permute(1, 2, 0))
 
         logger.debug(f"Updated MLA absorbed weights for module {name}")
+
+
+def nonlocal_expert_names(model):
+    # Receive filtering supports only unfused Nemotron checkpoint expert weights.
+    names=set(); matched=0
+    for name,module in model.named_modules():
+        if not (name.startswith("model.layers.") and name.endswith(".mixer.experts.routed_experts")):
+            continue
+        manager=module.expert_map_manager
+        if module.moe_config.moe_parallel_config.enable_eplb:
+            raise RuntimeError("Nemotron receive filter does not support EPLB")
+        placement=manager.expert_map
+        if placement is None:
+            continue
+        matched+=1
+        prefix="backbone."+name[len("model."):].removesuffix(".routed_experts")
+        for expert,local in enumerate(placement.detach().cpu().tolist()):
+            if local == -1:
+                names.update(f"{prefix}.{expert}.{proj}.weight" for proj in ("up_proj","down_proj"))
+    if not matched or not names:
+        raise RuntimeError("No supported EP Nemotron layers found for receive filtering")
+    return frozenset(names)

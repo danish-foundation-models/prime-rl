@@ -32,12 +32,18 @@ mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" \
 export PROJECT_DIR SIF LUMI_ROOT
 PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
 
-PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:/workdir/deps/research-environments/environments/mini_swe_agent_v2:$PRIME_RL_METADATA_DIR
+source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
+prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR" /workdir "$PROJECT_DIR"
+CONNECT_PYTHON_MASK_DIR=$(prime_rl_lumi_connect_python_mask "$LUMI_ROOT")
 PATH_VALUE=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
 PASSTHROUGH_ENV=()
 for name in \
   HF_TOKEN HUGGING_FACE_HUB_TOKEN WANDB_API_KEY \
+  UCLOUD_SANDBOX_URL UCLOUD_SANDBOX_API_URL UCLOUD_SANDBOX_API_TOKEN \
+  UCLOUD_RELAY_URL UCLOUD_RELAY_WORKER_TOKEN UCLOUD_RELAY_SANDBOX_TOKEN \
+  UCLOUD_RELAY_BRIDGE_FORWARD_TIMEOUT_SECONDS UCLOUD_RELAY_OPENAI_BASE_URL_TEMPLATE \
   NEVER_CLEAN_OUTPUT_DIR \
+  ROCR_VISIBLE_DEVICES HIP_VISIBLE_DEVICES CUDA_VISIBLE_DEVICES GPU_DEVICE_ORDINAL \
   PRIME_RL_SFT_DEBUG_GRADS PRIME_RL_SFT_DEBUG_GRADS_STEPS PRIME_RL_SFT_DEBUG_GRADS_TOPK
 do
   if [[ -n ${!name+x} ]]; then
@@ -49,6 +55,7 @@ exec singularity exec \
   --cleanenv \
   -B "$PROJECT_DIR:/workdir" \
   -B /scratch/project_465002751:/scratch/project_465002751 \
+  -B "$CONNECT_PYTHON_MASK_DIR:/opt/venv/lib/python3.12/site-packages/connect_python-0.9.0.dist-info" \
   --home "$CONTAINER_HOME" \
   --pwd /workdir \
   --env "PATH=$PATH_VALUE" \

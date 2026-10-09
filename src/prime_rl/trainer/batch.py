@@ -281,6 +281,47 @@ def _pad_routed_experts(micro_batch: MicroBatch, padding_size: int) -> None:
 _SAMPLING_MASK_ITEMSIZE = np.dtype(np.int32).itemsize
 
 
+def _topk_array(payload, n, dtype):
+    if (
+        payload is None
+        or payload.dtype != dtype
+        or len(payload.shape) != 2
+        or payload.shape[0] != n
+        or payload.shape[1] < 1
+    ):
+        raise ValueError("Invalid sampler top-k tensor shape or dtype")
+    return np.frombuffer(payload.data, dtype=dtype).reshape(payload.shape)
+
+
+def _topk_encode(a):
+    return EncodedTensor(dtype=str(a.dtype), shape=list(a.shape), data=a.tobytes())
+
+
+def _pack_sampler_topk(samples):
+    supplied = [s for s in samples if s.sampler_topk_ids is not None]
+    if not supplied:
+        if any(s.sampler_topk_logprobs is not None for s in samples):
+            raise ValueError("Sampler probabilities without token IDs")
+        return None, None
+    k = supplied[0].sampler_topk_ids.shape[1]
+    ids, values = [], []
+    for sample in samples:
+        n = len(sample.input_ids)
+        if sample.sampler_topk_ids is None:
+            if sample.sampler_topk_logprobs is not None:
+                raise ValueError("Sampler probabilities without token IDs")
+            ids.append(np.full((n, k), -1, dtype=np.int32))
+            values.append(np.zeros((n, k), dtype=np.float32))
+        else:
+            a = _topk_array(sample.sampler_topk_ids, n, "int32")
+            b = _topk_array(sample.sampler_topk_logprobs, n, "float32")
+            if a.shape != (n, k) or b.shape != a.shape:
+                raise ValueError("Sampler top-k widths must match in packed batches")
+            ids.append(a)
+            values.append(b)
+    return _topk_encode(np.concatenate(ids)), _topk_encode(np.concatenate(values))
+
+
 def _empty_sampling_mask(num_tokens: int) -> SamplingMask:
     return SamplingMask(ids=b"", counts=b"\0" * (num_tokens * _SAMPLING_MASK_ITEMSIZE))
 
@@ -411,6 +452,15 @@ def prepare_sample(training_example: TrainingSample, seq_len: int) -> MicroBatch
     # No copy needed: SamplingMask holds immutable bytes, and _pad_sampling_mask only
     # ever mutates _materialize_bin's own accumulator.
     sampling_mask = training_example.sampling_mask
+    sampler_topk_ids = training_example.sampler_topk_ids
+    sampler_topk_logprobs = training_example.sampler_topk_logprobs
+    if sampler_topk_ids is not None:
+        a = _topk_array(sampler_topk_ids, len(input_ids), "int32")
+        b = _topk_array(sampler_topk_logprobs, len(input_ids), "float32")
+        if a.shape != b.shape:
+            raise ValueError("Sampler head shape mismatch")
+        sampler_topk_ids = _topk_encode(a[:seq_len])
+        sampler_topk_logprobs = _topk_encode(b[:seq_len])
 
     if len(input_ids) > seq_len:
         # Multimodal: never split an image's placeholder block — cut to a whole-image boundary
@@ -486,6 +536,8 @@ def prepare_sample(training_example: TrainingSample, seq_len: int) -> MicroBatch
         temperatures=temperatures,
         routed_experts=routed_experts,
         sampling_mask=sampling_mask,
+        sampler_topk_ids=sampler_topk_ids,
+        sampler_topk_logprobs=sampler_topk_logprobs,
         mm_token_type_ids=mm_token_type_ids,
         env_names=env_names,
         mm_kwargs=mm_kwargs,
@@ -645,6 +697,7 @@ def _materialize_bin(bin_content: _MicroBatchBin) -> MicroBatch:
         trace_ids.extend(sample.trace_ids or [""] * len(sample.sequence_lengths))
         branch_indices.extend(sample.branch_indices or [-1] * len(sample.sequence_lengths))
 
+    sampler_topk_ids, sampler_topk_logprobs = _pack_sampler_topk(bin_content.samples)
     sequence_lengths = [len(sample.input_ids) for sample in bin_content.samples]
     assert sum(sequence_lengths) == len(input_ids), (sequence_lengths, len(input_ids))
     assert sum(seq_lens) == len(input_ids), (seq_lens, len(input_ids))
@@ -660,6 +713,8 @@ def _materialize_bin(bin_content: _MicroBatchBin) -> MicroBatch:
         temperatures=temperatures,
         routed_experts=routed_experts,
         sampling_mask=sampling_mask,
+        sampler_topk_ids=sampler_topk_ids,
+        sampler_topk_logprobs=sampler_topk_logprobs,
         mm_token_type_ids=mm_token_type_ids,
         env_names=env_names,
         mm_kwargs=mm_kwargs,
@@ -791,6 +846,11 @@ def pad_micro_batch(micro_batch: MicroBatch, pad_to_multiple_of: int) -> MicroBa
         _pad_routed_experts(micro_batch, padding_size)
     if micro_batch.sampling_mask is not None:
         _pad_sampling_mask(micro_batch, padding_size)
+    for name, fill, dtype in [("sampler_topk_ids", -1, "int32"), ("sampler_topk_logprobs", 0, "float32")]:
+        payload = getattr(micro_batch, name)
+        if payload is not None:
+            a = _topk_array(payload, len(micro_batch.input_ids) - padding_size, dtype)
+            setattr(micro_batch, name, _topk_encode(np.pad(a, ((0, padding_size), (0, 0)), constant_values=fill)))
     micro_batch.env_names.extend([""] * padding_size)
 
     return micro_batch

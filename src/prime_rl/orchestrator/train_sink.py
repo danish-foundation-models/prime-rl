@@ -85,6 +85,8 @@ class TrainSink:
         self.batch_size = batch_size
         self.token_batch_size = token_batch_size
         self.on_result = on_result
+        self.on_group_retired: Callable[[str], None] | None = None
+        self.scheduler = None
 
         self.pending_episodes = TrainEpisodes()
         self.pending_failures: list[DispatchFailure] = []
@@ -120,6 +122,11 @@ class TrainSink:
         episodes = sum(len(group) for group in self.pending_groups.values())
         failures = sum(len(group) for group in self.pending_group_failures.values())
         return episodes + failures
+
+    def buffered_token_count(self) -> int:
+        ready = sum(len(sample.token_ids) for samples in self.pending_batch.values() for sample in samples)
+        partial = sum(episode.num_total_tokens for group in self.pending_groups.values() for episode in group)
+        return ready + partial
 
     def pending_batch_by_env(self) -> dict[str, int]:
         counts: dict[str, int] = defaultdict(int)
@@ -177,6 +184,9 @@ class TrainSink:
             if self.batch_size is not None
             else self.pending_tokens >= (self.token_batch_size or 0)
         )
+        if ready and self.scheduler is not None and self.batch_size is not None:
+            candidates = [(tid, episode_env_name(self.episode_by_trace[tid])) for tid in self.pending_batch]
+            ready = len(self.scheduler.select(candidates, self.batch_size)) == self.batch_size
         return self.process_batch() if ready else None
 
     def _drop_stale(self, trace_ids: Iterable[str] | None = None) -> None:
@@ -226,6 +236,13 @@ class TrainSink:
         await self.train_envs.get(env_name).algorithm.finalize_episode(episode)
 
     async def process_group(self, group_id: str) -> None:
+        try:
+            await self._process_group(group_id)
+        finally:
+            if self.on_group_retired is not None:
+                self.on_group_retired(group_id)
+
+    async def _process_group(self, group_id: str) -> None:
         group = self.pending_groups.pop(group_id, [])
         failures = self.pending_group_failures.pop(group_id, [])
         cancellation = self.pending_group_cancellations.pop(group_id, None)
@@ -268,6 +285,8 @@ class TrainSink:
             await env.algorithm.finalize_group(group)
         admitted = self._admit(group) if group else False
         if not survivors or not admitted:
+            if self.scheduler is not None:
+                self.scheduler.observe_yield(env_name, n_owed, 0)
             self.pending_episodes.extend(group, admitted=admitted)
             self._record_zero_output(group, survivors, n_owed)
             reason = "no trainable survivors" if not survivors else "rejected by curriculum"
@@ -298,6 +317,8 @@ class TrainSink:
             if samples:
                 samples_by_trace[trace.id] = samples
 
+        if self.scheduler is not None:
+            self.scheduler.observe_yield(env_name, n_owed, len(samples_by_trace))
         self.pending_episodes.extend(group, sampled_trace_ids=set(samples_by_trace), admitted=True)
         if not samples_by_trace:
             self._record_zero_output(group, survivors, n_owed)
@@ -365,7 +386,15 @@ class TrainSink:
     def process_batch(self) -> TrainBatch:
         items = list(self.pending_batch.items())
         if self.batch_size is not None:
-            selected = items[: self.batch_size]
+            if self.scheduler is None:
+                selected = items[: self.batch_size]
+            else:
+                chosen = self.scheduler.select(
+                    [(tid, episode_env_name(self.episode_by_trace[tid])) for tid, _ in items], self.batch_size
+                )
+                if len(chosen) != self.batch_size:
+                    raise RuntimeError("Cannot form a complete batch within configured category bounds")
+                selected = [(tid, self.pending_batch[tid]) for tid in chosen]
         else:
             assert self.token_batch_size is not None
             cut = 0
@@ -392,6 +421,8 @@ class TrainSink:
         samples = [sample for trace_samples in selected_by_trace.values() for sample in trace_samples]
 
         shipped_ids = set(selected_by_trace)
+        if self.scheduler is not None:
+            self.scheduler.consume([episode_env_name(self.episode_by_trace[tid]) for tid in selected_by_trace])
         buffered_episode_ids = {self.episode_by_trace[trace_id].id for trace_id in self.pending_batch}
         traces_by_episode: dict[int, list[vf.Trace]] = defaultdict(list)
         selected_episodes: dict[int, vf.Episode] = {}

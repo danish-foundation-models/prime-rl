@@ -3,6 +3,8 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Callable
 
+from verifiers.v1.graph import message_hash
+
 from prime_rl.configs.algorithm import EchoAlgoConfig
 from prime_rl.orchestrator.algo.grpo import GRPOAlgorithm
 from prime_rl.orchestrator.trajectories import iter_trainable_branches
@@ -38,6 +40,17 @@ class EchoAlgorithm(GRPOAlgorithm):
             if not trace.has_error and trace.agent.trainable:
                 self._weight_observations(trace)
 
+    async def score_group(self, episodes: list[vf.Episode]) -> None:
+        await super().score_group(episodes)
+        for episode in episodes:
+            for trace in episode.traces:
+                if trace.has_error or not trace.agent.trainable:
+                    continue
+                has_rl = any(value != 0 for node in trace.nodes for value in node.advantages or [])
+                has_ce = any(value != 0 for node in trace.nodes for value in (node.loss_weights or {}).get("ce", []))
+                trace.metrics["echo/ce_only"] = float(has_ce and not has_rl)
+                trace.metrics["echo/rl_bearing"] = float(has_rl)
+
     def _weight_observations(self, trace: vf.Trace) -> None:
         """Write graph-native ``ce`` weights over the env-provided
         observation tokens of later turns. Provenance is structural under v1:
@@ -55,6 +68,22 @@ class EchoAlgorithm(GRPOAlgorithm):
         (role tags, separators, tool-response wraps) is excluded. Nodes without
         attribution (the default renderer, or relay turns with no token ids)
         fall back to weighting the whole non-sampled span."""
+        # A harness may reserialize a sampled assistant into a new physical
+        # prefix. Match the full typed message, including normalized tool args,
+        # only against earlier sampled nodes. IDs alone are reused across turns.
+        sampled_messages: set[str] = set()
+        restated_actions: set[int] = set()
+        initial_observations: set[str] = set()
+        had_response = False
+        for node in trace.nodes:
+            if node.sampled:
+                sampled_messages.add(message_hash(node.message))
+                had_response = True
+            elif not had_response and node.message.role in self.role_weights:
+                initial_observations.add(message_hash(node.message))
+            elif node.message.role == "assistant" and message_hash(node.message) in sampled_messages:
+                restated_actions.add(id(node))
+
         trainable_branches = [branch for branch, _ in iter_trainable_branches(trace)]
         filter_masks = self._filter_masks(trace, trainable_branches) if self.filter_fn is not None else None
         for branch_idx, branch in enumerate(trainable_branches):
@@ -64,7 +93,13 @@ class EchoAlgorithm(GRPOAlgorithm):
             for node in branch.nodes:
                 span = len(node.token_ids)
                 role = node.message.role
-                if seen_response and not node.sampled and role in self.role_weights:
+                if (
+                    seen_response
+                    and not node.sampled
+                    and role in self.role_weights
+                    and message_hash(node.message) not in initial_observations
+                    and id(node) not in restated_actions
+                ):
                     weight = self.role_weights[role]
                     keep_mask = filter_masks[branch_idx] if filter_masks is not None else None
                     # Per-token content granularity when the renderer attributed it; otherwise
@@ -75,7 +110,7 @@ class EchoAlgorithm(GRPOAlgorithm):
                             continue
                         if keep_mask is None or keep_mask[i]:
                             weights[i] = weight
-                if node.sampled:
+                if node.sampled or id(node) in restated_actions:
                     seen_response = True
                 offset += span
             offset = 0
@@ -88,6 +123,11 @@ class EchoAlgorithm(GRPOAlgorithm):
                     streams["ce"] = [max(old, new) for old, new in zip(current, node_weights, strict=True)]
                     node.loss_weights = streams
                 offset = end
+
+        trace.metrics["echo/restated_actions"] = float(len(restated_actions))
+        trace.metrics["echo/observation_tokens"] = float(
+            sum(sum(weight != 0 for weight in (node.loss_weights or {}).get("ce", [])) for node in trace.nodes)
+        )
 
     def _filter_masks(self, trace: vf.Trace, trainable_branches: list) -> list[list[bool]]:
         """Invoke the user echo filter and validate its shape: one keep-mask

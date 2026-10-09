@@ -51,7 +51,6 @@ from prime_rl.trainer.models.glm_moe_dsa.sparse_mla_attention import Indexer
 from prime_rl.trainer.models.layers.fp8_linear import replace_linear_with_fp8_blockwise_linear
 from prime_rl.trainer.models.layers.lm_head import inject_prime_lm_head
 from prime_rl.trainer.models.layers.moe import MoE, TokenChoiceTopKRouter
-from prime_rl.trainer.models.layers.mxfp8_linear import replace_linear_with_mxfp8_linear
 from prime_rl.trainer.moe_runtime import configure_moe_runtime
 from prime_rl.trainer.parallel_dims import ParallelDims
 from prime_rl.trainer.world import get_world
@@ -906,6 +905,8 @@ def apply_quantization(model: nn.Module, config: ModelConfig) -> None:
             raise ValueError(
                 f"MXFP8 quantization requires SM100 (Blackwell), but device is SM{capability[0]}{capability[1]}."
             )
+        from prime_rl.trainer.models.layers.mxfp8_linear import replace_linear_with_mxfp8_linear
+
         replace_linear_with_mxfp8_linear(model, recipe=quant.recipe, ignore_modules=quant.ignore_patterns)
 
 
@@ -1103,6 +1104,7 @@ def forward(
     temperature: Tensor | None = None,
     routed_experts: Int[Tensor, "batch seq layers topk"] | None = None,
     sampling_mask: Int[Tensor, "batch seq mask"] | None = None,
+    selected_token_ids: Tensor | None = None,
     # Generic multimodal kwargs (e.g. {"pixel_values": ...,
     # "image_grid_thw": ...} for Qwen3-VL; just {"pixel_values": ...}
     # for Gemma3). Passed straight through to ``model(**kwargs)`` so
@@ -1124,6 +1126,8 @@ def forward(
     # forwards don't know the kwarg, so only pass it when present.
     if sampling_mask is not None:
         kwargs["sampling_mask"] = sampling_mask
+    if selected_token_ids is not None:
+        kwargs["selected_token_ids"] = selected_token_ids
 
     if mm_kwargs:
         # Forward the per-model multimodal tensors verbatim, plus the

@@ -1,0 +1,379 @@
+# Pilot: submitted after successful host-cache reload and CP8 trainer-memory diagnostics.
+output_dir = "/scratch/project_465002751/rasmus/artifacts/training"
+clean = false
+max_steps = 20
+seq_len = 131072
+
+[run]
+name = "rl-super-r5-step1250-pilot20-128k-8t8i-c128-optcpu-20260917"
+
+[deployment]
+type = "multi_node"
+num_train_nodes = 8
+num_infer_nodes = 1
+num_infer_replicas = 8
+gpus_per_node = 8
+orchestrator_on_inference = true
+
+[slurm]
+job_name = "super-rl-pilot20"
+template_path = "src/prime_rl/templates/multi_node_rl_lumi.sbatch.j2"
+partition = "standard-g"
+account = "project_465002751"
+time = "12:00:00"
+cleanup_grace_period = 60
+
+[model]
+name = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-base-r5-16n-cp8-ep8-bs32-lr1e5-r1/eval-exports/step_1250"
+
+[weight_broadcast]
+type = "nccl"
+timeout = 1800
+
+[trainer]
+enable_router_replay = false
+dist_timeout_seconds = 1800
+
+[trainer.model]
+conversion_dir = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/conversion"
+attn = "flash_attention_2"
+impl = "custom"
+optim_cpu_offload = true
+fsdp_cpu_offload = false
+reshard_after_forward = true
+ep = 8
+cp = 8
+cp_style = "ulysses"
+fused_lm_head_token_chunk_size = 2048
+
+[trainer.model.ac_offloading]
+max_inflight_activations = 2
+
+[trainer.model.ac]
+mode = "full"
+
+[trainer.model.compile]
+fullgraph = false
+
+[trainer.optim]
+type = "adamw"
+lr = 1e-6
+weight_decay = 0.1
+max_norm = 1.0
+
+[trainer.loss]
+type = "ipo"
+
+[orchestrator]
+batch_size = 64
+group_size = 8
+max_off_policy_steps = 5
+
+[orchestrator.concurrency]
+initial_inflight = 128
+min_inflight = 128
+max_inflight = 128
+
+[orchestrator.renderer]
+name = "nemotron-3"
+enable_thinking = true
+truncate_history_thinking = false
+low_effort = false
+
+[orchestrator.algo]
+type = "grpo"
+
+[orchestrator.train.sampling]
+temperature = 1.0
+max_completion_tokens = 4096
+
+[[orchestrator.train.source]]
+name = "scaleswe"
+ratio = 1.0
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "scaleswe"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr247', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/offline-harness-v2/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-rl-pilot20-128k-c128-optcpu-20260917"
+env.agent.runtime.creates_per_sec = 0.5
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 128
+
+[[orchestrator.train.source]]
+name = "r2e-gym"
+ratio = 1.0
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "r2e-gym"
+env.taskset.filter_fn = "lambda row: row.get('commit_hash') not in ['71b7f3daf388e7657f58bc05d2105dce0cdf12f0', '948f95756c79543bb089a94a85e73011a3730b2d', '99cddecd2812b142dc9d7fb05870745b6595896b', 'fef3ceb2c02ef241a508ee020fe2617e10e33e42']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/offline-harness-v2/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-rl-pilot20-128k-c128-optcpu-20260917"
+env.agent.runtime.creates_per_sec = 0.5
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 128
+
+[[orchestrator.train.source]]
+name = "swelego"
+ratio = 1.0
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "swelego"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') not in ['ResearchObject__ro-crate-py-169', 'encode__starlette-1041', 'fgmacedo__python-statemachine-392', 'pydata__xarray-3173', 'sphinx-doc__sphinx-5203', 'sympy__sympy-13553', 'sympy__sympy-13726', 'sympy__sympy-14278', 'sympy__sympy-15338', 'sympy__sympy-15602', 'sympy__sympy-17635', 'sympy__sympy-24219']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/offline-harness-v2/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-rl-pilot20-128k-c128-optcpu-20260917"
+env.agent.runtime.creates_per_sec = 0.5
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 128
+
+[[orchestrator.train.source]]
+name = "multiswe"
+ratio = 0.25
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.seed = 1250
+curriculum.gates.zero_advantage.type = "advantage_range"
+env.taskset.id = "multiswe"
+env.taskset.image_manifest = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/multiswe-images/manifest.validated.json"
+env.taskset.resources = { cpu = 4, memory = 8, disk = 20 }
+env.taskset.filter_fn = "lambda row: row.get('instance_id') in ['gohugoio__hugo-7890', 'gohugoio__hugo-7058', 'junit-team__junit5-3562']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.image_reference_type = "name"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/offline-harness-v2/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-rl-pilot20-128k-c128-optcpu-20260917"
+env.agent.runtime.creates_per_sec = 0.5
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 128
+
+[inference]
+use_deep_gemm = false
+enable_fp32_lm_head = true
+enable_fp32_router_logits = true
+
+# Host prefix cache: aggregate across the eight TP workers on each node.
+[inference.kv_cache_offload]
+type = "native"
+[inference.kv_cache_offload.cpu]
+num_bytes = 206158430208 # 192 GiB per inference replica/node
+
+[inference.deployment]
+type = "multi_node"
+num_nodes = 1
+gpus_per_node = 8
+
+[inference.router]
+type = "llm-d"
+
+[inference.router.scorers]
+kv-cache-utilization-scorer = 3.0
+queue-scorer = 2.0
+active-request-scorer = 1.0
+prefix-cache-scorer = 1.0
+
+[inference.vllm]
+# Validated with empty and 81%-occupied reloads plus isolated 128K output parity.
+kv_cache_memory_bytes = 15032385536
+worker_cls = "dfm_evals.nemotron_worker.VerifiedSuperWorker"
+attention_backend = "ROCM_AITER_FA"
+safetensors_load_strategy = "prefetch"
+trust_remote_code = true
+dtype = "bfloat16"
+max_model_len = 131072
+tool_call_parser = "qwen3_coder"
+reasoning_parser = "nemotron_v3"
+tensor_parallel_size = 8
+data_parallel_size = 1
+enable_prefix_caching = true
+mamba_cache_mode = "align"
+gpu_memory_utilization = 0.65
+enable_expert_parallel = true
+all2all_backend = "allgather_reducescatter"
+enable_eplb = false
+enable_dbo = false
+language_model_only = true
+max_num_batched_tokens = 32768
+max_num_seqs = 64
+block_size = 2048
+mamba_ssm_cache_dtype = "float32"
+
+[ckpt]
+interval = 10
+
+[monitors.file]
+
+[log]
+level = "info"
+
+[orchestrator.eval]
+interval = 10
+num_examples = 4
+group_size = 1
+skip_first_step = false
+
+[orchestrator.eval.sampling]
+temperature = 1.0
+max_completion_tokens = 4096
+
+[[orchestrator.eval.source]]
+name = "scaleswe-heldout"
+env.taskset.id = "scaleswe"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') in ['miguelgrinberg_flask-migrate_pr523', 'materialsvirtuallab_monty_pr152', 'k2-fsa_sherpa-onnx_pr247', 'spyoungtech_json-five_pr19']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/offline-harness-v2/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-rl-pilot20-128k-c128-optcpu-20260917"
+env.agent.runtime.creates_per_sec = 0.5
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 2
+
+[[orchestrator.eval.source]]
+name = "r2e-gym-heldout"
+env.taskset.id = "r2e-gym"
+env.taskset.filter_fn = "lambda row: row.get('commit_hash') in ['71b7f3daf388e7657f58bc05d2105dce0cdf12f0', 'fef3ceb2c02ef241a508ee020fe2617e10e33e42', '99cddecd2812b142dc9d7fb05870745b6595896b', '948f95756c79543bb089a94a85e73011a3730b2d']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/offline-harness-v2/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-rl-pilot20-128k-c128-optcpu-20260917"
+env.agent.runtime.creates_per_sec = 0.5
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 2
+
+[[orchestrator.eval.source]]
+name = "swelego-heldout"
+env.taskset.id = "swelego"
+env.taskset.filter_fn = "lambda row: row.get('instance_id') in ['encode__starlette-1041', 'sphinx-doc__sphinx-5203', 'fgmacedo__python-statemachine-392', 'ResearchObject__ro-crate-py-169']"
+env.interception.type = "ucloud"
+env.interception.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.max_turns = 30
+env.agent.max_output_tokens = 24576
+env.agent.max_total_tokens = 131072
+env.agent.timeout.setup = 900.0
+env.agent.timeout.rollout = 3600.0
+env.agent.timeout.finalize = 300.0
+env.agent.timeout.scoring = 1200.0
+env.agent.harness.id = "bash"
+env.agent.harness.tool_timeout = 120.0
+env.agent.runtime.type = "ucloud"
+env.agent.runtime.guest_relay_url = "http://gateway-live-ucloud-20260824a:8092"
+env.agent.runtime.network_access = true
+env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/offline-harness-v2/offline-python.tar.gz"
+env.agent.runtime.labels.run = "super-r5-rl-pilot20-128k-c128-optcpu-20260917"
+env.agent.runtime.creates_per_sec = 0.5
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 2
+
+
+[env_vars]
+HF_HUB_OFFLINE = "1"
+HF_DATASETS_OFFLINE = "1"
+NCCL_DEBUG = "INFO"
+NCCL_DEBUG_SUBSYS = "INIT,NET"
+PYTHONFAULTHANDLER = "1"
+PRIME_RL_FAIL_ON_INFERENCE_EXIT = "1"
+NCCL_DMABUF_ENABLE = "0"
+TORCH_NCCL_HIGH_PRIORITY = "1"
+GPU_MAX_HW_QUEUES = "2"
+PRIME_RL_WEIGHT_NCCL_ALGO = "Ring"
+PRIME_RL_WEIGHT_NCCL_PROTO = "LL"
+PRIME_RL_WEIGHT_HIGH_PRIORITY = "1"
+PRIME_RL_WEIGHT_BUCKET_BYTES = "268435456"
+HSA_ENABLE_SDMA = "0"
+PRIME_RL_PAUSE_NCCL_INIT = "1"
+
+[trainer.env_vars]
+PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+HF_HUB_OFFLINE = "1"
+NCCL_MIN_NCHANNELS = "16"
+NCCL_MAX_NCHANNELS = "16"
+TORCHINDUCTOR_CACHE_DIR = "/scratch/project_465002751/rasmus/.cache/torchinductor/rl-main-t211"
+
+[inference.env_vars]
+PRIME_RL_SUPER_RELOAD_OVERLAY = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-main-20260916/capacity/reload-overlays/2fae200989a8fd70"

@@ -359,6 +359,16 @@ def train(config: TrainerConfig):
                 micro_batch["sampling_mask"].to("cuda") if micro_batch["sampling_mask"] is not None else None
             )
 
+            sc_enabled = config.loss.type == "score_centering"
+            sampler_ids = micro_batch.get("sampler_topk_ids") if sc_enabled else None
+            sampler_logps = micro_batch.get("sampler_topk_logprobs") if sc_enabled else None
+            sampler_ids = sampler_ids.to("cuda") if sampler_ids is not None else None
+            sampler_logps = sampler_logps.to("cuda") if sampler_logps is not None else None
+            if sc_enabled and sampling_mask is not None:
+                raise ValueError("Score centering currently requires untruncated sampling")
+            if sampler_ids is not None and bool((sampler_ids >= model.config.vocab_size).any()):
+                raise ValueError("Sampler top-k token ID outside trainer vocabulary")
+
             # Multimodal kwargs are an opaque per-model dict (e.g.
             # {"pixel_values": ..., "image_grid_thw": ...} for Qwen3-VL,
             # just {"pixel_values": ...} for Gemma3-VL) — we move every
@@ -384,6 +394,7 @@ def train(config: TrainerConfig):
                 # logprobs); shift to align with the label each position predicts.
                 sampling_mask = shift_tensor_left(sampling_mask, pad_value=-1)
 
+            selected_ids = shift_tensor_left(sampler_ids, pad_value=-1) if sampler_ids is not None else None
             seq_lens_are_pre_shard = False
 
             if cp_enabled:
@@ -401,6 +412,8 @@ def train(config: TrainerConfig):
                     )
                 seq_lens_are_pre_shard = True
                 labels = shard_for_cp(labels, cp_rank=cp_rank, cp_world_size=cp_size)
+                if selected_ids is not None:
+                    selected_ids = shard_for_cp(selected_ids, cp_rank=cp_rank, cp_world_size=cp_size)
                 if routed_experts is not None and not defer_vlm_cp_to_model:
                     routed_experts = shard_for_cp(routed_experts, cp_rank=cp_rank, cp_world_size=cp_size)
                 if sampling_mask is not None:
@@ -446,6 +459,7 @@ def train(config: TrainerConfig):
                     seq_lens_are_pre_shard=seq_lens_are_pre_shard,
                     routed_experts=routed_experts,
                     sampling_mask=sampling_mask,
+                    selected_token_ids=selected_ids,
                 )
 
             if out.get("logprobs") is None:
@@ -459,10 +473,15 @@ def train(config: TrainerConfig):
                 else:
                     out["logprobs"] = selective_log_softmax(scaled_logits, labels)
                 out["entropy"] = compute_entropy(scaled_logits)
+                if selected_ids is not None:
+                    head_logp = scaled_logits.float().log_softmax(-1).gather(-1, selected_ids.clamp_min(0).long())
+                    out["selected_logprobs"] = torch.where(selected_ids >= 0, head_logp, 0.0)
             # else: FusedOutputLinear was used - logprobs already computed with per-token temperatures
 
             if cp_enabled:
                 out["logprobs"] = gather_for_cp(out["logprobs"], cp_group)
+                if out.get("selected_logprobs") is not None:
+                    out["selected_logprobs"] = gather_for_cp(out["selected_logprobs"], cp_group)
                 out["entropy"] = gather_for_cp_wo_grad(out["entropy"], cp_size, cp_group)
 
             vocab_size = getattr(model.config, "vocab_size", None) or model.config.text_config.vocab_size
@@ -473,6 +492,9 @@ def train(config: TrainerConfig):
             out["entropy"] = shift_tensor_right(
                 out["entropy"], pad_value=torch.log(torch.tensor(float(vocab_size))).item()
             )
+
+            if out.get("selected_logprobs") is not None:
+                out["selected_logprobs"] = shift_tensor_right(out["selected_logprobs"], pad_value=0.0)
 
             # Compute loss
             sequence_lengths = micro_batch["sequence_lengths"]
@@ -485,6 +507,13 @@ def train(config: TrainerConfig):
                 rl_weights=rl_weights.squeeze().split(sequence_lengths) if rl_weights is not None else None,
                 ce_weights=ce_weights.squeeze().split(sequence_lengths) if ce_weights is not None else None,
                 ref_kl_weights=ref_kl_weights.squeeze().split(sequence_lengths) if ref_kl_weights is not None else None,
+                trainer_topk_logprobs=out["selected_logprobs"].squeeze(0).split(sequence_lengths)
+                if out.get("selected_logprobs") is not None
+                else None,
+                sampler_topk_logprobs=sampler_logps.squeeze(0).split(sequence_lengths)
+                if sampler_logps is not None
+                else None,
+                sampler_topk_ids=sampler_ids.squeeze(0).split(sequence_lengths) if sampler_ids is not None else None,
                 rl_loss_fn=rl_loss_fn,
                 rl_scale=rl_scale,
                 ce_scale=ce_scale,

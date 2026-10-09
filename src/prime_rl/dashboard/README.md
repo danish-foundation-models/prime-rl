@@ -50,3 +50,18 @@ line and scrolls to the beginning; **Live** (or **End**) resumes following outpu
 This package is fully AI-generated and maintained by agents - it is not meant to be read or edited by humans. Change it by asking an agent, and verify through the browser smoke tests.
 The integration suite covers it end to end (`tests/integration/dashboard_smoke.py`
 runs after every integration test).
+
+Loop annotations appear under **loop observations** in trace metadata, with zero-based
+node indexes and repeated word spans or command/output-cycle locations. `loop/*` metrics
+are available through the standard metrics view for newly collected traces. Backfilled
+annotations expose trace-local metrics only. These heuristics are observation-only;
+flagged tokens are tokens on flagged messages, not a precise measure of wasted compute.
+
+Loop flags require repetition persisting to the last observed activity. Repetition
+followed by further activity stays evidence only. The ending shows cutoff/error
+context; a censored trace cannot establish that recovery would never occur.
+
+Text observations cover reasoning and content jointly; `low_novelty` labels recurring
+prose with varying wording. Action cycles can flag changing outputs or pending calls.
+Inspect the evidence: repeated polling is not necessarily a stuck agent. Quoted code
+and XML edit payloads are excluded from the prose detector.
