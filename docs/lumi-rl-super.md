@@ -15,7 +15,7 @@ Slurm owns process teardown. Per-job temporary state stays under bench `tmp`.
 
 The four training tasksets are `scaleswe`, `r2e-gym`, `swelego`, and `multiswe`.
 The external `verifiers-ucloud` provider supplies runtime/interception type
-`ucloud` with SDK 0.4.18. Provider runtime labels are a dictionary. Preserve
+`ucloud` (see "UCloud client and gateway" below). Provider runtime labels are a dictionary. Preserve
 runtime-specific fields through config serialization and env-server transport.
 The bash harness forwards `tool_timeout` to local shell commands as well as MCP
 calls; a timed-out shell command's process group is terminated before returning
@@ -82,12 +82,12 @@ checkout-local `.env` overrides. The submission wrapper scans resolved JSON
 configs and checks all four UCloud endpoint/token variables by presence before
 GPU allocation; it never prints their values.
 
-Native SWE tasksets use framework-only networking. SDK 0.4.18 / gateway 0.5.33+
-enforce the named relay-only policy from sandbox creation. Configure both the
-runtime and interception `guest_relay_url` as
-`http://gateway-live-ucloud-20260824a:8092`; external workers keep the public
-`https://app-sandboxes-relay-v2.cloud.sdu.dk` endpoint. Preserve the authenticated
-SDK tunnel path so both model calls and task-state requests reach interception.
+Native SWE tasksets use framework-only networking (`allow = []`): the gateway
+enforces the named relay-only policy from sandbox creation. Set both the runtime
+and interception `guest_relay_url` to the production gateway's private relay
+origin; external workers keep the public `UCLOUD_RELAY_URL`. Preserve the
+authenticated SDK tunnel path so both model calls and task-state requests reach
+interception.
 Stage the pinned portable Python bundle through `offline_python_bundle`; the
 restricted guest cannot download Python, uv or harness dependencies. Check
 its sidecar archive/script hashes before use. Unknown scripts fail explicitly.
@@ -472,3 +472,32 @@ build cache identities. Terminal-Lego verifier preparation uses temporary CA
 trust when the task intentionally breaks certificates; that trust must not be
 present in the final runtime. Monitor this path with the maintained health
 watcher and retain its exact-job cancellation and exact-run cleanup guards.
+
+
+## UCloud client and gateway
+
+Production sandboxes run on the UCloud gateway (`UCLOUD_SANDBOX_URL=
+https://app-sandboxes-gw.cloud.sdu.dk`, `UCLOUD_RELAY_URL=
+https://app-sandboxes-relay-v3.cloud.sdu.dk`; the tokens are the production
+deployment's, kept in `prime-rl/.env` and `post/.env`). The client is
+`verifiers-ucloud`, installed from its release by `lumi_prepare_runtime.sh` with
+the verifiers fork and SDK it pins.
+
+`configs/lumi/rl_nemotron_super_r5_128k_16t12i_sc_full100_bs512_r21.toml` is r20
+on that client:
+
+- `park_interactive = true`: ACP harnesses (OpenCode, Pi) run as managed jobs, so
+  their sandboxes park through model waits like the bash harness's.
+- `image_reference_type = "name"`: recipe-backed task images are gateway image
+  recipes. Register them before a run with research-environments'
+  `tools/ucloud_register_recipes.py INDEX.sqlite LOG.jsonl` (the index is
+  `all-tasks/images.v8.sqlite`); a sandbox for an unbuilt image waits for its
+  build on the gateway.
+- `env.interception.forward_timeout_seconds = 7200`, as before; the client default
+  is 300 s.
+- `env.retries.include = ["SandboxNodeLost"]` retries episodes whose node the
+  gateway reports lost.
+
+Before submitting, confirm `guest_relay_url` against the deployment's
+`network_relays`, run the parking and group probes against the gateway, and
+check a dry-run's rendered env configs against the installed client.

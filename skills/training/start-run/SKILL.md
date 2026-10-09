@@ -349,12 +349,13 @@ on the agent PATH. Before a pilot, run the real tool-chain probe described in
 
 ### LUMI sandbox SDK updates
 
-Pin the released wheel in `scripts/lumi_prepare_runtime.sh` and the local
-verifiers-ucloud package dependency, and refresh that package's lockfile. Rebuild
-the immutable metadata layer and check the actual SDK import from the container
-used by the job; standalone probe/cleanup helpers must resolve that layer too.
-Run adapter compatibility tests and the bench image check before the native
-launcher dry-run. Keep existing metadata layers available for rollback.
+The SDK comes with verifiers-ucloud: release verifiers-ucloud with the new SDK
+pin, then pin the verifiers-ucloud tag, its verifiers fork tag and the SDK wheel
+together in `scripts/lumi_prepare_runtime.sh`. Rebuild the immutable metadata
+layer and check the actual imports from the container used by the job; standalone
+probe/cleanup helpers must resolve that layer too. Validate the run's rendered env
+configs against the installed `UCloudRuntimeConfig`/`UCloudInterceptionConfig`
+before the native launcher dry-run. Keep existing metadata layers for rollback.
 
 For ECHO-enabled runs, source `algo` overrides replace global settings: copy any
 required behavior shaping explicitly. Verify that the advantage gate admits

@@ -238,13 +238,14 @@ script requires `PRIME_RL_METADATA_DIR` in the submission environment; it does
 not embed that path. Direct `sbatch` after a separate dry-run loses the wrapper
 export and can fail before startup.
 
-The active LUMI runtime pins sandbox SDK 0.4.26 in
-`scripts/lumi_prepare_runtime.sh`; keep the local verifiers-ucloud dependency pin
-and lockfile aligned. Re-run the preparer to create a new immutable metadata
-layer, then verify the imported SDK version and path inside the job container.
-Do not edit an existing metadata layer or the shared SIF in place. The SDK's
-initial exec-output optimization requires gateway 0.5.111+; older gateways use
-its polling fallback. Recheck launch dry-runs after updating dependencies.
+The UCloud client is three released packages pinned in
+`scripts/lumi_prepare_runtime.sh`: the `rlrs/verifiers` fork, `rlrs/verifiers-ucloud`
+and the sandbox SDK wheel that verifiers-ucloud was released with. The preparer
+installs them into an immutable metadata layer; jobs import them from that layer,
+never from `deps/` checkouts. To update, change the pins to the new release tags,
+re-run the preparer, and verify the imported versions and paths inside the job
+container. Do not edit an existing metadata layer or the shared SIF in place.
+Recheck launch dry-runs after updating dependencies.
 
 #### ECHO and restricted-network prompt stability
 
