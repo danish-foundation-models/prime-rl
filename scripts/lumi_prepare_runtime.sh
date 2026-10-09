@@ -13,7 +13,7 @@ LUMI_RUNTIME_PACKAGES=(
   "$PROJECT_DIR/packages/prime-rl-configs"
   "$PROJECT_DIR/deps/renderers"
   "verifiers @ git+https://github.com/rlrs/verifiers@1702110b2cadd99685f87cf3014685b22294d13d"
-  "verifiers-ucloud @ git+https://github.com/rlrs/verifiers-ucloud@7bef27ad98a64d71e9111d706d976fa5f7ca1faf"
+  "verifiers-ucloud @ git+https://github.com/rlrs/verifiers-ucloud@ab7c63831b6f87df92a11599b52beb081069f6a4"
   "mcp==2.0.0"
   "httpcore2==2.12.0"
   "httpx2==2.12.0"
