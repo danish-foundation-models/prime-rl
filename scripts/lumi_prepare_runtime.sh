@@ -6,11 +6,14 @@ PROJECT_DIR=${PROJECT_DIR:-$(cd -- "$SCRIPT_DIR/.." && pwd -P)}
 LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
 SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
 PRIME_RL_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache/prime-rl}
+# The UCloud client is released packages, not sibling checkouts: verifiers-ucloud
+# pins the verifiers fork and the sandbox SDK it was tested with. Replace the
+# commits with their release tags; installing with --no-deps lists all three.
 LUMI_RUNTIME_PACKAGES=(
   "$PROJECT_DIR/packages/prime-rl-configs"
   "$PROJECT_DIR/deps/renderers"
-  "$PROJECT_DIR/deps/verifiers"
-  "$PROJECT_DIR/deps/verifiers-ucloud"
+  "verifiers @ git+https://github.com/rlrs/verifiers@1702110b2cadd99685f87cf3014685b22294d13d"
+  "verifiers-ucloud @ git+https://github.com/rlrs/verifiers-ucloud@7bef27ad98a64d71e9111d706d976fa5f7ca1faf"
   "mcp==2.0.0"
   "httpcore2==2.12.0"
   "httpx2==2.12.0"
@@ -20,7 +23,7 @@ LUMI_RUNTIME_PACKAGES=(
   "prime-traces==0.0.3"
   "pyzstd==0.19.1"
   "backports-zstd==1.7.0"
-  "https://github.com/rlrs/ucloud-sandboxes-sdk/releases/download/v0.4.34/ucloud_sandboxes_sdk-0.4.34-py3-none-any.whl"
+  "https://github.com/rlrs/ucloud-sandboxes-sdk/releases/download/v0.4.37/ucloud_sandboxes_sdk-0.4.37-py3-none-any.whl"
 )
 
 [[ -f "$PROJECT_DIR/pyproject.toml" ]] || {
@@ -37,8 +40,6 @@ runtime_hash=$(
   sha256sum \
     "$PROJECT_DIR/pyproject.toml" \
     "$PROJECT_DIR/scripts/lumi_prepare_runtime.sh" \
-    "$PROJECT_DIR/deps/verifiers/pyproject.toml" \
-    "$PROJECT_DIR/deps/verifiers-ucloud/pyproject.toml" \
     | sha256sum \
     | cut -c1-12
 )
