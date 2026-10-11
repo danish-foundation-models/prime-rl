@@ -7,13 +7,14 @@ LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
 SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
 PRIME_RL_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache/prime-rl}
 # The UCloud client is released packages, not sibling checkouts: verifiers-ucloud
-# pins the verifiers fork and the sandbox SDK it was tested with. Replace the
-# commits with their release tags; installing with --no-deps lists all three.
+# pins the verifiers fork and the sandbox SDK it was tested with; installing with
+# --no-deps lists all three. Git pins are the release tags' commits:
+# verifiers v0.3.1.post1 and verifiers-ucloud v0.3.1.
 LUMI_RUNTIME_PACKAGES=(
   "$PROJECT_DIR/packages/prime-rl-configs"
   "$PROJECT_DIR/deps/renderers"
-  "verifiers @ git+https://github.com/rlrs/verifiers@1702110b2cadd99685f87cf3014685b22294d13d"
-  "verifiers-ucloud @ git+https://github.com/rlrs/verifiers-ucloud@ab7c63831b6f87df92a11599b52beb081069f6a4"
+  "verifiers @ git+https://github.com/rlrs/verifiers@29ea1a32f22cc5eda385579573a1d890f9c3e49c"
+  "verifiers-ucloud @ git+https://github.com/rlrs/verifiers-ucloud@4c99bab86df4422467409de2aa4aa4ee377c5c1d"
   "mcp==2.0.0"
   "httpcore2==2.12.0"
   "httpx2==2.12.0"
@@ -23,7 +24,7 @@ LUMI_RUNTIME_PACKAGES=(
   "prime-traces==0.0.3"
   "pyzstd==0.19.1"
   "backports-zstd==1.7.0"
-  "https://github.com/rlrs/ucloud-sandboxes-sdk/releases/download/v0.4.37/ucloud_sandboxes_sdk-0.4.37-py3-none-any.whl"
+  "https://github.com/rlrs/ucloud-sandboxes-sdk/releases/download/v0.4.38/ucloud_sandboxes_sdk-0.4.38-py3-none-any.whl"
 )
 
 [[ -f "$PROJECT_DIR/pyproject.toml" ]] || {
