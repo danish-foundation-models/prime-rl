@@ -3,13 +3,19 @@
 	url = git@github.com:PrimeIntellect-ai/verifiers.git
 [submodule "renderers"]
 	path = deps/renderers
-	url = git@github.com:PrimeIntellect-ai/renderers.git
+	url = https://github.com/rlrs/renderers.git
+	branch = feat/lumi-sampler-topk-20261011
 [submodule "prime-envs"]
 	path = deps/prime-envs
-	url = git@github.com:PrimeIntellect-ai/prime-envs.git
+	url = https://github.com/rlrs/research-environments.git
+	branch = feat/lumi-ucloud-envs-20260930
 [submodule "pydantic-config"]
 	path = deps/pydantic-config
 	url = https://github.com/PrimeIntellect-ai/pydantic-config
 [submodule "prime-kernels"]
 	path = deps/prime-kernels
 	url = https://github.com/PrimeIntellect-ai/prime-kernels
+[submodule "text2sql-env"]
+	path = deps/text2sql-env
+	url = https://github.com/danish-foundation-models/text2sql-env.git
+	branch = feat/lumi-verifiers-current-20261011

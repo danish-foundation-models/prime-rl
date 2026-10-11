@@ -1,6 +1,6 @@
 # SQL training and agentic evaluation
 
-The r16 pilot config adds `text2sql` from danish-foundation-models/text2sql-env, branch `codex/verifiers-v1-workspace-harness`, commit `227a5fd`, exposed through `deps/text2sql-env`. Its current-verifiers compatibility patch replaces the ignored class-level tools tuple with `toolsets(config)` and reports execution accuracy separately from shaped reward. Keep the SQL source and patch with the run; a package name alone is insufficient provenance.
+The r16 pilot config adds `text2sql` from danish-foundation-models/text2sql-env, branch `feat/lumi-verifiers-current-20261011`, commit `0778d84`, pinned as the `deps/text2sql-env` submodule. That commit replaces the ignored class-level tools tuple with `toolsets(config)` and reports execution accuracy separately from shaped reward. Keep the SQL source and patch with the run; a package name alone is insufficient provenance.
 
 BIRD train has 9,428 questions over 69 databases. Dev has 1,534 questions over 11 disjoint databases. Both load in full from `/scratch/project_465002751/oliver/data/bird`, currently a shared read-only input dependency, not a bench-owned copy. Use all train questions, not the earlier Qwen-filtered derivatives. Train receives one equal source weight. The existing agentic harness exposes four read-only SQL tools, no general shell, and runs in a local subprocess. Ten turns; Nemotron's renderer remains selected. SQL reward is not execution accuracy: runs-but-wrong receives 0.1.
 
