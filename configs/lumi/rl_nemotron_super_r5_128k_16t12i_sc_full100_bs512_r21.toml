@@ -81,11 +81,12 @@ scheduler_min_oversampling = 0.0
 scheduler_max_oversampling = 16.0
 scheduler_acceptance_floor = 0.05
 scheduler_inventory_factor = 2.0
-category_targets.swe = 240
-category_targets.terminal = 144
+category_targets.swe = 224
+category_targets.terminal = 128
 category_targets.sql = 32
 category_targets.tooluse = 64
 category_targets.instruction = 32
+category_targets.math = 32
 category_batch_tolerance = 2
 category_max_surplus = 8
 lookahead_batches = 4
@@ -422,7 +423,7 @@ curriculum.sampler.replay_warmup_tasks = 16
 curriculum.sampler.seed = 1266
 curriculum.gates.zero_advantage.type = "advantage_range"
 env.taskset.id = "swesmith-env"
-env.taskset.task_ids_file = "/scratch/project_465002751/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/swe-smith.task-ids.json"
+env.taskset.task_ids_file = "/scratch/project_465002751/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/swe-smith-train.task-ids.json"
 env.taskset.revisions.php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
 env.taskset.revisions.cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
 env.taskset.revisions.rs = "1ae20d63edd611309d86133466247e3a9723a27d"
@@ -479,7 +480,7 @@ curriculum.sampler.replay_warmup_tasks = 16
 curriculum.sampler.seed = 1267
 curriculum.gates.zero_advantage.type = "advantage_range"
 env.taskset.id = "swesmith-env"
-env.taskset.task_ids_file = "/scratch/project_465002751/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/swe-smith.task-ids.json"
+env.taskset.task_ids_file = "/scratch/project_465002751/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/swe-smith-train.task-ids.json"
 env.taskset.revisions.php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
 env.taskset.revisions.cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
 env.taskset.revisions.rs = "1ae20d63edd611309d86133466247e3a9723a27d"
@@ -536,7 +537,7 @@ curriculum.sampler.replay_warmup_tasks = 16
 curriculum.sampler.seed = 1268
 curriculum.gates.zero_advantage.type = "advantage_range"
 env.taskset.id = "swesmith-env"
-env.taskset.task_ids_file = "/scratch/project_465002751/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/swe-smith.task-ids.json"
+env.taskset.task_ids_file = "/scratch/project_465002751/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/swe-smith-train.task-ids.json"
 env.taskset.revisions.php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
 env.taskset.revisions.cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
 env.taskset.revisions.rs = "1ae20d63edd611309d86133466247e3a9723a27d"
@@ -1391,6 +1392,70 @@ serve.pool.type = "elastic"
 serve.pool.max_workers = 1
 serve.pool.multiplex = 32
 
+
+[[orchestrator.train.source]]
+name = "i3-math"
+ratio = 1.0
+balance_category = "math"
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.strategy = "smoothed_replay"
+curriculum.sampler.shared_group = "i3_math"
+curriculum.sampler.history_size = 64
+curriculum.sampler.replay_fraction = 0.2
+curriculum.sampler.replay_warmup_tasks = 16
+curriculum.sampler.seed = 1290
+curriculum.gates.zero_advantage.type = "advantage_range"
+# INTELLECT-3-RL math, keeping problems Qwen3-4B solves at most 4 of 8 times
+# (17,321 tasks); easier ones are near-certain for Super and carry no signal.
+env.taskset.id = "i3-math"
+env.taskset.filter.column = "avg@8_qwen3_4b_instruct_2507"
+env.taskset.filter.min = 0.0
+env.taskset.filter.max = 0.5
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+env.interception.type = "server"
+env.agent.max_turns = 1
+env.agent.max_output_tokens = 32768
+env.agent.max_total_tokens = 131072
+env.agent.timeout.rollout = 2700.0
+env.agent.timeout.scoring = 120.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 64
+
+[[orchestrator.eval.source]]
+name = "aime25"
+num_examples = 30
+interval = 12
+env.taskset.id = "aime25"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+env.interception.type = "server"
+env.agent.max_turns = 1
+env.agent.max_output_tokens = 32768
+env.agent.max_total_tokens = 131072
+env.agent.timeout.rollout = 2700.0
+env.agent.timeout.scoring = 120.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 32
+
+[[orchestrator.eval.source]]
+name = "aime26"
+num_examples = 30
+interval = 12
+env.taskset.id = "aime26"
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+env.interception.type = "server"
+env.agent.max_turns = 1
+env.agent.max_output_tokens = 32768
+env.agent.max_total_tokens = 131072
+env.agent.timeout.rollout = 2700.0
+env.agent.timeout.scoring = 120.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 32
 
 [env_vars]
 NLTK_DATA = "/scratch/project_465002751/rasmus/.cache/nltk_data"

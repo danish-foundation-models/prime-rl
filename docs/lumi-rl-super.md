@@ -515,7 +515,7 @@ verifiers-ucloud task-ids artifacts/manifests/ucloud-task-ids-<date>
 
 Each training taskset takes its environment's file as `task_ids_file`. Loading fails when a
 listed task is unknown or removed by the source's own filters, so derive a list without
-held-out tasks instead of filtering them. Load every taskset with the final config before
+held-out tasks instead of filtering them. Remove tasks whose images are broken the same way, and record why next to the list (`swe-smith-train.removed.json` drops the charset_normalizer image, which lacks ripgrep, and one kakoune task whose branch is not in its image). Load every taskset with the final config before
 submitting. Harbor task caches (`task_data_file`) record the full taskset config, so
 regenerate them with `deps/prime-envs/tools/ucloud_cache_harbor.py` whenever
 `task_ids_file` or a pinned `revision` changes. Terminal-Lego's pinned revision must match
@@ -535,3 +535,11 @@ known before they are sampled. Sources with the same `shared_group` share that o
 so one build serves every harness of a family. The gateway starts at most 32 builds per call, and a build
 can take several minutes. Failed and unknown images are quarantined. The step metrics
 `image_prefetch/<state>` show how far ahead builds are.
+
+Math sources need no sandbox. `i3-math` (INTELLECT-3-RL math) trains on the subprocess
+runtime with the `null` harness; `aime25` and `aime26` evaluate. Runs set
+`HF_DATASETS_OFFLINE=1`, so download their datasets first by loading the tasksets on a login
+node with `HF_DATASETS_OFFLINE=0 HF_HUB_OFFLINE=0`. `i3-math` grades with a uv script
+(`verify.py`, math-verify); prepare it once against the shared `UV_CACHE_DIR` so rollouts do
+not resolve it from PyPI. Its `filter` keeps problems by Qwen3-4B's solve rate; r21 keeps
+those solved at most 4 of 8 times.
