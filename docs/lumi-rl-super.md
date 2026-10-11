@@ -15,7 +15,7 @@ Slurm owns process teardown. Per-job temporary state stays under bench `tmp`.
 
 The four training tasksets are `scaleswe`, `r2e-gym`, `swelego`, and `multiswe`.
 The external `verifiers-ucloud` provider supplies runtime/interception type
-`ucloud` (see "UCloud client and gateway" below). Provider runtime labels are a dictionary. Preserve
+`ucloud` with SDK 0.4.18. Provider runtime labels are a dictionary. Preserve
 runtime-specific fields through config serialization and env-server transport.
 The bash harness forwards `tool_timeout` to local shell commands as well as MCP
 calls; a timed-out shell command's process group is terminated before returning
@@ -82,12 +82,12 @@ checkout-local `.env` overrides. The submission wrapper scans resolved JSON
 configs and checks all four UCloud endpoint/token variables by presence before
 GPU allocation; it never prints their values.
 
-Native SWE tasksets use framework-only networking (`allow = []`): the gateway
-enforces the named relay-only policy from sandbox creation. Set both the runtime
-and interception `guest_relay_url` to the production gateway's private relay
-origin; external workers keep the public `UCLOUD_RELAY_URL`. Preserve the
-authenticated SDK tunnel path so both model calls and task-state requests reach
-interception.
+Native SWE tasksets use framework-only networking. SDK 0.4.18 / gateway 0.5.33+
+enforce the named relay-only policy from sandbox creation. Configure both the
+runtime and interception `guest_relay_url` as
+`http://gateway-live-ucloud-20260824a:8092`; external workers keep the public
+`https://app-sandboxes-relay-v2.cloud.sdu.dk` endpoint. Preserve the authenticated
+SDK tunnel path so both model calls and task-state requests reach interception.
 Stage the pinned portable Python bundle through `offline_python_bundle`; the
 restricted guest cannot download Python, uv or harness dependencies. Check
 its sidecar archive/script hashes before use. Unknown scripts fail explicitly.
@@ -473,31 +473,48 @@ trust when the task intentionally breaks certificates; that trust must not be
 present in the final runtime. Monitor this path with the maintained health
 watcher and retain its exact-job cancellation and exact-run cleanup guards.
 
+## UCloud gateway runtime (verifiers-ucloud 0.3.x)
 
-## UCloud client and gateway
+Runs use the UCloud production gateway `https://app-sandboxes-gw.cloud.sdu.dk` and
+relay `https://app-sandboxes-relay-v3.cloud.sdu.dk` from the bench `.env` files.
+Relay-only sandboxes reach the relay at `guest_relay_url = "http://10.36.101.16:8092"`,
+set on both the runtime and the interception. The checkout's `.env` pins the package
+layer built by `lumi_prepare_runtime.sh` (verifiers-ucloud, the verifiers fork and the SDK,
+all from tags); repin it after every rebuild, because jobs source it at startup.
 
-Production sandboxes run on the UCloud gateway (`UCLOUD_SANDBOX_URL=
-https://app-sandboxes-gw.cloud.sdu.dk`, `UCLOUD_RELAY_URL=
-https://app-sandboxes-relay-v3.cloud.sdu.dk`; the tokens are the production
-deployment's, kept in `prime-rl/.env` and `post/.env`). The client is
-`verifiers-ucloud`, installed from its release by `lumi_prepare_runtime.sh` with
-the verifiers fork and SDK it pins.
+Runtime settings: `managed_agent` is the default; set `park_interactive = true` so
+OpenCode and Pi park too, and `repair_loopback_hosts = true`. Unknown runtime keys are
+rejected, so configs that still use `parkable`, `image_recipe_db` or `image_build_cache`
+fail to load. Task images are gateway image names (`image_reference_type = "name"`): the
+gateway creates sandboxes only for names in its image index and builds recipe images on
+demand.
 
-`configs/lumi/rl_nemotron_super_r5_128k_16t12i_sc_full100_bs512_r21.toml` is r20
-on that client:
+Allowlists come from the gateway, read with the SDK key:
 
-- `park_interactive = true`: ACP harnesses (OpenCode, Pi) run as managed jobs, so
-  their sandboxes park through model waits like the bash harness's.
-- `image_reference_type = "name"`: recipe-backed task images are gateway image
-  recipes. Register them before a run with research-environments'
-  `tools/ucloud_register_recipes.py INDEX.sqlite LOG.jsonl` (the index is
-  `all-tasks/images.v8.sqlite`); a sandbox for an unbuilt image waits for its
-  build on the gateway.
-- `env.interception.forward_timeout_seconds = 7200`, as before; the client default
-  is 300 s.
-- `env.retries.include = ["SandboxNodeLost"]` retries episodes whose node the
-  gateway reports lost.
+```bash
+verifiers-ucloud summary
+verifiers-ucloud task-ids artifacts/manifests/ucloud-task-ids-<date>
+```
 
-Before submitting, confirm `guest_relay_url` against the deployment's
-`network_relays`, run the parking and group probes against the gateway, and
-check a dry-run's rendered env configs against the installed client.
+Each training taskset takes its environment's file as `task_ids_file`. Loading fails when a
+listed task is unknown or removed by the source's own filters, so derive a list without
+held-out tasks instead of filtering them. Load every taskset with the final config before
+submitting. Harbor task caches (`task_data_file`) record the full taskset config, so
+regenerate them with `deps/prime-envs/tools/ucloud_cache_harbor.py` whenever
+`task_ids_file` or a pinned `revision` changes. Terminal-Lego's pinned revision must match
+its git checkout under `HF_HOME`. Harbor datasets are cached under the container home
+`$LUMI_ROOT/.home/.cache/harbor`; check loads with `--home` set to it.
+
+Before a run, check the gateway with `scripts/lumi_probe_ucloud_runtime.py group agent acp
+--output DIR` inside the operational SIF and the run's Python path. It uses r21's runtime
+settings and deletes only its own sandboxes. A waiting sandbox is paused in place and its
+status stays `running`; it is parked (and its relay request reattachable) only under node
+memory pressure, so the probes require answered calls with intact memory, not `parked`.
+
+`[orchestrator.image_prefetch]` keeps upcoming images built: every `interval_seconds` it
+asks the gateway to ensure the images of each name-based env's next `lookahead_tasks`
+unseen tasks. Smoothed replay explores unseen tasks in a seeded order, so those tasks are
+known before they are sampled. Sources with the same `shared_group` share that order,
+so one build serves every harness of a family. The gateway starts at most 32 builds per call, and a build
+can take several minutes. Failed and unknown images are quarantined. The step metrics
+`image_prefetch/<state>` show how far ahead builds are.
