@@ -481,6 +481,13 @@ Relay-only sandboxes reach the relay at `guest_relay_url = "http://10.36.101.16:
 set on both the runtime and the interception. The checkout's `.env` pins the package
 layer built by `lumi_prepare_runtime.sh` (verifiers-ucloud, the verifiers fork and the SDK,
 all from tags); repin it after every rebuild, because jobs source it at startup.
+The other live sources are submodules pinned to pushed fork commits: `deps/prime-envs`
+(rlrs/research-environments), `deps/renderers` (rlrs/renderers, with the sampler top-k
+logprobs that score centering needs) and `deps/text2sql-env`. In a fresh worktree, run
+`git submodule update --init` for them; a worktree's submodules inherit URLs already set in
+the shared repository config, so check each `git -C deps/<name> remote get-url origin`.
+research-environments uses Git LFS, which LUMI lacks: check it out with
+`-c filter.lfs.process= -c filter.lfs.smudge=cat -c filter.lfs.required=false`.
 
 Runtime settings: `managed_agent` is the default; set `park_interactive = true` so
 OpenCode and Pi park too, and `repair_loopback_hosts = true`. Unknown runtime keys are
