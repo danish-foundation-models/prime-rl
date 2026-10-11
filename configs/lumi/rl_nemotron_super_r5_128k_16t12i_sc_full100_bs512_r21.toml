@@ -1437,10 +1437,10 @@ curriculum.sampler.replay_warmup_tasks = 16
 curriculum.sampler.seed = 1291
 curriculum.gates.zero_advantage.type = "advantage_range"
 # Multi-turn tool use; each task serves its own tools host-side and is graded by replaying
-# its gold tool chain (DB hash) or its verify(db). Drops the 1,137 tasks GPT-5-mini always
-# solves and the unrated ones (2,819 tasks).
+# its gold tool chain (DB hash) or its verify(db). Keeps the hard tasks: those GPT-5-mini
+# solves at most half the time (1,385 of 4,417). GLM-5.3-flash solved 88% of the 0.95 band.
 env.taskset.id = "general-agent"
-env.taskset.max_pass_rate = 0.95
+env.taskset.max_pass_rate = 0.5
 env.agent.harness.id = "null"
 env.agent.runtime.type = "subprocess"
 env.interception.type = "server"
