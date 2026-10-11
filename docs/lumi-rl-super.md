@@ -549,5 +549,5 @@ runs locally: each task's tools are served host-side over MCP to the `null` harn
 graded by replaying its gold tool chain. Its corpus comes through Harbor into the container
 home cache (`$LUMI_ROOT/.home/.cache/harbor`); load it once online before a run. r21 keeps
 only hard tasks, those GPT-5-mini solves at most half the time (`max_pass_rate = 0.5`, 1,385
-tasks; GLM-5.3-flash solved 88% of the 0.95 band), and gives it half of the tool-use category. ProgramBench and NL2RepoBench are benchmarks (200 and 104 tasks)
+tasks; GLM-5.3-flash solved 88% of the 0.95 band), and gives it one group (8) per batch in its own `toolbench` category. ProgramBench and NL2RepoBench are benchmarks (200 and 104 tasks)
 that need their images on the gateway; use them as evals, not training.

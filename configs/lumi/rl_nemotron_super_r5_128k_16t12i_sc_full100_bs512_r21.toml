@@ -84,9 +84,10 @@ scheduler_inventory_factor = 2.0
 category_targets.swe = 224
 category_targets.terminal = 128
 category_targets.sql = 32
-category_targets.tooluse = 64
+category_targets.tooluse = 56
 category_targets.instruction = 32
 category_targets.math = 32
+category_targets.toolbench = 8
 category_batch_tolerance = 2
 category_max_surplus = 8
 lookahead_batches = 4
@@ -1425,9 +1426,9 @@ serve.pool.multiplex = 64
 
 [[orchestrator.train.source]]
 name = "general-agent"
-# Half of the tool-use category (ratio 2 against nemo-pivot and nemo-workplace at 1).
-ratio = 2.0
-balance_category = "tooluse"
+# One group (8) per batch in its own category, taken from tool use.
+ratio = 1.0
+balance_category = "toolbench"
 curriculum.sampler.type = "difficulty_pool"
 curriculum.sampler.strategy = "smoothed_replay"
 curriculum.sampler.shared_group = "general_agent"
