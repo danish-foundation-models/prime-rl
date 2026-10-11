@@ -499,6 +499,13 @@ fail to load. Task images are gateway image names (`image_reference_type = "name
 gateway creates sandboxes only for names in its image index and builds recipe images on
 demand.
 
+OpenCode and Pi take Node and their packages from the gateway's read-only `vf-agents`
+toolkit: `toolkits = ["vf-agents:latest"]` and `harness_toolkit = "vf-agents"` link its
+trees to `/var/tmp/vf-*`, where the harnesses find themselves installed. Do not use
+`offline_harness_bundle` for them: unpacking 0.5-0.7 GB into every sandbox at once ran
+sandboxes out of disk (`No space left on device`) in the r21 smoke r2. The backend builds
+the toolkit from `harnesses-20260920/search-tools-v1/{opencode,pi}-assets.tar.gz`.
+
 Allowlists come from the gateway, read with the SDK key:
 
 ```bash

@@ -9,12 +9,12 @@ PRIME_RL_CACHE_DIR=${PRIME_RL_CACHE_DIR:-$LUMI_ROOT/.cache/prime-rl}
 # The UCloud client is released packages, not sibling checkouts: verifiers-ucloud
 # pins the verifiers fork and the sandbox SDK it was tested with; installing with
 # --no-deps lists all three. Git pins are the release tags' commits:
-# verifiers v0.3.1.post1 and verifiers-ucloud v0.3.5.
+# verifiers v0.3.1.post1 and verifiers-ucloud v0.3.6.
 LUMI_RUNTIME_PACKAGES=(
   "$PROJECT_DIR/packages/prime-rl-configs"
   "$PROJECT_DIR/deps/renderers"
   "verifiers @ git+https://github.com/rlrs/verifiers@29ea1a32f22cc5eda385579573a1d890f9c3e49c"
-  "verifiers-ucloud @ git+https://github.com/rlrs/verifiers-ucloud@c8400286838095f9fb3ebf4a1fb8283149ab650a"
+  "verifiers-ucloud @ git+https://github.com/rlrs/verifiers-ucloud@0f9a91016c4b52fafc2cf50e1894ba021f32822e"
   "mcp==2.0.0"
   "httpcore2==2.12.0"
   "httpx2==2.12.0"
