@@ -1423,6 +1423,36 @@ serve.pool.type = "elastic"
 serve.pool.max_workers = 1
 serve.pool.multiplex = 64
 
+[[orchestrator.train.source]]
+name = "general-agent"
+# Half of the tool-use category (ratio 2 against nemo-pivot and nemo-workplace at 1).
+ratio = 2.0
+balance_category = "tooluse"
+curriculum.sampler.type = "difficulty_pool"
+curriculum.sampler.strategy = "smoothed_replay"
+curriculum.sampler.shared_group = "general_agent"
+curriculum.sampler.history_size = 64
+curriculum.sampler.replay_fraction = 0.2
+curriculum.sampler.replay_warmup_tasks = 16
+curriculum.sampler.seed = 1291
+curriculum.gates.zero_advantage.type = "advantage_range"
+# Multi-turn tool use; each task serves its own tools host-side and is graded by replaying
+# its gold tool chain (DB hash) or its verify(db). Drops the 1,137 tasks GPT-5-mini always
+# solves and the unrated ones (2,819 tasks).
+env.taskset.id = "general-agent"
+env.taskset.max_pass_rate = 0.95
+env.agent.harness.id = "null"
+env.agent.runtime.type = "subprocess"
+env.interception.type = "server"
+env.agent.max_turns = 100
+env.agent.max_output_tokens = 32768
+env.agent.max_total_tokens = 131072
+env.agent.timeout.rollout = 2700.0
+env.agent.timeout.scoring = 120.0
+serve.pool.type = "elastic"
+serve.pool.max_workers = 1
+serve.pool.multiplex = 32
+
 [[orchestrator.eval.source]]
 name = "aime25"
 num_examples = 30
