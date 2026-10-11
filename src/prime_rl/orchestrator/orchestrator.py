@@ -72,6 +72,7 @@ from prime_rl.orchestrator.utils import (
     set_default_executor,
     trim_process_memory,
 )
+from prime_rl.orchestrator.image_prefetch import ImagePrefetcher
 from prime_rl.orchestrator.watcher import WeightWatcher
 from prime_rl.trainer.model import setup_tokenizer
 from prime_rl.transports.batch import setup_batch_sender
@@ -141,6 +142,7 @@ class Orchestrator:
     receiver: WeightReceiver
     resume_step: int | None
     lag_task: asyncio.Task | None
+    image_prefetcher: ImagePrefetcher | None
 
     def __init__(self, config: OrchestratorConfig) -> None:
         self.config = config
@@ -184,6 +186,7 @@ class Orchestrator:
         self.eval_source = None
         self.resume_step = None
         self.lag_task = None
+        self.image_prefetcher = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -350,6 +353,8 @@ class Orchestrator:
             TrainSource, self.train_envs, scheduler=scheduler,
             quarantine_path=config.output_dir / "quarantined-images.json",
         )
+        if config.image_prefetch.enabled:
+            self.image_prefetcher = ImagePrefetcher(config.image_prefetch, self.train_source)
         get_logger().info(f"Training curricula ready in {format_time(time.perf_counter() - t0)}")
         if self.resume_step is not None:
             resume = self.config.resume
@@ -482,6 +487,8 @@ class Orchestrator:
             asyncio.create_task(self.dispatcher.start(), name="dispatcher"),
             asyncio.create_task(self.watcher.start(), name="watcher"),
         ]
+        if self.image_prefetcher is not None:
+            self.component_tasks.append(asyncio.create_task(self.image_prefetcher.run(), name="image_prefetch"))
 
         # Anchor step-time clock so the first step measures startup → first batch
         self.last_batch_at = time.perf_counter()
@@ -779,6 +786,8 @@ class Orchestrator:
         for env_name, env_pool in batch.episodes.by_env().items():
             metrics[f"batch/{env_name}"] = env_pool.num_traces / batch.episodes.num_traces
         metrics |= self.train_source.metrics()
+        if self.image_prefetcher is not None:
+            metrics |= self.image_prefetcher.metrics()
         await monitors.log(metrics, step=step)
 
         active_step_time = max(step_time - self.wait_for_policy_time, 0.0)
@@ -1130,6 +1139,8 @@ class Orchestrator:
             for task in self.component_tasks:
                 await safe_cancel(task)
             self.component_tasks.clear()
+            if self.image_prefetcher is not None:
+                await self.image_prefetcher.aclose()
             if self.inference_metrics is not None:
                 get_logger().debug("Stopping inference metrics collector")
                 await self.inference_metrics.stop()

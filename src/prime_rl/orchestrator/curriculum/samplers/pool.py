@@ -59,6 +59,14 @@ class DifficultyPoolSampler(TaskSampler):
         self._ordered_pools = tuple(ordered)
         self.task_rewards: dict[str, float] = {}
         self.excluded_keys: set[str] = set()
+        # Smoothed replay explores unseen tasks in one seeded order, so the next
+        # unseen tasks are known ahead of sampling (see ``upcoming``). Samplers that
+        # share outcomes also share the order: one harness's scored task is skipped
+        # by the others, and each new task needs one image build for all of them.
+        self._explore_order = list(self.task_keys)
+        explore_seed = config.shared_group if config.shared_group is not None else config.seed
+        random.Random(f"{explore_seed}:explore").shuffle(self._explore_order)
+        self._explore_cursor = 0
 
     def task_pool(self, task_key: str) -> str | None:
         """Return the task's current pool, or ``None`` until it has a score."""
@@ -90,7 +98,7 @@ class DifficultyPoolSampler(TaskSampler):
                            for key in observed]
                 key = self.rng.choices(observed, weights=weights, k=1)[0]
             else:
-                key = self.rng.choice(unseen or available)
+                key = self._next_unexplored() or self.rng.choice(unseen or available)
             return self.tasks_by_key[key]
         weights = []
         for task_key in self.task_keys:
@@ -99,6 +107,33 @@ class DifficultyPoolSampler(TaskSampler):
         if not any(weights):
             raise RuntimeError("DifficultyPoolSampler has no tasks in a pool with positive weight")
         return self.rng.choices(self.tasks, weights=weights, k=1)[0]
+
+    def _unexplored(self, key: str) -> bool:
+        return key not in self.excluded_keys and key not in self.task_rewards
+
+    def _next_unexplored(self) -> str | None:
+        while self._explore_cursor < len(self._explore_order):
+            key = self._explore_order[self._explore_cursor]
+            self._explore_cursor += 1
+            if self._unexplored(key):
+                return key
+        return None
+
+    def upcoming(self, count: int) -> list[vf.Task]:
+        """The next unseen tasks smoothed replay will explore, without sampling them.
+
+        Replay draws among observed tasks stay random; once every task has been
+        explored, unseen draws fall back to a random choice and nothing is known ahead.
+        """
+        if self.strategy != "smoothed_replay":
+            return []
+        found = []
+        for key in self._explore_order[self._explore_cursor:]:
+            if len(found) == count:
+                break
+            if self._unexplored(key):
+                found.append(self.tasks_by_key[key])
+        return found
 
     def observe(self, group: list[vf.Episode]) -> None:
         rewards = [
@@ -125,6 +160,7 @@ class DifficultyPoolSampler(TaskSampler):
     def state_dict(self) -> dict[str, Any]:
         return {
             "rng": self.rng.getstate(),
+            "explore_cursor": self._explore_cursor,
             "task_rewards": dict(self.task_rewards),
             **({"task_history": {key: list(values) for key, values in self.task_history.items()}}
                if self.strategy == "smoothed_replay" else {}),
@@ -132,6 +168,7 @@ class DifficultyPoolSampler(TaskSampler):
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self.rng.setstate(state_dict["rng"])
+        self._explore_cursor = state_dict.get("explore_cursor", 0)
         self.task_rewards = dict(state_dict["task_rewards"])
         if self.strategy == "smoothed_replay":
             histories = state_dict.get("task_history")

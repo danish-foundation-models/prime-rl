@@ -71,6 +71,15 @@ class TrainSource:
                 return TaskRequest(env_name=env_name, task=task, step=step)
         return None
 
+    def upcoming_tasks(self, count: int) -> dict[str, list]:
+        """Each env's next unseen tasks, where its sampler knows them ahead of sampling."""
+        upcoming = {}
+        for name, curriculum in self.curricula.items():
+            peek = getattr(curriculum.sampler, "upcoming", None)
+            if peek is not None:
+                upcoming[name] = peek(count)
+        return upcoming
+
     def image_identity(self, env_name: str, task) -> tuple[str, str] | None:
         config = getattr(self.env_by_name[env_name].config, "env", None)
         runtime = getattr(getattr(config, "agent", None), "runtime", None)

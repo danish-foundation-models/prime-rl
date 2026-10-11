@@ -361,3 +361,44 @@ def test_smoothed_replay_keeps_exploration_and_does_not_let_one_task_dominate():
     assert 300 < sum(key in known for key in draws) < 500
     sampler.exclude_tasks(known)
     assert all(next(sampler).key not in known for _ in range(100))
+
+
+def test_smoothed_replay_knows_its_next_unseen_tasks_ahead_of_sampling():
+    from prime_rl.orchestrator.curriculum.samplers import DifficultyPoolSampler
+
+    tasks = [make_task(i) for i in range(50)]
+    config = DifficultyPoolSamplerConfig(strategy="smoothed_replay", seed=3, replay_fraction=0.0)
+    sampler = DifficultyPoolSampler(config, tasks)
+    ahead = [task.key for task in sampler.upcoming(5)]
+    assert [next(sampler).key for _ in range(5)] == ahead
+    assert len(set(ahead)) == 5
+
+    upcoming = sampler.upcoming(3)
+    sampler.observe(make_rollout(upcoming[0], reward=0.5))
+    sampler.exclude_tasks({upcoming[1].key})
+    assert next(sampler).key == upcoming[2].key
+
+    restored = DifficultyPoolSampler(config, tasks)
+    restored.load_state_dict(sampler.state_dict())
+    assert [task.key for task in restored.upcoming(10)] == [task.key for task in sampler.upcoming(10)]
+    assert DifficultyPoolSampler(DifficultyPoolSamplerConfig(), tasks).upcoming(5) == []
+
+
+def test_samplers_sharing_outcomes_explore_unseen_tasks_in_one_order():
+    from prime_rl.orchestrator.curriculum.samplers import DifficultyPoolSampler
+
+    tasks = [make_task(i) for i in range(200)]
+
+    def sampler(seed, group):
+        config = DifficultyPoolSamplerConfig(strategy="smoothed_replay", seed=seed, shared_group=group,
+                                             replay_fraction=0.0)
+        return DifficultyPoolSampler(config, tasks)
+
+    bash, pi, other = sampler(1, "family"), sampler(2, "family"), sampler(1, "other")
+    order = [task.key for task in bash.upcoming(20)]
+    assert [task.key for task in pi.upcoming(20)] == order
+    assert [task.key for task in other.upcoming(20)] != order
+
+    scored = next(bash)
+    pi.observe(make_rollout(scored, reward=0.5))  # TrainSource shares a group's outcomes.
+    assert next(pi).key == order[1]

@@ -550,6 +550,23 @@ class ConcurrencyConfig(BaseConfig):
 TRAIN_TOP_K_BOUND = 512
 
 
+class ImagePrefetchConfig(BaseConfig):
+    """Ask the UCloud gateway to build upcoming train tasks' images before they are sampled.
+
+    Applies to train envs whose runtime is ``ucloud`` with ``image_reference_type = "name"``
+    and whose sampler knows its next unseen tasks (difficulty pools with smoothed replay).
+    """
+
+    enabled: bool = False
+    lookahead_tasks: int = Field(default=64, ge=1)
+    """Upcoming unseen tasks per train env whose images are ensured."""
+    interval_seconds: float = Field(default=15.0, gt=0)
+    """Time between ensure rounds."""
+    request_timeout_seconds: float = Field(default=60.0, gt=0)
+    ready_ttl_seconds: float = Field(default=1800.0, gt=0)
+    """How long a name the gateway reported ready is not asked about again."""
+
+
 class OrchestratorConfig(BaseConfig):
     algo: AlgoConfig = GRPOAlgoConfig()
     """Training algorithm: sampling plus the per-token training signal (credit
@@ -575,6 +592,9 @@ class OrchestratorConfig(BaseConfig):
 
     eval: EvalConfig | None = None
     """Evaluation configuration."""
+
+    image_prefetch: ImagePrefetchConfig = ImagePrefetchConfig()
+    """Build upcoming train tasks' sandbox images ahead of time on the UCloud gateway."""
 
     log: LogConfig = LogConfig()
 
