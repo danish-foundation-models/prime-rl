@@ -477,8 +477,11 @@ watcher and retain its exact-job cancellation and exact-run cleanup guards.
 
 Runs use the UCloud production gateway `https://app-sandboxes-gw.cloud.sdu.dk` and
 relay `https://app-sandboxes-relay-v3.cloud.sdu.dk` from the bench `.env` files.
-Relay-only sandboxes reach the relay at `guest_relay_url = "http://10.36.101.16:8092"`,
-set on both the runtime and the interception. The checkout's `.env` pins the package
+Every sandbox reaches the relay by the gateway VM's name,
+`guest_relay_url = "http://sandbox-gateway-gateway-1:8092"` (gateway 0.9.70+), set on both
+the runtime and the interception. Do not use the gateway's private address, which changes
+when UCloud restarts its VM, or the public relay URL: model calls through it work, but the
+node never pauses the waiting sandbox. The checkout's `.env` pins the package
 layer built by `lumi_prepare_runtime.sh` (verifiers-ucloud, the verifiers fork and the SDK,
 all from tags); repin it after every rebuild, because jobs source it at startup.
 The other live sources are submodules pinned to pushed fork commits: `deps/prime-envs`

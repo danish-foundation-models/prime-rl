@@ -18,7 +18,7 @@ from verifiers_ucloud.runtime import UCloudRuntime, UCloudRuntimeConfig
 
 ROOT = Path("/scratch/project_465002751/rasmus")
 BUNDLE = ROOT / "artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-GUEST_RELAY = "http://10.36.101.16:8092"
+GUEST_RELAY = "http://sandbox-gateway-gateway-1:8092"
 IMAGE = "aweaiteam/scaleswe:beetbox_beets_pr3661"
 
 MODEL_CALLS = """
