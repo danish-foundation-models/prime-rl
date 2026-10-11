@@ -41,6 +41,7 @@ from aiolimiter import AsyncLimiter
 from prime_rl.orchestrator.clients import InferenceClient
 from prime_rl.orchestrator.envs import EvalEnvs, TrainEnvs
 from prime_rl.orchestrator.eval_source import EvalSource
+from prime_rl.orchestrator.image_prefetch import INFRASTRUCTURE_ERROR
 from prime_rl.orchestrator.train_source import TrainSource
 from prime_rl.orchestrator.types import (
     CancelReason,
@@ -681,7 +682,7 @@ class Dispatcher:
         if meta.kind == "train" and self.train_source is not None:
             errors = [*episode.errors, *(error for trace in episode.traces for error in trace.errors)]
             failure = next((error for error in errors if error.type == "ImageBuildFailure"), None)
-            if failure is not None:
+            if failure is not None and INFRASTRUCTURE_ERROR not in (failure.message or ""):
                 self.train_source.quarantine_image(meta.env_name, meta.task, failure.message)
                 for group_id, pending in list(self.groups.items()):
                     if pending.kind == "train" and self.train_source.is_quarantined(pending.env_name, pending.task):

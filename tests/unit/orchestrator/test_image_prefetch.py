@@ -7,13 +7,14 @@ from prime_rl.orchestrator.image_prefetch import ImagePrefetcher
 
 
 class FakeGateway:
-    def __init__(self, states):
+    def __init__(self, states, errors=None):
         self.states = states
+        self.errors = errors or {}
         self.asked = []
 
     async def ensure_images(self, names, *, timeout_seconds=None):
         self.asked.append(list(names))
-        return {name: {"state": self.states[name], "error": "build failed"} for name in names}
+        return {name: {"state": self.states[name], "error": self.errors.get(name, "build failed")} for name in names}
 
 
 class FakeSource:
@@ -60,3 +61,16 @@ async def test_prefetch_ensures_upcoming_gateway_images_and_quarantines_unusable
 
     await prefetcher.prefetch()
     assert gateway.asked[-1] == ["b:1", "c:1"]  # A ready name is not asked about again.
+
+
+@pytest.mark.asyncio
+async def test_prefetch_retries_build_infrastructure_failures_instead_of_quarantining():
+    source = FakeSource({"swe": [task("a:1")]}, [env("swe")])
+    gateway = FakeGateway({"a:1": "failed"}, {"a:1": "sandbox build infrastructure: TimeoutError: timed out"})
+    prefetcher = ImagePrefetcher(ImagePrefetchConfig(enabled=True, lookahead_tasks=8), source, client=gateway)
+
+    await prefetcher.prefetch()
+    await prefetcher.prefetch()
+    assert source.quarantined == []
+    assert gateway.asked == [["a:1"], ["a:1"]]
+    assert prefetcher.metrics()["image_prefetch/infrastructure_failed"] == 1

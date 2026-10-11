@@ -12,6 +12,9 @@ from prime_rl.utils.logger import get_logger
 
 # States after which asking again cannot help: the task image will never start.
 UNUSABLE_STATES = ("failed", "unknown")
+# The gateway prefixes failures of its own build system (registry, builder timeouts),
+# which say nothing about the task's image.
+INFRASTRUCTURE_ERROR = "sandbox build infrastructure"
 
 
 def uses_gateway_image_names(env) -> bool:
@@ -24,7 +27,8 @@ class ImagePrefetcher:
 
     The gateway submits missing images for building and answers every name's state;
     asking again only polls. Ready names are not asked about again for a while, and a
-    failed or unknown image is quarantined so the sampler skips its tasks.
+    failed or unknown image is quarantined so the sampler skips its tasks, unless the
+    gateway's build system failed rather than the image.
     """
 
     def __init__(self, config: ImagePrefetchConfig, train_source: TrainSource, client=None) -> None:
@@ -71,6 +75,8 @@ class ImagePrefetcher:
             states[state] += 1
             if state == "ready":
                 self._ready_until[name] = now + self.config.ready_ttl_seconds
+            elif state in UNUSABLE_STATES and INFRASTRUCTURE_ERROR in str(status.get("error") or ""):
+                states["infrastructure_failed"] += 1  # Asked again next round, not quarantined.
             elif state in UNUSABLE_STATES:
                 reason = f"gateway image {state}: {status.get('error') or 'not in the image index'}"
                 for env_name, task in wanted.get(name, []):
