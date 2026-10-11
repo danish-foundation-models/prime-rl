@@ -958,7 +958,7 @@ enable_eplb = false
 enable_dbo = false
 language_model_only = true
 max_num_batched_tokens = 32768
-max_num_seqs = 64
+max_num_seqs = 96
 block_size = 2048
 mamba_ssm_cache_dtype = "float32"
 

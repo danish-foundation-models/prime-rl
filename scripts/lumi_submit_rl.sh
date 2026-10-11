@@ -82,12 +82,14 @@ if grep -q 'epp --pool-name' "$SBATCH_PATH"; then
   if grep -q '^[[:space:]]*pd-sidecar ' "$SBATCH_PATH"; then ROUTER_CHECK_ARGS+=(--pd); fi
   "$SCRIPT_DIR/lumi_run_in_container.sh" bash /workdir/scripts/lumi_check_router.sh "${ROUTER_CHECK_ARGS[@]}"
 fi
+RESOLVED_CONFIG_DIR=$(sed -n 's/^export CONFIG_DIR=//p' "$SBATCH_PATH")
+[[ -d "$RESOLVED_CONFIG_DIR" ]] || { echo "FATAL: resolved config directory missing" >&2; exit 1; }
+"$LUMI_ROOT/bin/uv" run --offline --no-project --python /usr/bin/python3.11 \
+  python "$SCRIPT_DIR/lumi_check_inference_slots.py" "$RESOLVED_CONFIG_DIR"
 if [[ "$USER_DRY_RUN" == true ]]; then
   exit 0
 fi
 
-RESOLVED_CONFIG_DIR=$(sed -n 's/^export CONFIG_DIR=//p' "$SBATCH_PATH")
-[[ -d "$RESOLVED_CONFIG_DIR" ]] || { echo "FATAL: resolved config directory missing" >&2; exit 1; }
 "$LUMI_ROOT/bin/uv" run --offline --no-project --python /usr/bin/python3.11 \
   python "$SCRIPT_DIR/lumi_check_rl_credentials.py" "$RESOLVED_CONFIG_DIR"
 SBATCH_BIN=${SBATCH_BIN:-sbatch}

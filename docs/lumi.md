@@ -227,6 +227,13 @@ inside the operational SIF during dry-run and submission. Do not accept a render
 check as executable availability validation. Missing router binaries cause exit 127
 on inference node zero and tear down the whole allocation.
 
+The wrapper also refuses, at dry-run and submission, a config whose inference request
+slots cannot serve every rollout in flight: `num_infer_replicas` x
+`[inference.vllm] max_num_seqs` must be at least `[orchestrator.concurrency]
+max_inflight` (`scripts/lumi_check_inference_slots.py`). Below that, rollouts queue in
+vLLM while their sandboxes idle; the r21 smoke r4 ran 4 x 64 slots for 512 rollouts.
+Check vLLM's KV cache usage after raising `max_num_seqs`.
+
 Slurm commands such as `squeue` are host tools, not included in the SIF. For exact-run
 sandbox cleanup, perform the ended-job check on the host and pass a fresh, job-bound
 proof to the container-side SDK cleanup; recheck each sandbox's exact run label.
