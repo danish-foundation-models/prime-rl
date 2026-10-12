@@ -4,19 +4,18 @@ from prime_rl.configs.orchestrator import ConcurrencyConfig
 from prime_rl.orchestrator.concurrency import KV_CEILING_FRACTION, KV_CEILING_RECOVERY, ConcurrencyController, EngineLoadSample
 
 
-def sample(kv_usage: float, *, preemptions: int = 0) -> EngineLoadSample:
+def sample(kv_usage: float, *, preemptions: int = 0, engine: str = "e0") -> EngineLoadSample:
     return EngineLoadSample(
-        engine_id="e0", role=None, kv_capacity_tokens=1_000_000, max_model_len=131072,
+        engine_id=engine, role=None, kv_capacity_tokens=1_000_000, max_model_len=131072,
         kv_usage=kv_usage, running=10, waiting=0, waiting_capacity=0, preemptions_delta=preemptions,
     )
 
 
 def controller(start: int = 800):
     inflight = {"n": start}
-    cancelled = []
     c = ConcurrencyController(ConcurrencyConfig(initial_inflight=start, min_inflight=64, max_inflight=1024), fallback_cost=131072)
-    c.bind(set_limit=lambda n: None, get_inflight=lambda: inflight["n"], on_overload=cancelled.append)
-    return c, inflight, cancelled
+    c.bind(set_limit=lambda n: None, get_inflight=lambda: inflight["n"])
+    return c, inflight
 
 
 def grow(c, inflight, completions: int) -> None:
@@ -27,15 +26,14 @@ def grow(c, inflight, completions: int) -> None:
         c.record_episode("env", "train", tokens=1000, duration=60.0)
 
 
-def test_kv_trim_above_the_hard_cap_drains_instead_of_cancelling():
-    c, inflight, cancelled = controller(800)
+def test_kv_trim_above_the_hard_cap_lowers_the_cap():
+    c, inflight = controller(800)
     c.observe([sample(0.95)])
     assert c.max_inflight < 800
-    assert cancelled == []
 
 
 def test_growth_after_a_kv_trim_stops_below_the_pool_that_overflowed():
-    c, inflight, _ = controller(800)
+    c, inflight = controller(800)
     c.observe([sample(0.95)])
     ceiling = KV_CEILING_FRACTION * 800
     start = c.turnover
@@ -48,7 +46,7 @@ def test_growth_after_a_kv_trim_stops_below_the_pool_that_overflowed():
 
 
 def test_the_ceiling_rises_slowly_while_the_engines_stay_clear():
-    c, inflight, _ = controller(800)
+    c, inflight = controller(800)
     c.observe([sample(0.95)])
     first = c.kv_ceiling
     grow(c, inflight, 4000)
@@ -56,12 +54,34 @@ def test_the_ceiling_rises_slowly_while_the_engines_stay_clear():
 
 
 def test_growth_is_gentler_than_a_quarter_per_turnover():
-    c, inflight, _ = controller(200)
+    c, inflight = controller(200)
     grow(c, inflight, 200)  # about one turnover
     assert c.max_inflight <= 200 * 1.12
 
 
-def test_preemptions_still_cancel_the_excess():
-    c, inflight, cancelled = controller(800)
+def test_preemptions_cut_the_cap_once_per_drain():
+    c, inflight = controller(800)
     c.observe([sample(0.5, preemptions=3)])
-    assert cancelled and cancelled[0] > 0
+    assert c.max_inflight == 640
+    # The burst that preempted keeps preempting while the pool drains on its own:
+    # no cascade of further cuts until the pool is under the cap.
+    for _ in range(5):
+        c.observe([sample(1.0, preemptions=2)])
+    assert c.max_inflight == 640
+    inflight["n"] = 600
+    c.observe([sample(0.5)])
+    c.observe([sample(0.5, preemptions=1)])
+    assert c.max_inflight == 480  # a later overload is cut at the same fraction, not harder
+
+
+def test_one_full_engine_does_not_trim_the_fleet():
+    c, inflight = controller(800)
+    c.observe([sample(0.99, engine="hot")] + [sample(0.4, engine=f"e{i}") for i in range(23)])
+    assert c.max_inflight == 800
+    assert not c.can_grow  # but the fleet stops growing while any engine is above the growth threshold
+
+
+def test_fleet_wide_kv_pressure_trims():
+    c, inflight = controller(800)
+    c.observe([sample(0.9, engine=f"e{i}") for i in range(24)])
+    assert c.max_inflight < 800

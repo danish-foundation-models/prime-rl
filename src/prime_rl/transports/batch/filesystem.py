@@ -26,9 +26,18 @@ class FileSystemBatchSender(BatchSender):
         await asyncio.to_thread(self._encode_and_write, micro_batch_grid, step_path)
         self.current_step += 1
 
+    async def send_encoded(self, buffers: list[bytes]) -> None:
+        assert len(buffers) == self.data_world_size, "Number of buffers must match data world size"
+        step_path = get_step_path(self.batch_dir, self.current_step)
+        step_path.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(self._write, buffers, step_path)
+        self.current_step += 1
+
     def _encode_and_write(self, micro_batch_grid: list[list[MicroBatch]], step_path: Path) -> None:
-        for data_rank in range(self.data_world_size):
-            buffer = self.encoder.encode(micro_batch_grid[data_rank])
+        self._write([self.encoder.encode(micro_batch_list) for micro_batch_list in micro_batch_grid], step_path)
+
+    def _write(self, buffers: list[bytes], step_path: Path) -> None:
+        for data_rank, buffer in enumerate(buffers):
             tmp_path = step_path / f"rank_{data_rank}.bin.tmp"
             with open(tmp_path, "wb") as f:
                 f.write(buffer)

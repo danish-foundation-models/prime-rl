@@ -237,11 +237,24 @@ Check vLLM's KV cache usage after raising `max_num_seqs`.
 The orchestrator's concurrency controller sizes the in-flight pool from engine KV use. A
 rollout's KV keeps growing long after admission (SWE contexts reach 128K, math answers
 32K), so KV use lags admissions by a rollout's lifetime. It therefore grows the pool by
-only 10% per pipeline turnover, KV trims (above 80% use) lower the cap and let rollouts
-drain without cancelling any, and each trim sets a ceiling at 90% of the pool that
-overflowed, which rises 2% per turnover while the engines stay clear. Only vLLM
-preemptions and a persistent queue still cancel work. The r21 attempt of 2026-10-12
-grew past ~800 in flight, hit 98% KV, and cancelled 22% of a step's rollouts.
+only 10% per pipeline turnover, KV trims (above 80% mean use across engines) lower the cap
+and let rollouts drain, and each trim sets a ceiling at 90% of the pool that overflowed,
+which rises 2% per turnover while the engines stay clear. vLLM preemptions and a persistent
+queue cut the cap by 20% and 10%, once per drain. Nothing cancels rollouts. Trims read
+the mean because one engine holding a few long SWE contexts says nothing about the
+fleet's headroom.
+
+On 2026-10-13 (r21 13a) cancelling still made things worse. The orchestrator's
+event loop stalled for 25-59 s at a time while it shipped three buffered steps. Packing
+took 66-127 s in a thread, competing for the GIL. Rollouts stopped sending requests,
+so the engines drained to ~100 running. When the loop resumed, ~900 rollouts sent their
+next turn at once. One engine preempted, and two escalating cuts cancelled ~700
+rollouts. Inference then ran at a third of its throughput.
+
+Packing and per-rank encoding now run in a spawned worker process
+(`BatchPacker.pack_encoded`). A watchdog thread logs `Event loop stalled for Ns; thread
+stacks:` with every thread's stack when the loop goes quiet for 10 s. Check
+`orchestrator.log` for that line first when inference throughput drops to zero.
 
 Slurm commands such as `squeue` are host tools, not included in the SIF. For exact-run
 sandbox cleanup, perform the ended-job check on the host and pass a fresh, job-bound

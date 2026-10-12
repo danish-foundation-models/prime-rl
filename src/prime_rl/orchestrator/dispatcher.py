@@ -253,35 +253,6 @@ class Dispatcher:
         blocked until enough episodes finish."""
         self.max_inflight = max_inflight
 
-    def cancel_inflight(self, n: int) -> None:
-        """Cancel roughly ``n`` in-flight train episodes, youngest groups
-        first (least inference spend so far). Called on an overload cut so
-        the working set shrinks immediately instead of waiting for the
-        over-admitted episodes to finish at thrashed throughput."""
-        asyncio.create_task(self._cancel_inflight(n))
-
-    async def _cancel_inflight(self, n: int) -> None:
-        # A group's age is its OLDEST member's start: max() would make a
-        # long-running group look young the moment it schedules another
-        # member, cancelling the most sunk cost instead of the least
-        group_age: dict[uuid.UUID, float] = {}
-        for meta in self.inflight.values():
-            if meta.kind != "train":
-                continue
-            age = group_age.get(meta.group_id)
-            group_age[meta.group_id] = meta.started_at if age is None else min(age, meta.started_at)
-        shed = 0
-        for group_id in sorted(group_age, key=lambda gid: group_age[gid], reverse=True):
-            if shed >= n:
-                break
-            # Count only live cancellations toward the excess: drop_group's
-            # return includes never-dispatched episodes, which free no permits
-            live = sum(1 for meta in self.inflight.values() if meta.group_id == group_id)
-            await self.drop_group(group_id, reason="overload")
-            shed += live
-        if shed:
-            get_logger().warning(f"Cancelled {shed} youngest in-flight episodes after overload cut")
-
     def admission_budget(self) -> int:
         """Admissions still allowed in the current burst window."""
         now = time.monotonic()

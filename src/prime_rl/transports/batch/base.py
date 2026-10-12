@@ -21,6 +21,11 @@ class BatchSender(ABC):
         """Send grid of micro batches to the trainers."""
         pass
 
+    @abstractmethod
+    async def send_encoded(self, buffers: list[bytes]) -> None:
+        """Send one msgpack-encoded micro batch list per data rank (``encoder.encode(grid[rank])``)."""
+        pass
+
     def close(self) -> None:
         """Clean up any resources. Override if needed."""
         pass

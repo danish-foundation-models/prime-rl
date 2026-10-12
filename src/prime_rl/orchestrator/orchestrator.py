@@ -78,7 +78,7 @@ from prime_rl.orchestrator.watcher import WeightWatcher
 from prime_rl.trainer.model import setup_tokenizer
 from prime_rl.transports.batch import setup_batch_sender
 from prime_rl.transports.weights import WeightReceiver, setup_weight_receiver
-from prime_rl.utils.async_utils import EventLoopLagMonitor, EventLoopLagStats, safe_cancel
+from prime_rl.utils.async_utils import EventLoopLagMonitor, EventLoopLagStats, EventLoopStallWatchdog, safe_cancel
 from prime_rl.utils.heartbeat import Heartbeat
 from prime_rl.utils.logger import format_time, get_logger, setup_logger
 from prime_rl.utils.pathing import get_broadcast_dir
@@ -124,7 +124,7 @@ class Orchestrator:
     clients: InferenceClient | None
     admin_plane: AdminPlane | None
     sender: BatchSender | None
-    packer: BatchPacker
+    packer: BatchPacker | None
     train_envs: TrainEnvs
     train_source: TrainSource
     train_sink: TrainSink
@@ -143,6 +143,7 @@ class Orchestrator:
     receiver: WeightReceiver
     resume_step: int | None
     lag_task: asyncio.Task | None
+    stall_watchdog: asyncio.Task | None
     image_prefetcher: ImagePrefetcher | None
 
     def __init__(self, config: OrchestratorConfig) -> None:
@@ -187,7 +188,9 @@ class Orchestrator:
         self.eval_source = None
         self.resume_step = None
         self.lag_task = None
+        self.stall_watchdog = None
         self.image_prefetcher = None
+        self.packer = None
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -404,7 +407,6 @@ class Orchestrator:
         self.concurrency.bind(
             set_limit=self.dispatcher.set_limit,
             get_inflight=lambda: self.dispatcher.current_inflight,
-            on_overload=self.dispatcher.cancel_inflight,
         )
         # The collector always polls — it feeds the concurrency controller;
         # metrics fan out to every registered monitor when collection is on.
@@ -486,6 +488,7 @@ class Orchestrator:
         # ``PeriodicLogger`` polls dispatcher / watcher / sinks / lag
         # monitor each ``log.interval`` seconds for the pipeline-view log
         self.lag_task = asyncio.create_task(self.lag_monitor.run(), name="event_loop_lag")
+        self.stall_watchdog = asyncio.create_task(EventLoopStallWatchdog().run(), name="event_loop_stall_watchdog")
         await self.periodic_logger.start()
         self.component_tasks = [
             asyncio.create_task(self.dispatcher.start(), name="dispatcher"),
@@ -714,9 +717,9 @@ class Orchestrator:
         await monitors.log_annotations(stamp_batch(effective.vf_episodes, step))
 
         pack_start_time = time.perf_counter()
-        micro_batch_grid = await asyncio.to_thread(self.packer.pack, batch.samples)
+        rank_buffers = await self.packer.pack_encoded(batch.samples)
         pack_time = time.perf_counter() - pack_start_time
-        await self.sender.send(micro_batch_grid)
+        await self.sender.send_encoded(rank_buffers)
         self.progress.step += 1
         self.update_dispatch_gate()
         # Checkpoint the step we just shipped (resume point: continue at step + 1).
@@ -1164,11 +1167,16 @@ class Orchestrator:
             if self.lag_task is not None:
                 await safe_cancel(self.lag_task)
                 self.lag_task = None
+            if self.stall_watchdog is not None:
+                await safe_cancel(self.stall_watchdog)
+                self.stall_watchdog = None
             for task in self.component_tasks:
                 await safe_cancel(task)
             self.component_tasks.clear()
             if self.image_prefetcher is not None:
                 await self.image_prefetcher.aclose()
+            if self.packer is not None:
+                self.packer.close()
             if self.inference_metrics is not None:
                 get_logger().debug("Stopping inference metrics collector")
                 await self.inference_metrics.stop()

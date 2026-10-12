@@ -73,8 +73,12 @@ class ZMQBatchSender(BatchSender):
         await self._wait_for_ready()
 
         self.logger.debug(f"Sending micro batch grid for step {self._current_step}")
-        for data_rank in range(self.data_world_size):
-            buffer = self.encoder.encode(micro_batch_grid[data_rank])
+        await self.send_encoded([self.encoder.encode(micro_batch_list) for micro_batch_list in micro_batch_grid])
+
+    async def send_encoded(self, buffers: list[bytes]) -> None:
+        assert len(buffers) == self.data_world_size, "Number of buffers must match data world size"
+        await self._wait_for_ready()
+        for data_rank, buffer in enumerate(buffers):
             topic = self._topic_prefix + str(data_rank).encode("utf-8") + b"|"
             await self.socket.send_multipart([topic, buffer], copy=False)
         self._current_step += 1

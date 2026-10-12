@@ -15,8 +15,11 @@ pressure off the engines and reacts at the pipeline's own pace (AIMD):
   growth stops there and the ceiling rises slowly while the engines stay clear.
 - **Cut** on overload: preemptions (single-shot loads) or a persistent
   capacity queue (agentic loads never preempt — admission control parks
-  excess load in the waiting queue). Cut, cancel the excess, then freeze
-  cuts until the pool drains below the new cap.
+  excess load in the waiting queue). Cut the cap, then freeze cuts until the
+  pool drains below it. Cuts never cancel work either: overload is often a
+  burst (every episode resuming at once after an orchestrator stall), and
+  cancelling hundreds of half-finished agentic episodes on one hot engine's
+  preemptions wasted far more than the preemptions did.
 
 The cap starts at ``initial_inflight`` (else the pessimistic bound
 ``KV capacity / max_model_len``) and is clamped to
@@ -50,11 +53,13 @@ KV_USAGE_GROW = 0.6
 """Grow only while every decode engine's KV usage is below this."""
 
 KV_USAGE_SOFT_CAP = 0.8
-"""Above this usage, soft-trim: lower the cap and let completions drain the
-pool naturally — no work is cancelled."""
+"""Above this mean usage across decode engines, soft-trim: lower the cap and
+let completions drain the pool naturally — no work is cancelled. The mean, not
+the fullest engine: one engine holding a few long contexts says nothing about
+the fleet's headroom, and the router steers new requests away from it."""
 
 KV_USAGE_HARD_CAP = 0.9
-"""Above this usage a trim is logged as hard. It still only drains: KV use lags
+"""Above this mean usage a trim is logged as hard. It still only drains: KV use lags
 admissions by a unit's lifetime, so cancelling in-flight work here wastes it;
 real thrash shows up as preemptions, which still cut."""
 
@@ -83,14 +88,6 @@ undercounts the pool by the duty cycle and cutting to it over-cuts."""
 
 PREEMPTION_CUT_FRACTION = 0.8
 """A preemption cut targets this fraction of the in-flight pool."""
-
-ESCALATED_CUT_FRACTION = 0.5
-"""Cut fraction when overload survives a full drain."""
-
-ESCALATION_GRACE_POLLS = 6
-"""Polls after a drain completes during which a repeat overload cuts at the
-escalated fraction; past the grace window the system is considered recovered
-and escalation resets."""
 
 GROWTH_GATE_TTL_S = 15.0
 """The growth gate expires this long after the poll that set it — if the
@@ -143,33 +140,20 @@ class ConcurrencyController:
         self.prev_waiting: dict[str, int] = {}
         self.queue_overload_polls = 0
         self.trim_cooldown = 0
-        self.escalation_grace = 0
         # After a cut, ignore further cuts until inflight has drained below
         # the new cap — the overload during drain is stale
         self.draining = False
-        self.escalated = False
         # Pool size just below where KV last overflowed; growth stops here
         self.kv_ceiling: float | None = None
 
         self.set_limit: Callable[[int], None] | None = None
         self.get_inflight: Callable[[], int] | None = None
-        self.on_overload: Callable[[int], None] | None = None
 
-    def bind(
-        self,
-        *,
-        set_limit: Callable[[int], None],
-        get_inflight: Callable[[], int],
-        on_overload: Callable[[int], None] | None = None,
-    ) -> None:
+    def bind(self, *, set_limit: Callable[[int], None], get_inflight: Callable[[], int]) -> None:
         """Attach the outbound hooks. The dispatcher is constructed with this
-        controller's initial cap, so no ``set_limit`` fires here.
-        ``on_overload`` receives the unit excess on a downward resize so the
-        dispatcher can cancel in-flight work instead of just blocking
-        admission."""
+        controller's initial cap, so no ``set_limit`` fires here."""
         self.set_limit = set_limit
         self.get_inflight = get_inflight
-        self.on_overload = on_overload
 
     # ── inbound hooks ────────────────────────────────────────────────────────
 
@@ -219,6 +203,7 @@ class ConcurrencyController:
 
         worst: Signal = "clear"
         max_usage = 0.0
+        total_usage = 0.0
         total_running = 0
         total_queued = 0
         preempted = False
@@ -229,9 +214,11 @@ class ConcurrencyController:
             if sample.waiting > 0 and self.prev_waiting.get(sample.engine_id, 0) > 0:
                 worst = max(worst, "soft", key=SEVERITY.__getitem__)
             max_usage = max(max_usage, sample.kv_usage)
+            total_usage += sample.kv_usage
             total_running += sample.running
             total_queued += sample.waiting_capacity if sample.waiting_capacity is not None else sample.waiting
         self.prev_waiting = {sample.engine_id: sample.waiting for sample in samples}
+        mean_usage = total_usage / len(samples)
 
         if total_running > 0 and total_queued > QUEUE_RATIO * total_running:
             self.queue_overload_polls += 1
@@ -243,23 +230,11 @@ class ConcurrencyController:
         self.signal = worst
 
         inflight = self.get_inflight() if self.get_inflight is not None else 0
-        # Release the drain only once the engines have settled too: cuts
-        # cancel episodes, so dispatcher inflight drops below the cap almost
-        # immediately while the engines are still churning through their own
-        # backlog — preemption deltas from that stale churn must not trigger
-        # follow-up cuts (observed: an escalated-cut cascade 1024 -> 8, one
-        # halving per poll).
+        # Release the drain only once the pool is under the cap and the
+        # engines have settled: preemption deltas from the backlog the cut
+        # left behind must not trigger follow-up cuts.
         if self.draining and inflight <= self.max_inflight and not preempted and not queue_overload:
             self.draining = False
-            self.escalation_grace = ESCALATION_GRACE_POLLS
-        if not self.draining and self.escalated:
-            # Escalation persists only through the grace window after a
-            # drain: a repeat overload inside it cuts harder, anything later
-            # means the system recovered (steady state post-cut is SOFT, so
-            # gating the reset on a CLEAR poll would latch escalation forever)
-            self.escalation_grace -= 1
-            if self.escalation_grace <= 0:
-                self.escalated = False
         self.trim_cooldown = max(0, self.trim_cooldown - 1)
         self.can_grow = worst == "clear" and total_queued == 0 and not self.draining
         self.can_grow_until = time.monotonic() + GROWTH_GATE_TTL_S
@@ -280,42 +255,35 @@ class ConcurrencyController:
             return
 
         if preempted or queue_overload:
-            fraction = ESCALATED_CUT_FRACTION if self.escalated else None
             if queue_overload:
                 self.queue_overload_polls = 0
-                target = int(self.clamp(inflight * (fraction or QUEUE_CUT_FRACTION)))
+                target = int(self.clamp(inflight * QUEUE_CUT_FRACTION))
                 reason = "queue overload"
             else:
-                target = int(self.clamp(inflight * (fraction or PREEMPTION_CUT_FRACTION)))
+                target = int(self.clamp(inflight * PREEMPTION_CUT_FRACTION))
                 reason = "preemptions"
-            self.resize_down(target, inflight, reason=reason)
+            self.resize_down(target, reason=reason)
             self.draining = True
-            self.escalated = True
             return
 
-        if max_usage > KV_USAGE_SOFT_CAP and inflight > 0 and self.trim_cooldown == 0:
-            hard = max_usage > KV_USAGE_HARD_CAP
-            target = int(self.clamp(inflight * KV_USAGE_TARGET / max_usage))
+        if mean_usage > KV_USAGE_SOFT_CAP and inflight > 0 and self.trim_cooldown == 0:
+            hard = mean_usage > KV_USAGE_HARD_CAP
+            target = int(self.clamp(inflight * KV_USAGE_TARGET / mean_usage))
             self.kv_ceiling = KV_CEILING_FRACTION * inflight
             self.resize_down(
                 target,
-                inflight,
-                reason=f"kv headroom (usage {max_usage:.2f}, {'hard' if hard else 'soft'} trim, ceiling {int(self.kv_ceiling)})",
-                cancel=False,
+                reason=f"kv headroom (mean usage {mean_usage:.2f}, {'hard' if hard else 'soft'} trim, ceiling {int(self.kv_ceiling)})",
             )
             self.trim_cooldown = KV_TRIM_COOLDOWN_POLLS
 
     # ── internals ────────────────────────────────────────────────────────────
 
-    def resize_down(self, target: int, inflight: int, *, reason: str, cancel: bool = True) -> None:
-        """Lower the cap (never raise) and, with ``cancel``, shed the
-        in-flight excess; without it, admission stays blocked until the pool
-        drains below the new cap on its own."""
+    def resize_down(self, target: int, *, reason: str) -> None:
+        """Lower the cap (never raise); admission stays blocked until the pool
+        drains below it on its own."""
         target = min(target, self.max_inflight)
         self.cap = float(target)
         self.apply_limit(target, reason=reason)
-        if cancel and self.on_overload is not None and inflight > target:
-            self.on_overload(inflight - target)
 
     def apply_limit(self, n_max: int, *, reason: str | None) -> None:
         if n_max == self.max_inflight:

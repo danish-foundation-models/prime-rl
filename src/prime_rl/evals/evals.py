@@ -192,8 +192,7 @@ class Evals:
             run_name=self.run_name,
             on_episode_complete=self.concurrency.record_episode,
         )
-        # No ``on_overload``: eval episodes are measurements and are never
-        # cancelled — a cut only blocks admission until the pool drains.
+        # A cut only blocks admission until the pool drains; nothing is cancelled.
         self.concurrency.bind(
             set_limit=self.dispatcher.set_limit,
             get_inflight=lambda: self.dispatcher.current_inflight,

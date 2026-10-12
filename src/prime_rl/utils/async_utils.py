@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import threading
+import traceback
 from collections import deque
 from time import perf_counter
 
@@ -68,3 +71,60 @@ class EventLoopLagStats(BaseModel):
             max=float(arr.max()),
             n=n,
         )
+
+
+class EventLoopStallWatchdog:
+    """Logs the stacks of every thread when the event loop stops ticking.
+
+    The lag monitor only reports after the loop recovers, and only to W&B. A
+    watchdog thread reads a heartbeat the loop refreshes; past ``threshold``
+    seconds it logs where each thread is (the loop thread's frame names the
+    blocking call, another thread's frame names a GIL holder) and, on recovery,
+    how long the stall lasted.
+    """
+
+    def __init__(self, threshold: float = 10.0, interval: float = 0.5):
+        self.threshold = threshold
+        self.interval = interval
+        self.beat = perf_counter()
+        self.loop_thread_id: int | None = None
+        self.stop_event = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    async def run(self) -> None:
+        """Heartbeat task; starts the watchdog thread on first run."""
+        self.loop_thread_id = threading.get_ident()
+        self.beat = perf_counter()
+        if self.thread is None:
+            self.thread = threading.Thread(target=self._watch, name="event-loop-stall-watchdog", daemon=True)
+            self.thread.start()
+        try:
+            while True:
+                self.beat = perf_counter()
+                await asyncio.sleep(self.interval)
+        finally:
+            self.stop_event.set()
+
+    def _watch(self) -> None:
+        from prime_rl.utils.logger import get_logger
+
+        stalled_since: float | None = None
+        while not self.stop_event.wait(self.interval):
+            silent = perf_counter() - self.beat
+            if silent > self.threshold and stalled_since is None:
+                stalled_since = self.beat
+                get_logger().warning(f"Event loop stalled for {silent:.1f}s; thread stacks:\n{self._stacks()}")
+            elif silent <= self.threshold and stalled_since is not None:
+                get_logger().warning(f"Event loop recovered after a {self.beat - stalled_since:.1f}s stall")
+                stalled_since = None
+
+    def _stacks(self) -> str:
+        names = {thread.ident: thread.name for thread in threading.enumerate()}
+        parts = []
+        for ident, frame in sys._current_frames().items():
+            if ident == threading.get_ident():
+                continue
+            label = "event loop" if ident == self.loop_thread_id else names.get(ident, str(ident))
+            stack = "".join(traceback.format_stack(frame)[-8:])
+            parts.append(f"--- {label}\n{stack}")
+        return "".join(parts)
