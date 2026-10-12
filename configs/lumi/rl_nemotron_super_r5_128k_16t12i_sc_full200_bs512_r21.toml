@@ -220,6 +220,8 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "scaleswe-bash"
+# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
+sampling.max_completion_tokens = 8192
 balance_category = "swe"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -365,6 +367,8 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "terminal-lego-bash"
+# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
+sampling.max_completion_tokens = 8192
 balance_category = "terminal"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -527,6 +531,8 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "swesmith-env-bash"
+# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
+sampling.max_completion_tokens = 8192
 balance_category = "swe"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -684,6 +690,8 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "openswe-bash"
+# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
+sampling.max_completion_tokens = 8192
 balance_category = "swe"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -837,6 +845,8 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "tmax-bash"
+# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
+sampling.max_completion_tokens = 8192
 balance_category = "terminal"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -1299,6 +1309,8 @@ serve.pool.multiplex = 32
 
 [[orchestrator.train.source]]
 name = "nemo-instruction"
+# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
+sampling.max_completion_tokens = 16384
 ratio = 1.0
 share_taskset = true
 curriculum.sampler.type = "difficulty_pool"
@@ -1328,6 +1340,8 @@ serve.pool.multiplex = 32
 
 [[orchestrator.eval.source]]
 name = "nemo-instruction-heldout"
+# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
+sampling.max_completion_tokens = 16384
 num_examples = 32
 interval = 12
 env.taskset.dataset = "/scratch/project_465002751/rasmus/artifacts/training/nemo-local-20260923/data-v2/instruction-validation.jsonl"
@@ -1348,6 +1362,8 @@ serve.pool.multiplex = 32
 
 [[orchestrator.train.source]]
 name = "nemo-calendar"
+# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
+sampling.max_completion_tokens = 16384
 ratio = 1.0
 share_taskset = true
 curriculum.sampler.type = "difficulty_pool"
@@ -1377,6 +1393,8 @@ serve.pool.multiplex = 32
 
 [[orchestrator.eval.source]]
 name = "nemo-calendar-heldout"
+# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
+sampling.max_completion_tokens = 16384
 num_examples = 32
 interval = 12
 env.taskset.dataset = "/scratch/project_465002751/rasmus/artifacts/training/nemo-local-20260923/data-v2/calendar-validation.jsonl"
