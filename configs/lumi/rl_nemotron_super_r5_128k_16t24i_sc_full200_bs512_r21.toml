@@ -14,7 +14,8 @@ name = "rl-super-r5-step2619-sc-full200-bs512-r21-20261012e"
 type = "multi_node"
 num_train_nodes = 16
 num_infer_nodes = 1
-num_infer_replicas = 12
+# The trainer waited 6-23 min per step for batches against 4-6 min of compute with 12.
+num_infer_replicas = 24
 gpus_per_node = 8
 orchestrator_on_inference = true
 
@@ -92,9 +93,9 @@ category_batch_tolerance = 2
 category_max_surplus = 8
 lookahead_batches = 4
 eval_fraction = 0.125
-initial_inflight = 512
+initial_inflight = 900
 min_inflight = 128
-max_inflight = 1024
+max_inflight = 2048
 
 [orchestrator.image_prefetch]
 enabled = true
