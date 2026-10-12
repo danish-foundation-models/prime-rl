@@ -414,7 +414,8 @@ its learned rollout durations and yields and restarts its served counts and cred
 new targets. To continue in a new run directory, fork the checkpoint with
 `--resume.dir <old run>/checkpoints/step_N`; sampler state, the quarantine list and progress
 carry over. A changed `[trainer.optim] lr` does not take effect on resume: the checkpointed
-optimizer state and LR schedule carry the old rate (the step log's `LR` shows it).
+optimizer state and LR schedule carry the old rate (the step log's `LR` shows it). Set `[orchestrator.eval] retrigger_on_resume = true` so a resume after a crash reruns
+the evals that were in flight at the checkpoint step; by default they are skipped.
 Use `scripts/lumi_watch_rl_pilot.py` for ongoing capacity renewal and fatal-error
 monitoring also on full runs; it does not automatically resubmit a timed-out job.
 

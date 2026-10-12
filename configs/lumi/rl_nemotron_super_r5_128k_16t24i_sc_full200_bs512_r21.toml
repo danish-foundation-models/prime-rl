@@ -993,6 +993,8 @@ interval = 12
 num_examples = 4
 group_size = 1
 skip_first_step = false
+# A crash leaves the checkpoint step's evals unfinished; rerun them on resume.
+retrigger_on_resume = true
 
 [orchestrator.eval.sampling]
 reasoning_effort = "high"
