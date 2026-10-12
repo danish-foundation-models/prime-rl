@@ -8,9 +8,11 @@ pressure off the engines and reacts at the pipeline's own pace (AIMD):
   advances the turnover by ``1/inflight``) while the engines are clear, KV
   usage is below ``KV_USAGE_GROW``, and the cap binds admission.
 - **Trim** above ``KV_USAGE_SOFT_CAP``: lower the cap to what the engines
-  hold at ``KV_USAGE_TARGET`` and let completions drain the pool (soft). If
-  usage still climbs past ``KV_USAGE_HARD_CAP`` — units maturing in place
-  outpace completions — also cancel the excess, youngest first (hard).
+  hold at ``KV_USAGE_TARGET`` and let completions drain the pool. KV trims
+  never cancel work: a unit's KV grows long after admission, so high usage
+  lags the admissions that caused it and cancelling only wastes them. Each
+  trim also records a ceiling just below the pool size that overflowed;
+  growth stops there and the ceiling rises slowly while the engines stay clear.
 - **Cut** on overload: preemptions (single-shot loads) or a persistent
   capacity queue (agentic loads never preempt — admission control parks
   excess load in the waiting queue). Cut, cancel the excess, then freeze
@@ -38,7 +40,7 @@ from prime_rl.configs.orchestrator import ConcurrencyConfig
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.utils import format_num
 
-TURNOVER_GROWTH = 1.25
+TURNOVER_GROWTH = 1.1
 """Cap growth per pipeline turnover while the engines are clear and the cap binds."""
 
 BINDING_FRACTION = 0.9
@@ -52,9 +54,15 @@ KV_USAGE_SOFT_CAP = 0.8
 pool naturally — no work is cancelled."""
 
 KV_USAGE_HARD_CAP = 0.9
-"""Above this usage, hard-trim: in-place context growth is outpacing
-completions despite the closed gate, so also cancel the pool excess before
-thrash onset (a cliff, not a slope)."""
+"""Above this usage a trim is logged as hard. It still only drains: KV use lags
+admissions by a unit's lifetime, so cancelling in-flight work here wastes it;
+real thrash shows up as preemptions, which still cut."""
+
+KV_CEILING_FRACTION = 0.9
+"""A KV trim caps further growth at this fraction of the pool that overflowed."""
+
+KV_CEILING_RECOVERY = 1.02
+"""The ceiling rises by this factor per pipeline turnover while the engines stay clear."""
 
 KV_USAGE_TARGET = 0.7
 """A trim resizes to inflight * target / usage — below the trigger, so pool growth has headroom before the next trim."""
@@ -140,6 +148,8 @@ class ConcurrencyController:
         # the new cap — the overload during drain is stale
         self.draining = False
         self.escalated = False
+        # Pool size just below where KV last overflowed; growth stops here
+        self.kv_ceiling: float | None = None
 
         self.set_limit: Callable[[int], None] | None = None
         self.get_inflight: Callable[[], int] | None = None
@@ -183,7 +193,12 @@ class ConcurrencyController:
             and time.monotonic() < self.can_grow_until
             and inflight >= BINDING_FRACTION * self.max_inflight
         ):
-            self.cap = self.clamp(self.cap * TURNOVER_GROWTH**fraction)
+            if self.kv_ceiling is not None:
+                self.kv_ceiling *= KV_CEILING_RECOVERY**fraction
+            grown = self.cap * TURNOVER_GROWTH**fraction
+            if self.kv_ceiling is not None:
+                grown = min(grown, max(self.cap, self.kv_ceiling))
+            self.cap = self.clamp(grown)
             self.apply_limit(int(self.cap), reason=None)
 
     def observe(self, samples: list[EngineLoadSample]) -> None:
@@ -281,11 +296,12 @@ class ConcurrencyController:
         if max_usage > KV_USAGE_SOFT_CAP and inflight > 0 and self.trim_cooldown == 0:
             hard = max_usage > KV_USAGE_HARD_CAP
             target = int(self.clamp(inflight * KV_USAGE_TARGET / max_usage))
+            self.kv_ceiling = KV_CEILING_FRACTION * inflight
             self.resize_down(
                 target,
                 inflight,
-                reason=f"kv headroom (usage {max_usage:.2f}, {'hard' if hard else 'soft'} trim)",
-                cancel=hard,
+                reason=f"kv headroom (usage {max_usage:.2f}, {'hard' if hard else 'soft'} trim, ceiling {int(self.kv_ceiling)})",
+                cancel=False,
             )
             self.trim_cooldown = KV_TRIM_COOLDOWN_POLLS
 
@@ -331,4 +347,5 @@ class ConcurrencyController:
             "concurrency/turnover": self.turnover,
             "concurrency/capacity": float(self.capacity or 0),
             "concurrency/signal": float(SEVERITY[self.signal]),
+            "concurrency/kv_ceiling": float(self.kv_ceiling or 0),
         }

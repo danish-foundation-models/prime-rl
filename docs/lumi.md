@@ -234,6 +234,15 @@ max_inflight` (`scripts/lumi_check_inference_slots.py`). Below that, rollouts qu
 vLLM while their sandboxes idle; the r21 smoke r4 ran 4 x 64 slots for 512 rollouts.
 Check vLLM's KV cache usage after raising `max_num_seqs`.
 
+The orchestrator's concurrency controller sizes the in-flight pool from engine KV use. A
+rollout's KV keeps growing long after admission (SWE contexts reach 128K, math answers
+32K), so KV use lags admissions by a rollout's lifetime. It therefore grows the pool by
+only 10% per pipeline turnover, KV trims (above 80% use) lower the cap and let rollouts
+drain without cancelling any, and each trim sets a ceiling at 90% of the pool that
+overflowed, which rises 2% per turnover while the engines stay clear. Only vLLM
+preemptions and a persistent queue still cancel work. The r21 attempt of 2026-10-12
+grew past ~800 in flight, hit 98% KV, and cancelled 22% of a step's rollouts.
+
 Slurm commands such as `squeue` are host tools, not included in the SIF. For exact-run
 sandbox cleanup, perform the ended-job check on the host and pass a fresh, job-bound
 proof to the container-side SDK cleanup; recheck each sandbox's exact run label.
