@@ -515,7 +515,11 @@ verifiers-ucloud task-ids artifacts/manifests/ucloud-task-ids-<date>
 
 Each training taskset takes its environment's file as `task_ids_file`. Loading fails when a
 listed task is unknown or removed by the source's own filters, so derive a list without
-held-out tasks instead of filtering them. Remove tasks whose images are broken the same way, and record why next to the list (`swe-smith-train.removed.json` drops the charset_normalizer image, which lacks ripgrep, and one kakoune task whose branch is not in its image). Load every taskset with the final config before
+held-out tasks instead of filtering them. Remove tasks whose images are broken the same way, and record why next to the list (`swe-smith-train.removed.json` drops the charset_normalizer image, which lacks ripgrep, and one kakoune task whose branch is not in its image). SWE-smith grading queries the GitHub API from
+the env server (`swesmith` profile helpers) and reads `GITHUB_TOKEN`; without it LUMI's
+shared outbound IP hits the anonymous limit (60/h) and grading fails with `403: rate limit
+exceeded` or `Mirror clone repo must be created first`. The bench `prime-rl/.env` holds the
+key as `GITHUB_API_KEY`; the checkout `.env` exports `GITHUB_TOKEN` from it. Load every taskset with the final config before
 submitting. Harbor task caches (`task_data_file`) record the full taskset config, so
 regenerate them with `deps/prime-envs/tools/ucloud_cache_harbor.py` whenever
 `task_ids_file` or a pinned `revision` changes. Terminal-Lego's pinned revision must match
