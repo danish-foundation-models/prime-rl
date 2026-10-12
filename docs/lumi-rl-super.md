@@ -546,7 +546,10 @@ those solved at most 4 of 8 times. The math tasksets default to no network
 (`network_allow = []`), which the subprocess runtime cannot enforce: verifiers then fails
 every episode before it starts ("requires a network policy"), the orchestrator logs
 `Episode failed before any trace`, and a category quota on that source blocks every batch.
-Set `env.taskset.network_allow = ["*"]` on them. Before adding a source, run a few real
+Set `env.taskset.network_allow = ["*"]` on them. They also answer in a single model call, so give them
+`sampling.max_completion_tokens = 32768`: the run-wide per-call cap (4096 in r21) cuts
+every answer before its boxed result, every group scores 0 and is dropped, and the math
+quota again blocks every batch. Before adding a source, run a few real
 rollouts with `eval` on its exact harness and runtime; loading the taskset is not enough.
 
 `general-agent` (multi-turn tool use, 4,417 tasks with their own tools and databases) also
