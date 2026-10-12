@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from collections import Counter
 import uuid
 from typing import TYPE_CHECKING
 
@@ -1072,15 +1073,39 @@ class Orchestrator:
             outstanding = {}
             for name, size in self.dispatcher.train_reservations.values():
                 outstanding[name] = outstanding.get(name, 0) + size
-            return self.train_source.scheduler.choose_sources(
+            scheduler = self.train_source.scheduler
+            chosen = scheduler.choose_sources(
                 pressure, outstanding, self.dispatcher.max_inflight,
                 buffered_tokens=self.train_sink.buffered_token_count(),
-                token_limit=self.train_source.scheduler.window * self.config.seq_len,
+                token_limit=scheduler.window * self.config.seq_len,
             )
+            self._log_admission(scheduler, chosen)
+            return chosen
         for name, size in self.dispatcher.train_reservations.values():
             pressure[name] = pressure.get(name, 0) + size
         target = self.config.batch_size * self.config.concurrency.lookahead_batches
         return eligible_sources(sources, pressure, target)
+
+    def _log_admission(self, scheduler, chosen: set[str]) -> None:
+        """Summarize train admission once a minute: which sources the scheduler picks,
+        why it blocks, and its category weights, so a source that never gets work shows why."""
+        stats = getattr(self, "_admission_stats", None)
+        if stats is None:
+            stats = self._admission_stats = {"picks": Counter(), "blocks": Counter(), "since": time.monotonic()}
+        if chosen:
+            stats["picks"].update(chosen)
+        else:
+            stats["blocks"][scheduler.last_block] += 1
+        if time.monotonic() - stats["since"] < 60:
+            return
+        weights = {k: round(v, 3) for k, v in scheduler.last_scheduling_weights.items()}
+        budgets = {k: round(v, 1) for k, v in scheduler.last_group_budgets.items()}
+        get_logger().info(
+            f"Train admission (60s): picks={dict(stats['picks'])} blocks={dict(stats['blocks'])} "
+            f"next_task_none={dict(self.train_source.none_by_allowed)} weights={weights} budgets={budgets}"
+        )
+        self._admission_stats = None
+        self.train_source.none_by_allowed.clear()
 
     def update_dispatch_gate(self) -> None:
         """Pause/resume the dispatcher based on how far the in-flight batch runs

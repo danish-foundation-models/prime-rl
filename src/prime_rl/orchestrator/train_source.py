@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import random
 from pathlib import Path
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 
 import verifiers.v1 as vf
@@ -48,6 +48,7 @@ class TrainSource:
         self.env_names = [env.name for env in self.envs]
         self.weights = [float(env.config.ratio) for env in self.envs]
         self._admitted: dict[str, int] = defaultdict(int)
+        self.none_by_allowed: Counter[str] = Counter()
         self._rejected: dict[str, int] = defaultdict(int)
         self.quarantine_path = quarantine_path
         self.quarantined_images: dict[tuple[str, str], str] = {}
@@ -61,6 +62,8 @@ class TrainSource:
             if (allowed is None or name in allowed) and self.curricula[name].sampler.has_available_tasks
         ]
         if not selected:
+            if allowed:
+                self.none_by_allowed.update(allowed)
             return None
         names, weights = zip(*selected, strict=True)
         env_name = self.rng.choices(names, weights=weights, k=1)[0]
