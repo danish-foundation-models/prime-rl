@@ -542,7 +542,12 @@ runtime with the `null` harness; `aime25` and `aime26` evaluate. Runs set
 node with `HF_DATASETS_OFFLINE=0 HF_HUB_OFFLINE=0`. `i3-math` grades with a uv script
 (`verify.py`, math-verify); prepare it once against the shared `UV_CACHE_DIR` so rollouts do
 not resolve it from PyPI. Its `filter` keeps problems by Qwen3-4B's solve rate; r21 keeps
-those solved at most 4 of 8 times.
+those solved at most 4 of 8 times. The math tasksets default to no network
+(`network_allow = []`), which the subprocess runtime cannot enforce: verifiers then fails
+every episode before it starts ("requires a network policy"), the orchestrator logs
+`Episode failed before any trace`, and a category quota on that source blocks every batch.
+Set `env.taskset.network_allow = ["*"]` on them. Before adding a source, run a few real
+rollouts with `eval` on its exact harness and runtime; loading the taskset is not enough.
 
 `general-agent` (multi-turn tool use, 4,417 tasks with their own tools and databases) also
 runs locally: each task's tools are served host-side over MCP to the `null` harness and

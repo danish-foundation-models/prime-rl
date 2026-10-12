@@ -671,6 +671,13 @@ class Dispatcher:
                     )
         if not episode.ok and not episode.traces:
             self.metrics.record_error(kind=meta.kind, env_name=meta.env_name)
+            # An episode that fails before any trace starts (e.g. its runtime refuses the
+            # task) leaves no trace warning above, so a source can fail silently forever.
+            error = episode.last_error
+            get_logger().warning(
+                f"Episode failed before any trace in group {meta.group_id} ({meta.env_name}) — "
+                f"{error.type if error else 'unknown'}: {(error.message if error else '')[:500]}"
+            )
         if self.on_episode_complete is not None and meta.started_at > 0:
             finished_at = time.monotonic()
             paused = (self.policy_pause_seconds(finished_at) - meta.pause_seconds_at_start
