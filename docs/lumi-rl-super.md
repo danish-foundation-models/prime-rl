@@ -564,6 +564,12 @@ NeMo answers, and 8-14% of Bash turns; every cut-off single-turn answer scores 0
 category quota on such a source blocks every batch. Before adding a source, run a few real
 rollouts with `eval` on its exact harness and runtime; loading the taskset is not enough.
 
+`[orchestrator.degenerate_turns]` keeps derailed turns out of training: a train trace with a
+sampled turn of at least `min_tokens` whose mean negative sampling logprob exceeds
+`max_mean_nll` is marked failed (`DegenerateTurn`). At temperature 1 with no tail cut-off the
+Bash harness occasionally spirals into thousands of near-random tokens (mean NLL ~8 against
+~0.65); in r21 these grew to 1% of Bash turns and 17% of Bash rollouts and drove its entropy up.
+
 `general-agent` (multi-turn tool use, 4,417 tasks with their own tools and databases) also
 runs locally: each task's tools are served host-side over MCP to the `null` harness and
 graded by replaying its gold tool chain. Its corpus comes through Harbor into the container

@@ -41,6 +41,7 @@ from aiolimiter import AsyncLimiter
 from prime_rl.orchestrator.clients import InferenceClient
 from prime_rl.orchestrator.envs import EvalEnvs, TrainEnvs
 from prime_rl.orchestrator.eval_source import EvalSource
+from prime_rl.orchestrator.degenerate import find_degenerate_turn
 from prime_rl.orchestrator.image_prefetch import INFRASTRUCTURE_ERROR
 from prime_rl.orchestrator.train_source import TrainSource
 from prime_rl.orchestrator.types import (
@@ -174,6 +175,8 @@ class Dispatcher:
         # it); ``max_inflight_ceiling`` is the configured hard maximum, used to
         # bound ``out_q``
         self.train_admission: Callable[[], set[str]] | None = None
+        # Set by the orchestrator when degenerate-turn filtering is enabled.
+        self.degenerate_turns = None
         self.eval_fraction: float = 0.125
         self.train_reservations: dict[str, tuple[str, int]] = {}
         self.max_inflight = initial_max_inflight
@@ -662,6 +665,17 @@ class Dispatcher:
                 trace.ok = False
                 episode.ok = False
                 get_logger().warning(f"Empty trajectory in group {meta.group_id} ({meta.env_name})")
+            if meta.kind == "train" and self.degenerate_turns is not None and not trace.has_error:
+                turn = find_degenerate_turn(
+                    trace, min_tokens=self.degenerate_turns.min_tokens, max_mean_nll=self.degenerate_turns.max_mean_nll
+                )
+                if turn is not None:
+                    trace.errors.append(vf.Error(
+                        type="DegenerateTurn",
+                        message=f"turn {turn.index}: {turn.tokens} tokens at mean NLL {turn.mean_nll:.2f}",
+                    ))
+                    trace.ok = False
+                    episode.ok = False
             if trace.has_error:
                 self.metrics.record_error(kind=meta.kind, env_name=meta.env_name)
                 if trace.last_error is not None:

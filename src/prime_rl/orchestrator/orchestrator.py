@@ -467,6 +467,8 @@ class Orchestrator:
             self.dispatcher.train_admission = self.allowed_train_sources
             self.dispatcher.eval_fraction = config.concurrency.eval_fraction
             self.train_sink.on_group_retired = lambda gid: self.dispatcher.train_reservations.pop(gid, None)
+        if config.degenerate_turns.enabled:
+            self.dispatcher.degenerate_turns = config.degenerate_turns
 
         # Consumers are now installed; announce the policy already transferred.
         await self.watcher.notify_current_policy()

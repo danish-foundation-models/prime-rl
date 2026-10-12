@@ -573,6 +573,19 @@ class ImagePrefetchConfig(BaseConfig):
     """How long a name the gateway reported ready is not asked about again."""
 
 
+class DegenerateTurnConfig(BaseConfig):
+    """Keep derailed sampled turns out of training (temperature-1 spirals into near-random text)."""
+
+    enabled: bool = False
+    """Mark a train trace failed when one of its sampled turns is degenerate, so it does not train."""
+
+    min_tokens: int = Field(100, ge=1)
+    """Only turns with at least this many sampled tokens are judged."""
+
+    max_mean_nll: float = Field(3.0, gt=0)
+    """A turn whose mean negative sampling logprob per token exceeds this is degenerate (typical turns: ~0.3-0.7)."""
+
+
 class OrchestratorConfig(BaseConfig):
     algo: AlgoConfig = GRPOAlgoConfig()
     """Training algorithm: sampling plus the per-token training signal (credit
@@ -600,6 +613,7 @@ class OrchestratorConfig(BaseConfig):
     """Evaluation configuration."""
 
     image_prefetch: ImagePrefetchConfig = ImagePrefetchConfig()
+    degenerate_turns: DegenerateTurnConfig = DegenerateTurnConfig()
     """Build upcoming train tasks' sandbox images ahead of time on the UCloud gateway."""
 
     log: LogConfig = LogConfig()
