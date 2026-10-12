@@ -114,9 +114,11 @@ type = "grpo"
 penalty = 0.1
 
 [orchestrator.train.sampling]
+# Per model call. Multi-turn agent sources use this; single-turn sources (max_turns = 1),
+# where one call is the whole answer, override it to 32768. Train and eval match.
 reasoning_effort = "high"
 temperature = 1.0
-max_completion_tokens = 4096
+max_completion_tokens = 8192
 
 [[orchestrator.train.source]]
 algo.type = "echo"
@@ -220,8 +222,6 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "scaleswe-bash"
-# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
-sampling.max_completion_tokens = 8192
 balance_category = "swe"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -367,8 +367,6 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "terminal-lego-bash"
-# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
-sampling.max_completion_tokens = 8192
 balance_category = "terminal"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -531,8 +529,6 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "swesmith-env-bash"
-# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
-sampling.max_completion_tokens = 8192
 balance_category = "swe"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -690,8 +686,6 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "openswe-bash"
-# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
-sampling.max_completion_tokens = 8192
 balance_category = "swe"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -845,8 +839,6 @@ env.retries.max_retries = 5
 env.retries.include = ["SandboxNodeLost"]
 share_taskset = true
 name = "tmax-bash"
-# One call holds reasoning plus the command: 8-14% of Bash turns hit the 4096 cap (2026-10-12d).
-sampling.max_completion_tokens = 8192
 balance_category = "terminal"
 ratio = 0.3333333333333333
 curriculum.sampler.type = "difficulty_pool"
@@ -994,7 +986,7 @@ skip_first_step = false
 [orchestrator.eval.sampling]
 reasoning_effort = "high"
 temperature = 1.0
-max_completion_tokens = 4096
+max_completion_tokens = 8192
 
 [[orchestrator.eval.source]]
 env.retries.max_retries = 5
@@ -1211,6 +1203,7 @@ serve.pool.multiplex = 8
 
 [[orchestrator.train.source]]
 name = "nemo-pivot"
+sampling.max_completion_tokens = 32768
 ratio = 1.0
 share_taskset = true
 curriculum.sampler.type = "difficulty_pool"
@@ -1240,6 +1233,7 @@ serve.pool.multiplex = 32
 
 [[orchestrator.eval.source]]
 name = "nemo-pivot-heldout"
+sampling.max_completion_tokens = 32768
 num_examples = 32
 interval = 12
 env.taskset.dataset = "/scratch/project_465002751/rasmus/artifacts/training/nemo-local-20260923/data-v2/pivot-validation.jsonl"
@@ -1309,8 +1303,7 @@ serve.pool.multiplex = 32
 
 [[orchestrator.train.source]]
 name = "nemo-instruction"
-# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
-sampling.max_completion_tokens = 16384
+sampling.max_completion_tokens = 32768
 ratio = 1.0
 share_taskset = true
 curriculum.sampler.type = "difficulty_pool"
@@ -1340,8 +1333,7 @@ serve.pool.multiplex = 32
 
 [[orchestrator.eval.source]]
 name = "nemo-instruction-heldout"
-# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
-sampling.max_completion_tokens = 16384
+sampling.max_completion_tokens = 32768
 num_examples = 32
 interval = 12
 env.taskset.dataset = "/scratch/project_465002751/rasmus/artifacts/training/nemo-local-20260923/data-v2/instruction-validation.jsonl"
@@ -1362,8 +1354,7 @@ serve.pool.multiplex = 32
 
 [[orchestrator.train.source]]
 name = "nemo-calendar"
-# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
-sampling.max_completion_tokens = 16384
+sampling.max_completion_tokens = 32768
 ratio = 1.0
 share_taskset = true
 curriculum.sampler.type = "difficulty_pool"
@@ -1393,8 +1384,7 @@ serve.pool.multiplex = 32
 
 [[orchestrator.eval.source]]
 name = "nemo-calendar-heldout"
-# Single-turn: the run-wide 4096-token cap cut 18-22% of answers, all scored 0 (2026-10-12d).
-sampling.max_completion_tokens = 16384
+sampling.max_completion_tokens = 32768
 num_examples = 32
 interval = 12
 env.taskset.dataset = "/scratch/project_465002751/rasmus/artifacts/training/nemo-local-20260923/data-v2/calendar-validation.jsonl"
@@ -1415,6 +1405,7 @@ serve.pool.multiplex = 32
 
 [[orchestrator.train.source]]
 name = "i3-math"
+sampling.max_completion_tokens = 32768
 ratio = 1.0
 balance_category = "math"
 curriculum.sampler.type = "difficulty_pool"
@@ -1428,9 +1419,6 @@ curriculum.gates.zero_advantage.type = "advantage_range"
 # INTELLECT-3-RL math: problems Qwen3-4B solves 0-7 of 8 times (20,078; only the ones it
 # always solves are dropped). Super got 5-13% of the hardest (0-4 of 8) right early in the
 # 2026-10-12d attempt, so the easier ones keep math groups carrying signal.
-# One call holds the whole solution: the run-wide 4096-token cap cut every answer before
-# its boxed result (all-zero groups in the 2026-10-12c attempt).
-sampling.max_completion_tokens = 32768
 env.taskset.id = "i3-math"
 # The math tasksets default to no network, which the subprocess runtime cannot enforce.
 env.taskset.network_allow = ["*"]
@@ -1481,9 +1469,9 @@ serve.pool.multiplex = 32
 
 [[orchestrator.eval.source]]
 name = "aime25"
+sampling.max_completion_tokens = 32768
 num_examples = 30
 interval = 12
-sampling.max_completion_tokens = 32768
 env.taskset.id = "aime25"
 env.taskset.network_allow = ["*"]
 env.agent.harness.id = "null"
@@ -1500,9 +1488,9 @@ serve.pool.multiplex = 32
 
 [[orchestrator.eval.source]]
 name = "aime26"
+sampling.max_completion_tokens = 32768
 num_examples = 30
 interval = 12
-sampling.max_completion_tokens = 32768
 env.taskset.id = "aime26"
 env.taskset.network_allow = ["*"]
 env.agent.harness.id = "null"
