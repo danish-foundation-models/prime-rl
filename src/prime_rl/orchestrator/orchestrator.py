@@ -349,6 +349,7 @@ class Orchestrator:
                 max_oversampling=config.concurrency.scheduler_max_oversampling,
                 acceptance_floor=config.concurrency.scheduler_acceptance_floor,
                 inventory_factor=config.concurrency.scheduler_inventory_factor,
+                rebalance_on_resume=config.concurrency.rebalance_on_resume,
             )
         self.train_source = await asyncio.to_thread(
             TrainSource, self.train_envs, scheduler=scheduler,

@@ -408,7 +408,12 @@ CONFIG=$PWD/configs/lumi/rl_nemotron_super_r5_128k_16t8i_sc_full200_r3.toml \
 Require both `checkpoints/step_N/trainer/.metadata` and
 `checkpoints/step_N/orchestrator/progress.pt`; do not use bare `--resume` after
 an interrupted save, because latest-step discovery includes incomplete directories.
-Do not alter category targets, source order or scheduler settings on resume.
+Do not alter source names on resume. A changed category mix or source ratio refuses to
+resume unless `[orchestrator.concurrency] rebalance_on_resume = true`: the scheduler then keeps
+its learned rollout durations and yields and restarts its served counts and credits under the
+new targets. To continue in a new run directory, fork the checkpoint with
+`--resume.dir <old run>/checkpoints/step_N`; sampler state, the quarantine list and progress
+carry over.
 Use `scripts/lumi_watch_rl_pilot.py` for ongoing capacity renewal and fatal-error
 monitoring also on full runs; it does not automatically resubmit a timed-out job.
 

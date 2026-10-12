@@ -92,6 +92,8 @@ category_targets.toolbench = 8
 category_batch_tolerance = 2
 category_max_surplus = 8
 lookahead_batches = 4
+# Resumed from the 2026-10-12d run's checkpoint with a new mix (math 32 -> 16, swe 224 -> 240).
+rebalance_on_resume = true
 eval_fraction = 0.125
 initial_inflight = 900
 min_inflight = 128

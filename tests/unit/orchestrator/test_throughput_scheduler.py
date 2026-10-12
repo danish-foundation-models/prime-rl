@@ -132,6 +132,30 @@ def test_category_refill_survives_oversupplied_ready_buffer():
         other.load_state_dict(state)
 
 
+def test_rebalance_on_resume_keeps_estimates_and_restarts_counts():
+    scheduler = category_scheduler()
+    scheduler.consume(["swe"] * 40 + ["sql"] * 8)
+    scheduler.observe_duration("swe", 3000)
+    scheduler.observe_yield("sql", 8, 2)
+    state = scheduler.state_dict()
+    targets = {"swe": 64, "terminal": 48, "sql": 8, "search": 8}
+    other = ThroughputScheduler(CATEGORY_SOURCES, 512, category_targets=targets, batch_size=128, rebalance_on_resume=True)
+    other.load_state_dict(state)
+    assert other.duration == scheduler.duration and other.yield_rate == scheduler.yield_rate
+    assert other.total_served == 0 and not other.served
+    rows = [(f"{n}{i}", n) for n in CATEGORY_TARGETS for i in range(200)]
+    counts = Counter(dict(rows)[i] for i in other.select(rows, 128))
+    assert counts == {"swe": 64, "terminal": 48, "sql": 8, "search": 8}
+
+
+def test_rebalance_on_resume_still_rejects_changed_sources():
+    state = category_scheduler().state_dict()
+    sources = CATEGORY_SOURCES[:-1] + [("web", "search", 1, 8)]
+    other = ThroughputScheduler(sources, 512, category_targets=CATEGORY_TARGETS, batch_size=128, rebalance_on_resume=True)
+    with pytest.raises(ValueError, match="sources changed"):
+        other.load_state_dict(state)
+
+
 def test_mimo_clipped_oversampling_equation():
     demand = {"fast": 4.0, "medium": 2.0, "slow": 1.0}
     duration = {"fast": 10.0, "medium": 100.0, "slow": 1000.0}

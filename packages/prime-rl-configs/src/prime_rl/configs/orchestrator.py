@@ -493,6 +493,12 @@ class ConcurrencyConfig(BaseConfig):
     scheduler_inventory_factor: float = Field(2.0, ge=1, allow_inf_nan=False)
     """Target unfinished episode reservations per active slot, allowing group tails."""
 
+    rebalance_on_resume: bool = False
+    """Resume a checkpoint whose category targets or source weights differ from this config.
+    The scheduler keeps its learned durations and yields and restarts its served counts and
+    round-robin credits, so batches follow the new mix from the first step. Without it a
+    changed balance refuses to resume."""
+
     category_targets: dict[str, float] = Field(default_factory=dict)
     """Explicit positive mixture weights for coarse categories, normalized to sum to one."""
 

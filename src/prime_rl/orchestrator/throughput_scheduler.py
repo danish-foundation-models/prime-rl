@@ -5,6 +5,8 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict, deque
 
+from prime_rl.utils.logger import get_logger
+
 
 def allocate_group_budgets(demand, duration, mean_oversampling, minimum, maximum):
     """MiMo eq. 6: solve the demand-weighted clipped oversampling constraint."""
@@ -43,6 +45,7 @@ class ThroughputScheduler:
         max_oversampling: float = 16.0,
         acceptance_floor: float = 0.05,
         inventory_factor: float = 2.0,
+        rebalance_on_resume: bool = False,
     ):
         self.sources = {name: (family, weight, group) for name, family, weight, group in sources}
         if len(self.sources) != len(sources) or any(
@@ -71,6 +74,7 @@ class ThroughputScheduler:
         self.max_oversampling = max_oversampling
         self.acceptance_floor = acceptance_floor
         self.inventory_factor = inventory_factor
+        self.rebalance_on_resume = rebalance_on_resume
         self.round_robin_credit = dict.fromkeys(self.sources, 0.0)
         self.startup_dispatched = 0
         self.last_group_budgets = {}
@@ -353,7 +357,18 @@ class ThroughputScheduler:
             state.get("balance_config", self._balance_config() if not self.category_targets else None)
             != self._balance_config()
         ):
-            raise ValueError("Scheduler balance configuration changed on resume")
+            if not self.rebalance_on_resume:
+                raise ValueError("Scheduler balance configuration changed on resume")
+            # A deliberate new mix: keep what the scheduler learned about each source's
+            # rollout time and yield; counts and credits restart under the new targets.
+            if set(state["duration"]) != set(self.sources) or set(state["yield_rate"]) != set(self.sources):
+                raise ValueError("Scheduler sources changed on resume")
+            self.duration = dict(state["duration"])
+            self.yield_rate = dict(state["yield_rate"])
+            get_logger().warning(
+                "Scheduler balance changed on resume: kept durations and yields, reset served counts and credits"
+            )
+            return
         self.last_batch_counts = dict(state.get("last_batch_counts", {}))
         self.round_robin_credit = dict(state.get("round_robin_credit", dict.fromkeys(self.sources, 0.0)))
         if set(self.round_robin_credit) != set(self.sources):
