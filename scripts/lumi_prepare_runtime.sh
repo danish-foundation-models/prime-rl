@@ -29,17 +29,21 @@ LUMI_RUNTIME_PACKAGES=(
 
 # Third-party packages the SIF lacks. They change rarely, so they live in one
 # image-keyed base layer shared by every commit instead of each commit layer.
+# docker, pexpect and ptyprocess came with the r71 SIF; SWE tasksets import them.
 # torchao (CUDA-only mxfp8) is not installed; mamba-ssm comes from the SIF.
 LUMI_BASE_PACKAGES=(
   "bashlex==0.18"
   "dataclasses-json==0.6.7"
+  "docker==7.2.0"
   "harbor==0.14.0"
   "marshmallow==3.26.2"
   "modelexpress==0.3.0"
   "multi-swe-bench==1.1.2"
   "mypy-extensions==1.1.0"
+  "pexpect==4.9.0"
   "prime-sandboxes==0.2.39"
   "protobuf-py==0.1.1"
+  "ptyprocess==0.7.0"
   "protobuf-py-ext==0.1.1"
   "PyGithub==2.9.1"
   "PyNaCl==1.6.2"

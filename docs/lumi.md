@@ -39,6 +39,9 @@ vllm-router and their small dependencies) live in one image-keyed base layer und
 `.cache/prime-rl/base/<hash>`, shared by every commit. Each metadata target records
 it in `.base`; `scripts/lumi_runtime_env.sh` appends it after the target. A target
 without `.base` predates this layout: rerun the preparer.
+Before a multi-node RL submission on a new image or layer, load every taskset of the
+resolved orchestrator config with `scripts/lumi_check_tasksets.py` (usage in its
+docstring); a missing package otherwise kills the orchestrator after allocation.
 
 AITER compiles JIT modules into `AITER_JIT_DIR` and template ops into
 `AITER_ROOT_DIR`, which otherwise defaults to `~/.aiter`. The container wrappers
