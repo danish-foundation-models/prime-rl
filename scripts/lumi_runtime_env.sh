@@ -34,8 +34,12 @@ prime_rl_lumi_export_pythonpath() {
     )
   done
 
-  local base_metadata="/scratch/project_465002751/rasmus/.cache/prime-rl/metadata/5ced6b8cbe61055028e2c188db80ab3ebfb9dce3-0b4d10c6cada"
-  [[ -f "$base_metadata/.ready" ]] || { echo "Missing validated SIF dependency layer" >&2; return 1; }
+  # lumi_prepare_runtime.sh records the image-keyed base package layer.
+  local base_metadata
+  base_metadata=$(cat "$metadata_dir/.base" 2>/dev/null) || {
+    echo "Runtime metadata predates the base layer; rerun lumi_prepare_runtime.sh" >&2; return 1;
+  }
+  [[ -f "$base_metadata/.ready" ]] || { echo "Missing SIF base package layer: $base_metadata" >&2; return 1; }
   if [[ -n ${PRIME_RL_ENVIRONMENT_SITE_PACKAGES:-} ]]; then
     [[ -f "$PRIME_RL_ENVIRONMENT_SITE_PACKAGES/.ready" ]] || {
       echo "Missing validated agentic environment dependency layer" >&2; return 1;
@@ -48,14 +52,12 @@ prime_rl_lumi_export_pythonpath() {
   export PYTHONPATH="$path:$metadata_dir:$base_metadata"
 }
 
-# The current supported SIF still contains connect-python 0.9.0. New
-# prime-sandboxes releases intentionally reject that distribution even when
-# the replacement connectrpc module is first on PYTHONPATH. Bind this empty
-# directory over the legacy dist-info metadata for container executions.
-prime_rl_lumi_connect_python_mask() {
+# AITER compiles JIT modules into AITER_JIT_DIR and template ops into
+# AITER_ROOT_DIR (default ~/.aiter). Keep both durable, off $HOME, and per image.
+prime_rl_lumi_aiter_cache_dir() {
   local lumi_root=${1:?LUMI root is required}
-  local mask_dir="$lumi_root/.runtime/masks/connect_python-0.9.0.dist-info"
-
-  mkdir -p "$mask_dir"
-  printf '%s\n' "$mask_dir"
+  local sif=${2:?SIF is required}
+  local name
+  name=$(basename "$sif" .sif)
+  printf '%s\n' "$lumi_root/.cache/aiter/$name"
 }

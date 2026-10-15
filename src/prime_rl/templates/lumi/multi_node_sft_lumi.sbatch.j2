@@ -33,7 +33,7 @@ export NUM_NODES={{ num_nodes }}
 export GPUS_PER_NODE={{ gpus_per_node }}
 
 LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
-SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif}
 HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
 UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
 XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$LUMI_ROOT/.cache}
@@ -49,13 +49,15 @@ export PRIME_RL_RUNTIME_WANDB_CACHE_DIR=$WANDB_CACHE_DIR
 export PRIME_RL_RUNTIME_WANDB_CONFIG_DIR=$WANDB_CONFIG_DIR
 export PRIME_RL_RUNTIME_MPLCONFIGDIR=$MPLCONFIGDIR
 export PRIME_RL_RUNTIME_TMPDIR=$TMPDIR
+source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
+export PRIME_RL_RUNTIME_AITER_DIR=$(prime_rl_lumi_aiter_cache_dir "$LUMI_ROOT" "$SIF")
 
 [[ -f "$SIF" ]] || {
   echo "FATAL: SIF not found: $SIF" >&2
   exit 1
 }
 
-mkdir -p "$OUTPUT_DIR/logs/trainer" "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" \
+mkdir -p "$PRIME_RL_RUNTIME_AITER_DIR" "$OUTPUT_DIR/logs/trainer" "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" \
   "$WANDB_CACHE_DIR" "$WANDB_CONFIG_DIR" "$MPLCONFIGDIR" "$TMPDIR"
 ln -sfn trainer/node_0.log "$OUTPUT_DIR/logs/trainer.log"
 
@@ -100,7 +102,9 @@ srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -l
   set +a
 
   export PATH="$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:$PATH"
-  export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:$PRIME_RL_METADATA_DIR
+  source /workdir/scripts/lumi_runtime_env.sh
+  prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR"
+  export AITER_JIT_DIR=$PRIME_RL_RUNTIME_AITER_DIR AITER_ROOT_DIR=$PRIME_RL_RUNTIME_AITER_DIR
   export PYTHONNOUSERSITE=1
   export HF_HOME=$PRIME_RL_RUNTIME_HF_HOME
   export UV_CACHE_DIR=$PRIME_RL_RUNTIME_UV_CACHE_DIR

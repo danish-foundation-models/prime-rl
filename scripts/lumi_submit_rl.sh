@@ -14,7 +14,7 @@ done
 set +a
 
 LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
-SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif}
 HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
 UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
 XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$LUMI_ROOT/.cache}

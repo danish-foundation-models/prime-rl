@@ -17,7 +17,7 @@ squeue -u "$USER" -o "%.18i %.24j %.10T %.10M %.6D %R"
 Use this operational image:
 
 ```text
-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif
+/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif
 ```
 
 Run the image without `--rocm` and without an overlay. Keep PRIME-RL source and

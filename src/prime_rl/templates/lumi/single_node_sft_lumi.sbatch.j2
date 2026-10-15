@@ -20,7 +20,7 @@ PROJECT_DIR={{ project_dir }}
 CONFIG_PATH={{ config_path }}
 
 LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
-SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif}
 HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
 UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
 XDG_CACHE_HOME=${PRIME_RL_XDG_CACHE_HOME:-$LUMI_ROOT/.cache}
@@ -39,6 +39,9 @@ mkdir -p "$HF_HOME" "$UV_CACHE_DIR" "$XDG_CACHE_HOME" "$WANDB_CACHE_DIR" "$WANDB
 export PROJECT_DIR SIF LUMI_ROOT
 PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
 export PRIME_RL_METADATA_DIR
+source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
+AITER_CACHE_DIR=$(prime_rl_lumi_aiter_cache_dir "$LUMI_ROOT" "$SIF")
+mkdir -p "$AITER_CACHE_DIR"
 
 SING_BIND_ARGS=(
   -B "$PROJECT_DIR:/workdir"
@@ -48,7 +51,9 @@ SING_BIND_ARGS=(
 RANK_CMD="
 set -euo pipefail
 export PATH=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:\$PATH
-export PYTHONPATH=/workdir/src:/workdir/packages/prime-rl-configs/src:/workdir/deps/renderers:/workdir/deps/verifiers:/workdir/deps/pydantic-config/src:$PRIME_RL_METADATA_DIR
+source /workdir/scripts/lumi_runtime_env.sh
+prime_rl_lumi_export_pythonpath $PRIME_RL_METADATA_DIR
+export AITER_JIT_DIR=$AITER_CACHE_DIR AITER_ROOT_DIR=$AITER_CACHE_DIR
 export PYTHONNOUSERSITE=1
 if [[ -n \"\${ROCR_VISIBLE_DEVICES:-}\" && -z \"\${HIP_VISIBLE_DEVICES:-}\" ]]; then
   export HIP_VISIBLE_DEVICES=\"\${ROCR_VISIBLE_DEVICES}\"

@@ -9,7 +9,7 @@ set -euo pipefail
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 PROJECT_DIR=${PROJECT_DIR:-$(cd -- "$SCRIPT_DIR/.." && pwd -P)}
 LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
-SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif}
 LUMI_UV=${LUMI_UV:-$LUMI_ROOT/bin/uv}
 HF_HOME=${PRIME_RL_HF_HOME:-/scratch/project_465002751/.cache/huggingface}
 UV_CACHE_DIR=${PRIME_RL_UV_CACHE_DIR:-$LUMI_ROOT/.cache/uv}
@@ -34,7 +34,8 @@ PRIME_RL_METADATA_DIR=$($PROJECT_DIR/scripts/lumi_prepare_runtime.sh)
 
 source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
 prime_rl_lumi_export_pythonpath "$PRIME_RL_METADATA_DIR" /workdir "$PROJECT_DIR"
-CONNECT_PYTHON_MASK_DIR=$(prime_rl_lumi_connect_python_mask "$LUMI_ROOT")
+AITER_CACHE_DIR=$(prime_rl_lumi_aiter_cache_dir "$LUMI_ROOT" "$SIF")
+mkdir -p "$AITER_CACHE_DIR"
 PATH_VALUE=$PRIME_RL_METADATA_DIR/bin:/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
 PASSTHROUGH_ENV=()
 for name in \
@@ -55,7 +56,6 @@ exec singularity exec \
   --cleanenv \
   -B "$PROJECT_DIR:/workdir" \
   -B /scratch/project_465002751:/scratch/project_465002751 \
-  -B "$CONNECT_PYTHON_MASK_DIR:/opt/venv/lib/python3.12/site-packages/connect_python-0.9.0.dist-info" \
   --home "$CONTAINER_HOME" \
   --pwd /workdir \
   --env "PATH=$PATH_VALUE" \
@@ -73,6 +73,8 @@ exec singularity exec \
   --env "WANDB_CONFIG_DIR=$WANDB_CONFIG_DIR" \
   --env "MPLCONFIGDIR=$MPLCONFIGDIR" \
   --env "TMPDIR=$TMPDIR" \
+  --env "AITER_JIT_DIR=$AITER_CACHE_DIR" \
+  --env "AITER_ROOT_DIR=$AITER_CACHE_DIR" \
   "${PASSTHROUGH_ENV[@]}" \
   "$SIF" \
   "$LUMI_UV" run --no-project "$@"

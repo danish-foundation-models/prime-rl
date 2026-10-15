@@ -3,9 +3,47 @@
 Use `configs/lumi/rl_nemotron_super_r5_pilot.toml` through
 `scripts/lumi_submit_rl.sh --dry-run`. The LUMI template retains main's
 attempt-specific JSON configs, global router, environment servers, and successful
-trainer/orchestrator completion gates. The shared PyTorch 2.11 / ROCm 7.1 SIF
-remains immutable. Live source and a pinned external dependency layer supply the
-Python integrations. Do not run the CUDA GPU extras installer on this bench.
+trainer/orchestrator completion gates. The shared PyTorch 2.13 / ROCm 7.2 / vLLM 0.28
+SIF (`lumi-posttrain-u24r72-t213-vllm028.sif`) remains immutable. Live source, the
+prepared package layers and the gfx90a vLLM overlay supply the rest. Do not run the
+CUDA GPU extras installer on this bench.
+
+## Inference stack (r72)
+
+Super inference runs the SIF's vLLM 0.28 with the gfx90a source overlay from
+`rlrs/vllm` branch `perf/rocm-gfx90a-nemotron-v028-super`. It carries the kernels the
+r71 runs took from the frozen Super profile and the `vllm-569869cdc` layer: AITER
+paged attention and custom all-reduce on gfx90a, shuffled KV cache without
+materialization, fused large ReLU-squared MoE with local-row expert assignment and a
+local-expert sum, the single-group top-k fast path, the BF16-to-FP32 router GEMM, FA2
+varlen prefill, MI250X MoE/SSU tuning, the expert-parallel layerwise-reload fixes, and
+private per-rank pinned buffers for host KV offload. vLLM 0.28 otherwise has every rank
+`cudaHostRegister` the whole shared offload region; with 192 GiB on a node, ranks 2-7
+fail and die at their next kernel launch with `hipErrorInvalidValue`.
+
+Validated on one TP8/EP8 replica with the stock HF model against stock vLLM 0.28: 93K-token
+teacher-forced NLL 1.8047 vs 1.8086 (mean |Δ| 0.085 nats/token, the run-to-run floor),
+GSM8K 99% vs 98%, and 9,933 vs 6,260 tok/s at 128K, concurrency 8, prefix caching off.
+
+1. Materialize the overlay once per revision on the login node:
+   `scripts/lumi_prepare_vllm_overlay.sh <rev>`. It exports the files the revision
+   changes against the SIF's vLLM commit into `.runtime/vllm-overlays/<rev>` and
+   refuses deletions and non-Python files.
+2. Set in `[inference.env_vars]`:
+   `PRIME_RL_INFERENCE_PROFILE = "nemotron-super-gfx90a"` and
+   `PRIME_RL_VLLM_OVERLAY = "<printed directory>"`. The template exports the overlay
+   before `srun`; `lumi_job_container.sh` bind-mounts its files read-only over the SIF's
+   vLLM (directories for comma-named tuning files). `lumi_super_inference_env.sh`
+   sets the profile's AITER switches and per-image vLLM/Triton/Inductor caches.
+3. Set `inference.vllm.worker_cls =
+   "prime_rl.inference.vllm.worker.nemotron_super.VerifiedSuperWorker"`; it audits
+   representative checkpoint tensors on every rank after the initial load.
+
+`PRIME_RL_SUPER_PROFILE` and `PRIME_RL_SUPER_RELOAD_OVERLAY` belong to the retired r71
+image; the inference env refuses them. The sections below that mention the frozen
+profile, `dfm_evals` helpers or the reload overlay describe how r1-r21 ran.
+`configs/lumi/rl_nemotron_super_r5_128k_16t4i_sc_r72_smoke_r1.toml` is r21 on this
+stack at smoke scale.
 
 Prepare runtime metadata on the submit host and pin its returned path before
 submitting GPU jobs. Never edit launcher scripts or imported source while a job

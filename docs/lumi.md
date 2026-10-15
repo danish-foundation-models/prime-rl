@@ -12,7 +12,7 @@ branch policy, refresh procedure, and dependency-fork requirements.
 - Project: `project_465002751`
 - Checkout: `/scratch/project_465002751/rasmus/prime-rl`
 - Runtime image:
-  `/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif`
+  `/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif`
 - Training artifacts: `/scratch/project_465002751/rasmus/artifacts/training`
 - Hugging Face cache: `/scratch/project_465002751/.cache/huggingface`
 - Other caches: `/scratch/project_465002751/rasmus/.cache`
@@ -30,7 +30,23 @@ placed first on `PYTHONPATH`. vLLM discovers PRIME-RL patches through the
 under `.cache/prime-rl/metadata`. The metadata target never replaces live source.
 Its key also includes `pyproject.toml`, because entry points are packaging
 metadata. Ordinary dirty source edits intentionally reuse the target and are
-picked up immediately through `PYTHONPATH`.
+picked up immediately through `PYTHONPATH`. The key also includes the SIF's path,
+size and modification time, so each image gets its own target.
+
+Third-party packages that the SIF lacks (`LUMI_BASE_PACKAGES` in
+`scripts/lumi_prepare_runtime.sh`: harbor, swe-rex, multi-swe-bench, modelexpress,
+vllm-router and their small dependencies) live in one image-keyed base layer under
+`.cache/prime-rl/base/<hash>`, shared by every commit. Each metadata target records
+it in `.base`; `scripts/lumi_runtime_env.sh` appends it after the target. A target
+without `.base` predates this layout: rerun the preparer.
+
+AITER compiles JIT modules into `AITER_JIT_DIR` and template ops into
+`AITER_ROOT_DIR`, which otherwise defaults to `~/.aiter`. The container wrappers
+set both to `.cache/aiter/<SIF name>` unless a job sets them.
+
+Optional gfx90a vLLM source overlays (`scripts/lumi_prepare_vllm_overlay.sh`,
+selected with `PRIME_RL_VLLM_OVERLAY`) are described in
+[Nemotron Super RL](lumi-rl-super.md#inference-stack-r72).
 
 RL jobs also add every local package beneath
 `deps/verifiers/environments/` and `deps/research-environments/environments/`
@@ -109,7 +125,7 @@ caches into separate paths.
 The runtime helper can be exercised without allocating a GPU:
 
 ```bash
-SIF=/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif \
+SIF=/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif \
   ./scripts/lumi_prepare_runtime.sh
 ```
 

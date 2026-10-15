@@ -165,7 +165,7 @@ echo "ORCH_ADDR=${ORCH_ADDR}"
 
 # Build only package metadata; the verified shared SIF supplies GPU dependencies.
 export LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
-export SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r71-t211-vllm024.sif}
+export SIF=${SIF:-/scratch/project_465002751/shared/sif/lumi-posttrain-u24r72-t213-vllm028.sif}
 export UV_CACHE_DIR=$LUMI_ROOT/.cache/uv
 export PRIME_RL_METADATA_DIR=${PRIME_RL_METADATA_DIR:?Prepare runtime metadata before submission}
 cd "$PROJECT_DIR"
@@ -197,6 +197,10 @@ set +a
 # The container wrapper constructs PYTHONPATH before per-role exports run.
 export PRIME_RL_ENVIRONMENT_SITE_PACKAGES="{{ orchestrator_env_vars['PRIME_RL_ENVIRONMENT_SITE_PACKAGES'] }}"
 {%- endif %}
+{%- if inference_env_vars.get("PRIME_RL_VLLM_OVERLAY") %}
+# lumi_job_container.sh binds the gfx90a vLLM overlay files at container start.
+export PRIME_RL_VLLM_OVERLAY="{{ inference_env_vars['PRIME_RL_VLLM_OVERLAY'] }}"
+{%- endif %}
 srun --kill-on-bad-exit=1 "$PROJECT_DIR/scripts/lumi_job_container.sh" bash -s <<'LAUNCH_SH'
     # pipefail ensures `cmd | tee log` propagates `cmd` failures, and the
     # wait/cleanup block at the end of this script surfaces background
@@ -208,7 +212,7 @@ srun --kill-on-bad-exit=1 "$PROJECT_DIR/scripts/lumi_job_container.sh" bash -s <
     uv() { "$LUMI_ROOT/bin/uv" run --no-project "${@:2}"; }
     export OMP_NUM_THREADS=1 PYTHONUNBUFFERED=1
     export TMPDIR="$LUMI_ROOT/tmp/rl-$SLURM_JOB_ID/$SLURM_PROCID"
-    export TRITON_CACHE_DIR="$LUMI_ROOT/.cache/triton/rl-main-t211-durable-v1"
+    export TRITON_CACHE_DIR="$LUMI_ROOT/.cache/triton/rl-main-r72-t213-v1"
     mkdir -p "$TMPDIR" "$TRITON_CACHE_DIR"
     export FI_PROVIDER=cxi FI_PROVIDER_NAME=cxi FI_CXI_DISABLE_HMEM=1 FI_CXI_DISABLE_HMEM_FLAG=1
     export GLOO_SOCKET_IFNAME=hsn0 NCCL_SOCKET_IFNAME=hsn0,hsn1,hsn2,hsn3
@@ -300,13 +304,12 @@ srun --kill-on-bad-exit=1 "$PROJECT_DIR/scripts/lumi_job_container.sh" bash -s <
 
 if [ "$SLURM_PROCID" -lt "$NUM_INFER_NODES" ]; then
     INFER_NODE_RANK=$SLURM_PROCID
-{%- if inference_env_vars.get("PRIME_RL_SUPER_RELOAD_OVERLAY") %}
-    export PRIME_RL_SUPER_RELOAD_OVERLAY="{{ inference_env_vars['PRIME_RL_SUPER_RELOAD_OVERLAY'] }}"
+{%- for key in ("PRIME_RL_SUPER_RELOAD_OVERLAY", "PRIME_RL_SUPER_PROFILE", "PRIME_RL_INFERENCE_PROFILE") %}
+{%- if inference_env_vars.get(key) %}
+    export {{ key }}="{{ inference_env_vars[key] }}"
 {%- endif %}
-{%- if inference_env_vars.get("PRIME_RL_SUPER_PROFILE") %}
-    export PRIME_RL_SUPER_PROFILE="{{ inference_env_vars['PRIME_RL_SUPER_PROFILE'] }}"
-{%- endif %}
-    source "$PROJECT_DIR/scripts/lumi_super_inference_env.sh"
+{%- endfor %}
+    source "$PROJECT_DIR/scripts/lumi_super_inference_env.sh" || exit 1
     # Inference env vars: launcher defaults + [env_vars] + [inference.env_vars]
 {%- for key, value in inference_env_vars.items() %}
     export {{ key }}="{{ value }}"
