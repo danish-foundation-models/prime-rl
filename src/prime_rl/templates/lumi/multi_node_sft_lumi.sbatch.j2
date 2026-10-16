@@ -49,6 +49,9 @@ export PRIME_RL_RUNTIME_WANDB_CACHE_DIR=$WANDB_CACHE_DIR
 export PRIME_RL_RUNTIME_WANDB_CONFIG_DIR=$WANDB_CONFIG_DIR
 export PRIME_RL_RUNTIME_MPLCONFIGDIR=$MPLCONFIGDIR
 export PRIME_RL_RUNTIME_TMPDIR=$TMPDIR
+# Compiler entries are content addressed; partition by immutable runtime image.
+RUNTIME_CACHE_KEY=$(stat -Lc '%n:%s:%Y' "$SIF" | sha256sum | cut -c1-16)
+export PRIME_RL_RUNTIME_TRITON_CACHE_DIR=${PRIME_RL_TRITON_CACHE_DIR:-$LUMI_ROOT/.cache/prime-rl/triton/$RUNTIME_CACHE_KEY}
 source "$PROJECT_DIR/scripts/lumi_runtime_env.sh"
 export PRIME_RL_RUNTIME_AITER_DIR=$(prime_rl_lumi_aiter_cache_dir "$LUMI_ROOT" "$SIF")
 
@@ -86,7 +89,7 @@ srun bash -s <<'CLEANUP_SH'
   pkill -9 -f "[p]ython.*prime_rl" 2>/dev/null || true
   pkill -9 -f "[t]orchrun" 2>/dev/null || true
   pkill -9 -f "[p]rime_rl" 2>/dev/null || true
-  rm -rf /dev/shm/vllm-* /dev/shm/vllm_* /tmp/torch-* /tmp/torchelastic_* 2>/dev/null || true
+  # Never delete node-wide wildcard paths: other processes may own them.
 CLEANUP_SH
 
 srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
@@ -113,7 +116,7 @@ srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -l
   export WANDB_CONFIG_DIR=$PRIME_RL_RUNTIME_WANDB_CONFIG_DIR
   export MPLCONFIGDIR=$PRIME_RL_RUNTIME_MPLCONFIGDIR
   export TMPDIR="$PRIME_RL_RUNTIME_TMPDIR/$SLURM_PROCID"
-  export TRITON_CACHE_DIR="$TMPDIR/triton"
+  export TRITON_CACHE_DIR="$PRIME_RL_RUNTIME_TRITON_CACHE_DIR"
   mkdir -p "$TMPDIR" "$TRITON_CACHE_DIR"
 
   if [[ -n "${ROCR_VISIBLE_DEVICES:-}" && -z "${HIP_VISIBLE_DEVICES:-}" ]]; then

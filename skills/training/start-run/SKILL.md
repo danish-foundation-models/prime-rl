@@ -70,6 +70,7 @@ uv run sft @ examples/basic/reverse-text/sft.toml --dry-run
 - Config: `SFTConfig` (`packages/prime-rl-configs/src/prime_rl/configs/sft.py`)
 - Entrypoint: `src/prime_rl/entrypoints/sft.py`
 - SLURM: single- and multi-node
+- Pretokenized SFT: set `data.type = "pretokenized"`, keep `data.num_workers = 1`, and point `data.path` at a completed packed artifact with `tokenized_shards.json` and an `_READY` marker that binds the manifest SHA-256. Bare Hugging Face `save_to_disk` directories are rejected because they cannot freeze tokenizer identity or shard contents. Rows must already be fixed-width causal packs with `input_ids`, independently shifted `target_ids`, `loss_mask`, and boundary-preserving `seq_lens`; the trainer verifies the runtime tokenizer identity, special-token IDs, relative in-root shard paths, each file's byte size and SHA-256, row counts, and Arrow schema before consuming them without online tokenization, rendering, or repacking. Global rank zero performs content hashing once and broadcasts the result before all ranks load Arrow metadata. The config rejects multiple workers because they cannot yet preserve exact worker-local rank partitioning.
 - Multi-node online evals use one SLURM job with `num_train_nodes + num_infer_nodes` nodes. The generated `launcher/sft.sbatch` assigns inference nodes first, then trainer nodes.
 
 ## `inference` — vLLM server
