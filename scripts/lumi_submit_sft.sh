@@ -4,8 +4,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Resolve sibling env files from the bench root so worktrees load them too.
+LUMI_ROOT=${LUMI_ROOT:-/scratch/project_465002751/rasmus}
 set -a
-for ENV_FILE in "$REPO_DIR/../post/.env" "$REPO_DIR/.env"; do
+for ENV_FILE in "$LUMI_ROOT/post/.env" "$LUMI_ROOT/prime-rl/.env" "$REPO_DIR/.env"; do
   if [[ -f "$ENV_FILE" ]]; then
     source "$ENV_FILE"
   fi
