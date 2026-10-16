@@ -342,7 +342,7 @@ class ModelConfig(BaseModelConfig):
     """Debugging knobs for the model and distributed training."""
 
     fused_lm_head_token_chunk_size: int | Literal["disabled"] = 8192
-    """Flattened token chunk size for the fused LM head. ``int >= 1`` sets the tokens per LM-head chunk explicitly; ``disabled`` uses the vanilla LM head. SFT training silently disables this (not supported yet)."""
+    """Flattened token chunk size for the fused LM head. ``int >= 1`` sets the tokens per LM-head chunk explicitly; ``disabled`` uses the vanilla LM head. SFT uses this for target log-probabilities without computing unused entropy."""
 
     @model_validator(mode="after")
     def trust_remote_code_only_with_hf(self):

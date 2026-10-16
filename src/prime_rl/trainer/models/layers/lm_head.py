@@ -37,9 +37,10 @@ def cast_float_and_contiguous(output: PrimeLmOutput) -> PrimeLmOutput:
 
 
 class FusedOutputLinear(torch.nn.Linear):
-    def __init__(self, in_features: int, out_features: int, chunk_size: int):
+    def __init__(self, in_features: int, out_features: int, chunk_size: int, *, compute_entropy: bool = True):
         super().__init__(in_features, out_features, bias=False)
         self.chunk_size = chunk_size
+        self.compute_entropy = compute_entropy
 
     def forward(
         self,
@@ -61,11 +62,11 @@ class FusedOutputLinear(torch.nn.Linear):
 
         selected = selected_token_ids.reshape(b * s, -1) if selected_token_ids is not None else None
         logprobs, entropy, head_logprobs = _SequenceChunkedLogProbEntropyFn.apply(
-            hidden_states, self.weight, labels, inv_t, self.chunk_size, sampling_mask, selected
+            hidden_states, self.weight, labels, inv_t, self.chunk_size, sampling_mask, selected, self.compute_entropy
         )
 
         logprobs = logprobs.reshape(b, s)
-        entropy = entropy.reshape(b, s)
+        entropy = entropy.reshape(b, s) if entropy is not None else None
         return PrimeLmOutput(
             logprobs=logprobs,
             entropy=entropy,
@@ -91,15 +92,15 @@ class VanillaOutputLinear(torch.nn.Linear):
 
 
 def _online_logsumexp_and_weighted_update(
-    m: torch.Tensor, s: torch.Tensor, t: torch.Tensor, chunk_logits: torch.Tensor
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    m: torch.Tensor, s: torch.Tensor, t: torch.Tensor | None, chunk_logits: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
     chunk_m = torch.amax(chunk_logits, dim=-1)
     m_new = torch.maximum(m, chunk_m)
     exp_old = torch.exp(m - m_new)
 
     chunk_exp = torch.exp(chunk_logits - m_new.unsqueeze(-1))
     s_new = s * exp_old + chunk_exp.sum(dim=-1)
-    t_new = t * exp_old + (chunk_exp * chunk_logits).sum(dim=-1)
+    t_new = t * exp_old + (chunk_exp * chunk_logits).sum(dim=-1) if t is not None else None
     return m_new, s_new, t_new
 
 
@@ -131,7 +132,8 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
         chunk_size: int,
         sampling_mask: torch.Tensor | None = None,  # [N, K] int32, -1-padded
         selected_token_ids: torch.Tensor | None = None,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        compute_entropy: bool = True,
+    ) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None]:
         """
         Returns per-token logprobs and entropy by chunking over flattened sequence tokens.
 
@@ -160,7 +162,7 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
         vocab = weight.shape[0]
         vocab_chunk_size = min(vocab, 8192)
         logprobs = torch.empty((n,), device=device, dtype=torch.float32)
-        entropy = torch.empty((n,), device=device, dtype=torch.float32)
+        entropy = torch.empty((n,), device=device, dtype=torch.float32) if compute_entropy else None
         logz = torch.empty((n,), device=device, dtype=torch.float32)
         head_logprobs = (
             torch.zeros_like(selected_token_ids, dtype=torch.float32) if selected_token_ids is not None else None
@@ -176,7 +178,7 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
 
             m = torch.full((token_count,), float("-inf"), device=device, dtype=torch.float32)
             s = torch.zeros((token_count,), device=device, dtype=torch.float32)
-            t = torch.zeros((token_count,), device=device, dtype=torch.float32)
+            t = torch.zeros((token_count,), device=device, dtype=torch.float32) if compute_entropy else None
             target_logits = torch.zeros((token_count,), device=device, dtype=torch.float32)
             selected_chunk = selected_token_ids[start:end].long() if selected_token_ids is not None else None
             head_logits = torch.zeros_like(selected_chunk, dtype=torch.float32) if selected_chunk is not None else None
@@ -219,7 +221,8 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
                 head_logprobs[start:end] = torch.where(selected_chunk >= 0, head_logits - logz_full.unsqueeze(-1), 0.0)
             logz[start:end] = logz_chunk
             logprobs[start:end] = target_logits - logz_chunk
-            entropy[start:end] = logz_full - (t / s)
+            if entropy is not None:
+                entropy[start:end] = logz_full - (t / s)
 
         ctx.set_materialize_grads(
             False
@@ -295,7 +298,7 @@ class _SequenceChunkedLogProbEntropyFn(torch.autograd.Function):
                 if needs_weight:
                     grad_weight[vocab_start:vocab_end].add_(grad_logits.to(weight.dtype).t() @ hidden_chunk)
 
-        return grad_hidden, grad_weight, None, None, None, None, None
+        return grad_hidden, grad_weight, None, None, None, None, None, None
 
 
 def inject_prime_lm_head(

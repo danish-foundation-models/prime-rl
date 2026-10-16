@@ -455,3 +455,24 @@ def test_hf_model_fused_vs_vanilla_matches():
     # Compare results
     torch.testing.assert_close(fused_logprobs, vanilla_logprobs, rtol=1e-3, atol=1e-4)
     torch.testing.assert_close(fused_entropy, vanilla_entropy, rtol=1e-3, atol=1e-4)
+
+
+def test_logprobs_only_matches_entropy_path_loss_and_gradients():
+    torch.manual_seed(731)
+    reference = FusedOutputLinear(16, 97, chunk_size=7)
+    optimized = FusedOutputLinear(16, 97, chunk_size=7, compute_entropy=False)
+    optimized.load_state_dict(reference.state_dict())
+    x = torch.randn(2, 13, 16, requires_grad=True)
+    y = x.detach().clone().requires_grad_(True)
+    labels = torch.randint(0, 97, (2, 13))
+    temperature = torch.rand(2, 13) + 0.5
+    mask = torch.rand(2, 13) > 0.4
+    a = reference(x, labels, temperature)
+    b = optimized(y, labels, temperature)
+    assert a['entropy'] is not None
+    assert b['entropy'] is None
+    torch.testing.assert_close(a['logprobs'], b['logprobs'], rtol=0, atol=0)
+    (-a['logprobs'][mask].sum()).backward()
+    (-b['logprobs'][mask].sum()).backward()
+    torch.testing.assert_close(x.grad, y.grad, rtol=0, atol=0)
+    torch.testing.assert_close(reference.weight.grad, optimized.weight.grad, rtol=0, atol=0)

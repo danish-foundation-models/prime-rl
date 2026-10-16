@@ -1,11 +1,13 @@
+import hashlib
 import json
 import uuid
 from collections import defaultdict
+from pathlib import Path
 from typing import Any, Literal, TypedDict, cast
 
 import numpy as np
 import torch
-from datasets import Dataset, interleave_datasets, load_dataset
+from datasets import Dataset, concatenate_datasets, interleave_datasets, load_dataset, load_from_disk
 from jaxtyping import Bool, Int
 from renderers.base import MultiModalData, PlaceholderRange, Renderer, build_training_sample
 from torch import Tensor
@@ -14,10 +16,16 @@ from torch.utils.data import IterableDataset, get_worker_info
 from torchdata.stateful_dataloader import StatefulDataLoader
 from transformers.tokenization_utils import PreTrainedTokenizer
 
-from prime_rl.configs.sft import DataConfig, LossMaskConfig, SFTDataConfig
+from prime_rl.configs.sft import DataConfig, LossMaskConfig, PretokenizedSFTDataConfig, SFTDataConfig
 from prime_rl.trainer.world import get_world
 from prime_rl.utils.chat_template import deserialize_tool_calls, normalize_messages
 from prime_rl.utils.logger import get_logger
+
+TOKENIZED_SHARDS_MANIFEST_NAME = "tokenized_shards.json"
+
+
+def requires_renderer(data_type: str, *, has_validation: bool) -> bool:
+    return data_type == "sft" or has_validation
 
 
 class Sample(TypedDict):
@@ -432,6 +440,124 @@ class SFTDataset(StatefulIterableDataset):
             yield processed_example
 
 
+class PretokenizedSFTDataset(StatefulIterableDataset):
+    """Wrap pretokenized rows as PRIME-RL causal language-model samples."""
+
+    def __init__(
+        self,
+        dataset: Dataset,
+        shuffle: bool = True,
+        seed: int = 0,
+        seq_len: int = 128,
+        non_dp_size: int = 1,
+        input_ids_column: str = "input_ids",
+        target_ids_column: str = "target_ids",
+        loss_mask_column: str = "loss_mask",
+        seq_lens_column: str = "seq_lens",
+        max_epochs: int | None = None,
+    ):
+        super().__init__()
+        self.logger = get_logger()
+        self.dataset = dataset
+        self.num_examples = len(dataset)
+        self.shuffle = shuffle
+        self.seed = seed
+        self.seq_len = seq_len
+        self.input_ids_column = input_ids_column
+        self.target_ids_column = target_ids_column
+        self.loss_mask_column = loss_mask_column
+        self.seq_lens_column = seq_lens_column
+        self.max_epochs = max_epochs
+
+        worker_info = get_worker_info()
+        worker_id, num_workers = 0, 1
+        if worker_info is not None:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+        assert get_world().world_size % non_dp_size == 0, "world_size must be divisible by non_dp_size"
+        self.data_rank = get_world().rank // non_dp_size * num_workers + worker_id
+        self.data_world_size = get_world().world_size // non_dp_size * num_workers
+
+    @staticmethod
+    def _to_int_list(value: Any, column: str) -> list[int]:
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if not isinstance(value, list):
+            raise ValueError(f"Column '{column}' must contain a list of token IDs")
+        return [int(item) for item in value]
+
+    @staticmethod
+    def _to_bool_list(value: Any, column: str) -> list[bool]:
+        if hasattr(value, "tolist"):
+            value = value.tolist()
+        if not isinstance(value, list):
+            raise ValueError(f"Column '{column}' must contain a list of mask values")
+        return [bool(item) for item in value]
+
+    def _process(self, example: dict) -> Sample:
+        required_columns = (
+            self.input_ids_column,
+            self.target_ids_column,
+            self.loss_mask_column,
+            self.seq_lens_column,
+        )
+        missing = [column for column in required_columns if column not in example]
+        if missing:
+            raise ValueError(f"Pretokenized dataset is missing required columns: {missing}")
+
+        input_ids = self._to_int_list(example[self.input_ids_column], self.input_ids_column)
+        target_ids = self._to_int_list(example[self.target_ids_column], self.target_ids_column)
+        loss_mask = self._to_bool_list(example[self.loss_mask_column], self.loss_mask_column)
+        seq_lens = self._to_int_list(example[self.seq_lens_column], self.seq_lens_column)
+
+        lengths = {len(input_ids), len(target_ids), len(loss_mask)}
+        if lengths != {self.seq_len}:
+            raise ValueError(
+                "Pretokenized rows must already be packed to data.seq_len: "
+                f"input={len(input_ids)}, target={len(target_ids)}, mask={len(loss_mask)}, expected={self.seq_len}"
+            )
+        if not seq_lens or any(length <= 0 for length in seq_lens) or sum(seq_lens) != self.seq_len:
+            raise ValueError(
+                "Packed seq_lens must be non-empty, positive, and sum to data.seq_len: "
+                f"seq_lens={seq_lens}, expected={self.seq_len}"
+            )
+
+        if not any(loss_mask):
+            raise ValueError(
+                "Pretokenized row has no trainable tokens and violates the packed artifact contract: "
+                f"example={example.get('__index', '')!r}, seq_len={self.seq_len}"
+            )
+        position_ids = [position for length in seq_lens for position in range(length)]
+        return {
+            "input_ids": input_ids,
+            "target_ids": target_ids,
+            "loss_mask": loss_mask,
+            "position_ids": position_ids,
+            "seq_lens": seq_lens,
+            "mm_kwargs": None,
+            "mm_token_type_ids": None,
+        }
+
+    def __iter__(self):
+        dataset = self.dataset.shuffle(seed=self.epoch + self.seed, keep_in_memory=True) if self.shuffle else self.dataset
+        while True:
+            self.step += 1
+            epoch = (self.step - 1) // self.num_examples
+            if self.max_epochs is not None and epoch >= self.max_epochs:
+                break
+            if epoch > self.epoch:
+                self.epoch = epoch
+                dataset = self.dataset.shuffle(seed=self.epoch + self.seed, keep_in_memory=True) if self.shuffle else self.dataset
+            if (self.step - 1) % self.data_world_size != self.data_rank:
+                continue
+
+            example = cast(dict, dataset[(self.step - 1) % self.num_examples])
+            processed_example = self._process(example)
+            self.num_samples["pretokenized"] += 1
+            self.num_tokens["pretokenized"] += len(processed_example["input_ids"])
+            yield processed_example
+
+
 class CatDataset(StatefulIterableDataset):
     """Concatenate text and multimodal samples into one fixed-length row."""
 
@@ -491,7 +617,7 @@ class CatDataset(StatefulIterableDataset):
                 value = sample[key]
                 assert isinstance(value, list)
                 packed_samples[key].extend(value)
-            packed_samples["seq_lens"].append(sample_len)
+            packed_samples["seq_lens"].extend(sample["seq_lens"])
 
             sample_mm_kwargs = sample.get("mm_kwargs")
             sample_mm_type_ids = sample.get("mm_token_type_ids")
@@ -643,6 +769,255 @@ def load_sft_dataset(config: SFTDataConfig) -> Dataset:
         )
 
 
+def _resolve_shard_path(root: Path, shard: dict) -> Path:
+    if not isinstance(shard.get("path"), str):
+        raise ValueError(f"Invalid shard entry in {TOKENIZED_SHARDS_MANIFEST_NAME}: {shard!r}")
+    relative_path = Path(shard["path"])
+    if not relative_path.parts or relative_path.is_absolute() or ".." in relative_path.parts:
+        raise ValueError(
+            f"Pretokenized shard paths must be relative and stay within the artifact root: {relative_path}"
+        )
+    resolved_root = root.resolve()
+    resolved_path = (resolved_root / relative_path).resolve()
+    if not resolved_path.is_relative_to(resolved_root) or resolved_path == resolved_root:
+        raise ValueError(f"Pretokenized shard paths must resolve within the artifact root: {relative_path}")
+    return resolved_path
+
+
+def _effective_tokenizer_json_sha256(tokenizer: PreTrainedTokenizer) -> str:
+    backend = getattr(tokenizer, "backend_tokenizer", None)
+    to_str = getattr(backend, "to_str", None)
+    if not callable(to_str):
+        raise ValueError(
+            "Pretokenized SFT requires a fast tokenizer with backend_tokenizer.to_str() "
+            "so packed token IDs can be verified"
+        )
+    return hashlib.sha256(to_str().encode("utf-8")).hexdigest()
+
+
+def _manifest_positive_int(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f"{label} must be a positive integer, got {value!r}")
+    return value
+
+
+def _sha256_file(path: Path) -> str:
+    with path.open("rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()
+
+
+def _validate_pretokenized_features(
+    dataset: Dataset,
+    config: PretokenizedSFTDataConfig,
+    *,
+    shard_path: Path,
+) -> None:
+    expected = {
+        config.input_ids_column: ("uint32", config.seq_len),
+        config.target_ids_column: ("uint32", config.seq_len),
+        config.loss_mask_column: ("uint8", config.seq_len),
+        config.seq_lens_column: ("int64", None),
+    }
+    missing = [name for name in expected if name not in dataset.column_names]
+    if missing:
+        raise ValueError(f"Pretokenized shard {shard_path} is missing columns: {missing}")
+
+    for column, (expected_dtype, expected_length) in expected.items():
+        feature = dataset.features[column]
+        item_feature = getattr(feature, "feature", None)
+        actual_dtype = getattr(item_feature, "dtype", None)
+        actual_length = getattr(feature, "length", None)
+        if actual_dtype != expected_dtype:
+            raise ValueError(
+                f"Pretokenized shard {shard_path} column {column!r} must contain {expected_dtype}, got {actual_dtype!r}"
+            )
+        if expected_length is not None and actual_length != expected_length:
+            raise ValueError(
+                f"Pretokenized shard {shard_path} column {column!r} must have fixed "
+                f"length {expected_length}, got {actual_length!r}"
+            )
+
+
+def _validate_shard_files(shard_path: Path, files: Any) -> None:
+    if not isinstance(files, list) or not files:
+        raise ValueError(f"Pretokenized shard {shard_path} has no declared files")
+    declared: dict[str, tuple[int, str]] = {}
+    resolved_shard_path = shard_path.resolve()
+    for entry in files:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            raise ValueError(f"Invalid file entry for pretokenized shard {shard_path}: {entry!r}")
+        relative_path = Path(entry["path"])
+        if not relative_path.parts or relative_path.is_absolute() or ".." in relative_path.parts:
+            raise ValueError(f"Pretokenized shard file paths must stay within {shard_path}: {relative_path}")
+        size_bytes = _manifest_positive_int(entry.get("size_bytes"), f"file size for {shard_path / relative_path}")
+        sha256 = entry.get("sha256")
+        if (
+            not isinstance(sha256, str)
+            or len(sha256) != 64
+            or any(character not in "0123456789abcdef" for character in sha256)
+        ):
+            raise ValueError(f"Invalid SHA-256 for pretokenized shard file {shard_path / relative_path}")
+        key = relative_path.as_posix()
+        if key in declared:
+            raise ValueError(f"Duplicate file entry for pretokenized shard {shard_path}: {key}")
+        declared_path = (resolved_shard_path / relative_path).resolve()
+        if not declared_path.is_relative_to(resolved_shard_path):
+            raise ValueError(f"Pretokenized shard file paths must resolve within {shard_path}: {relative_path}")
+        declared[key] = (size_bytes, sha256)
+
+    actual: dict[str, tuple[int, str]] = {}
+    for path in shard_path.rglob("*"):
+        if not path.is_file():
+            continue
+        resolved_path = path.resolve()
+        if not resolved_path.is_relative_to(resolved_shard_path):
+            raise ValueError(f"Pretokenized shard contains a file outside its directory: {path}")
+        actual[path.relative_to(shard_path).as_posix()] = (path.stat().st_size, _sha256_file(path))
+    if actual != declared:
+        raise ValueError(
+            f"Pretokenized shard file sizes or SHA-256 hashes differ from the manifest for {shard_path}: "
+            f"declared={declared}, actual={actual}"
+        )
+
+
+def _validate_shard_files_once(shards: list[tuple[Path, Any]]) -> None:
+    dist = torch.distributed
+    distributed = dist.is_available() and dist.is_initialized() and dist.get_world_size() > 1
+    if not distributed:
+        for shard_path, files in shards:
+            _validate_shard_files(shard_path, files)
+        return
+
+    result: list[str | None] = [None]
+    if dist.get_rank() == 0:
+        try:
+            for shard_path, files in shards:
+                _validate_shard_files(shard_path, files)
+        except Exception as exc:
+            result[0] = f"{type(exc).__name__}: {exc}"
+
+    backend = str(dist.get_backend()).lower()
+    device = torch.device("cuda", torch.cuda.current_device()) if "nccl" in backend else None
+    dist.broadcast_object_list(result, src=0, device=device)
+    if result[0] is not None:
+        raise RuntimeError(f"Rank-zero pretokenized shard verification failed: {result[0]}")
+
+
+def load_pretokenized_dataset(
+    config: PretokenizedSFTDataConfig,
+    tokenizer: PreTrainedTokenizer,
+) -> Dataset:
+    """Load and verify packed Dataset shards listed by an artifact manifest."""
+    root = config.path.expanduser()
+    if not root.exists():
+        raise FileNotFoundError(f"Pretokenized dataset path does not exist: {root}")
+
+    manifest_path = root / TOKENIZED_SHARDS_MANIFEST_NAME
+    if not manifest_path.exists():
+        raise FileNotFoundError(
+            f"Pretokenized dataset is missing its verification manifest: {manifest_path}. "
+            "Rebuild or migrate the artifact to the packed manifest contract before training."
+        )
+    ready_path = root / "_READY"
+    if not ready_path.exists():
+        raise ValueError(f"Pretokenized artifact is incomplete because {root / '_READY'} is missing")
+    manifest_bytes = manifest_path.read_bytes()
+    try:
+        ready = json.loads(ready_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Pretokenized artifact has an invalid ready marker: {ready_path}") from exc
+    if not isinstance(ready, dict) or ready.get("format") != "prime-rl-packed-sft-v1":
+        raise ValueError(f"Pretokenized artifact has an invalid ready marker: {ready_path}")
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    if ready.get("manifest_sha256") != manifest_sha256:
+        raise ValueError(f"Pretokenized artifact manifest does not match its ready marker: {manifest_path}")
+    manifest = json.loads(manifest_bytes)
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{manifest_path} must contain a JSON object")
+    if manifest.get("format") != "prime-rl-packed-sft-v1":
+        raise ValueError(
+            f"{manifest_path} must declare format='prime-rl-packed-sft-v1', got {manifest.get('format')!r}"
+        )
+    if manifest.get("seq_len") != config.seq_len:
+        raise ValueError(
+            f"{manifest_path} was packed at seq_len={manifest.get('seq_len')}, "
+            f"but the training config requests seq_len={config.seq_len}"
+        )
+    expected_columns = {
+        config.input_ids_column: "uint32",
+        config.target_ids_column: "uint32",
+        config.loss_mask_column: "uint8",
+        config.seq_lens_column: "list<int64>",
+    }
+    if manifest.get("columns") != expected_columns:
+        raise ValueError(
+            f"{manifest_path} columns do not match the training config: "
+            f"expected={expected_columns}, got={manifest.get('columns')!r}"
+        )
+    packed_tokenizer_sha256 = manifest.get("effective_tokenizer_json_sha256")
+    runtime_tokenizer_sha256 = _effective_tokenizer_json_sha256(tokenizer)
+    if packed_tokenizer_sha256 != runtime_tokenizer_sha256:
+        raise ValueError(
+            "Pretokenized artifact and runtime tokenizer differ: "
+            f"packed={packed_tokenizer_sha256!r}, runtime={runtime_tokenizer_sha256!r}"
+        )
+    special_token_ids = manifest.get("special_token_ids")
+    if not isinstance(special_token_ids, dict):
+        raise ValueError(f"{manifest_path} must contain special_token_ids")
+    for token_name in ("bos_token_id", "eos_token_id", "pad_token_id", "unk_token_id"):
+        if token_name not in special_token_ids:
+            raise ValueError(f"{manifest_path} special_token_ids is missing {token_name}")
+        packed_token_id = special_token_ids.get(token_name)
+        runtime_token_id = getattr(tokenizer, token_name, None)
+        if packed_token_id != runtime_token_id:
+            raise ValueError(
+                f"Pretokenized artifact {token_name}={packed_token_id!r} does not match "
+                f"runtime tokenizer {token_name}={runtime_token_id!r}"
+            )
+    shards = manifest.get("shards")
+    if not isinstance(shards, list) or not shards:
+        raise ValueError(f"{manifest_path} must contain a non-empty 'shards' list")
+    resolved_shards: list[tuple[Path, int, Any]] = []
+    resolved_paths: set[Path] = set()
+    declared_rows = 0
+    for shard_index, shard in enumerate(shards):
+        if not isinstance(shard, dict):
+            raise ValueError(f"Invalid shard entry in {manifest_path}: {shard!r}")
+        shard_rows = _manifest_positive_int(shard.get("rows"), f"shards[{shard_index}].rows")
+        shard_path = _resolve_shard_path(root, shard).resolve()
+        if shard_path in resolved_paths:
+            raise ValueError(f"Duplicate pretokenized shard path: {shard_path}")
+        resolved_paths.add(shard_path)
+        resolved_shards.append((shard_path, shard_rows, shard.get("files")))
+        declared_rows += shard_rows
+
+    stats = manifest.get("stats")
+    if not isinstance(stats, dict):
+        raise ValueError(f"{manifest_path} must contain aggregate stats")
+    packed_rows = _manifest_positive_int(stats.get("packed_rows"), "stats.packed_rows")
+    if packed_rows != declared_rows:
+        raise ValueError(
+            f"{manifest_path} stats.packed_rows={packed_rows} does not match the shard total {declared_rows}"
+        )
+
+    _validate_shard_files_once([(shard_path, files) for shard_path, _, files in resolved_shards])
+    datasets: list[Dataset] = []
+    for shard_path, shard_rows, _ in resolved_shards:
+        if not shard_path.is_dir():
+            raise FileNotFoundError(f"Pretokenized shard path does not exist: {shard_path}")
+        loaded = load_from_disk(str(shard_path))
+        if not isinstance(loaded, Dataset):
+            raise TypeError(f"Pretokenized shard must be a Dataset, not a DatasetDict: {shard_path}")
+        if len(loaded) != shard_rows:
+            raise ValueError(
+                f"Pretokenized shard row count differs from manifest for {shard_path}: "
+                f"manifest={shard_rows}, dataset={len(loaded)}"
+            )
+        _validate_pretokenized_features(loaded, config, shard_path=shard_path)
+        datasets.append(loaded)
+    return datasets[0] if len(datasets) == 1 else concatenate_datasets(datasets)
+
+
 def setup_dataset(
     tokenizer: PreTrainedTokenizer,
     config: DataConfig,
@@ -677,6 +1052,21 @@ def setup_dataset(
             non_dp_size=non_dp_size,
             max_epochs=max_epochs,
             multimodal=multimodal,
+        )
+    elif config.type == "pretokenized":
+        if raw_dataset is None:
+            raw_dataset = load_pretokenized_dataset(config, tokenizer)
+        return PretokenizedSFTDataset(
+            raw_dataset,
+            shuffle=config.shuffle,
+            seed=config.seed,
+            seq_len=config.seq_len,
+            non_dp_size=non_dp_size,
+            input_ids_column=config.input_ids_column,
+            target_ids_column=config.target_ids_column,
+            loss_mask_column=config.loss_mask_column,
+            seq_lens_column=config.seq_lens_column,
+            max_epochs=max_epochs,
         )
     else:
         raise ValueError(f"Invalid dataset type: {config.type}")

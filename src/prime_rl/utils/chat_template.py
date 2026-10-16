@@ -2,6 +2,16 @@ import json
 from typing import Any
 
 
+def ensure_tokenizer_pad_token(tokenizer: Any) -> None:
+    """Preserve a configured pad ID, falling back to EOS only when absent."""
+    if getattr(tokenizer, "pad_token_id", None) is not None:
+        return
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    if eos_token_id is None:
+        raise ValueError("Tokenizer must define either pad_token_id or eos_token_id")
+    tokenizer.pad_token_id = eos_token_id
+
+
 def normalize_messages(messages: Any, default_role: str) -> list[dict[str, Any]]:
     if messages is None:
         return []

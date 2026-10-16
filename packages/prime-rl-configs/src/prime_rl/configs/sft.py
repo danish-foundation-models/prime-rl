@@ -134,6 +134,36 @@ class SFTDataConfig(BaseDataConfig):
         return self
 
 
+class PretokenizedSFTDataConfig(BaseDataConfig):
+    """Configures SFT data stored as tokenized Hugging Face Dataset shards."""
+
+    type: Literal["pretokenized"] = "pretokenized"
+
+    path: Path
+    """Packed artifact directory containing ``tokenized_shards.json`` and ``_READY``."""
+
+    num_workers: Literal[1] = 1
+    """Pretokenized iteration currently requires one worker to preserve exact rank partitioning."""
+
+    shuffle: bool = True
+    """Shuffle rows at the start of each epoch."""
+
+    seed: int = 0
+    """Random seed for shuffling. Re-shuffled per epoch by adding the epoch count."""
+
+    input_ids_column: str = "input_ids"
+    """Column containing token IDs."""
+
+    target_ids_column: str = "target_ids"
+    """Column containing next-token targets shifted independently per source document."""
+
+    loss_mask_column: str = "loss_mask"
+    """Column containing the per-target loss mask."""
+
+    seq_lens_column: str = "seq_lens"
+    """Column containing packed document boundaries, including any padding segment."""
+
+
 class SFTValConfig(BaseConfig):
     interval: int = Field(50, ge=1)
     """Run validation every N training steps."""
@@ -144,7 +174,9 @@ class SFTValConfig(BaseConfig):
     data: SFTDataConfig
 
 
-DataConfig: TypeAlias = Annotated[FakeDataConfig | SFTDataConfig, Field(discriminator="type")]
+DataConfig: TypeAlias = Annotated[
+    FakeDataConfig | SFTDataConfig | PretokenizedSFTDataConfig, Field(discriminator="type")
+]
 
 
 class BaseDeploymentConfig(BaseConfig):
@@ -492,7 +524,7 @@ class SFTConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_typed_renderer(self):
         """Require a typed renderer whenever SFT renders real samples."""
-        if self.data.type == "fake" and self.val is None:
+        if self.data.type in ("fake", "pretokenized") and self.val is None:
             return self
 
         model_id = self.tokenizer.name or self.model.name

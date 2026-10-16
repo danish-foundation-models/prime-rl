@@ -54,6 +54,7 @@ from prime_rl.trainer.models.layers.moe import MoE, TokenChoiceTopKRouter
 from prime_rl.trainer.moe_runtime import configure_moe_runtime
 from prime_rl.trainer.parallel_dims import ParallelDims
 from prime_rl.trainer.world import get_world
+from prime_rl.utils.chat_template import ensure_tokenizer_pad_token
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.utils import format_time
 from prime_rl.utils.vlm import get_language_model, get_vision_encoder, is_vlm_architecture
@@ -496,7 +497,7 @@ def setup_tokenizer(config: TokenizerConfig) -> PreTrainedTokenizer:
         else:
             logger.info("Using inline custom chat template")
             tokenizer.chat_template = config.chat_template
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    ensure_tokenizer_pad_token(tokenizer)
 
     return tokenizer
 

@@ -1,18 +1,57 @@
+import hashlib
+import json
 from collections import Counter
 
 import pytest
 import torch
-from datasets import Dataset, interleave_datasets
+from datasets import Dataset, Features, Sequence, Value, interleave_datasets
 from renderers import create_renderer
 from renderers.base import MultiModalData, PlaceholderRange, RenderedTrainingSample
 from transformers import AutoTokenizer
 
 import prime_rl.trainer.sft.data as sft_data
-from prime_rl.trainer.sft.data import CatDataset, SFTDataset, _drop_null_fields
+from prime_rl.configs.sft import PretokenizedSFTDataConfig
+from prime_rl.trainer.sft.data import (
+    CatDataset,
+    PretokenizedSFTDataset,
+    SFTDataset,
+    _drop_null_fields,
+    load_pretokenized_dataset,
+    requires_renderer,
+)
 from prime_rl.trainer.utils import print_sample
+from prime_rl.utils.chat_template import ensure_tokenizer_pad_token
 
 _BOS_TOKEN_ID = 0
 _STOP_TOKEN_ID = 1
+
+
+def test_ensure_tokenizer_pad_token_preserves_distinct_pad_and_falls_back_to_eos():
+    distinct = type("Tokenizer", (), {"pad_token_id": 3, "eos_token_id": 68})()
+    ensure_tokenizer_pad_token(distinct)
+    assert distinct.pad_token_id == 3
+
+    missing = type("Tokenizer", (), {"pad_token_id": None, "eos_token_id": 68})()
+    ensure_tokenizer_pad_token(missing)
+    assert missing.pad_token_id == 68
+
+
+@pytest.mark.parametrize(
+    ("data_type", "has_validation", "expected"),
+    [
+        ("sft", False, True),
+        ("pretokenized", False, False),
+        ("pretokenized", True, True),
+        ("fake", False, False),
+    ],
+)
+def test_requires_renderer(data_type, has_validation, expected):
+    assert requires_renderer(data_type, has_validation=has_validation) is expected
+
+
+def test_pretokenized_config_rejects_multiple_dataloader_workers(tmp_path):
+    with pytest.raises(ValueError):
+        PretokenizedSFTDataConfig(path=tmp_path, num_workers=2)
 
 
 def _sample_token_ids(value: str) -> list[int]:
@@ -421,6 +460,269 @@ def _sft_sample(
     }
 
 
+def test_pretokenized_dataset_preserves_packed_boundaries():
+    dataset = PretokenizedSFTDataset(
+        Dataset.from_list(
+            [
+                {
+                    "input_ids": [10, 11, 20, 21, 0],
+                    "target_ids": [11, 12, 21, 22, 0],
+                    "loss_mask": [0, 1, 1, 1, 0],
+                    "seq_lens": [2, 2, 1],
+                }
+            ]
+        ),
+        shuffle=False,
+        seq_len=5,
+    )
+
+    sample = next(iter(dataset))
+
+    assert sample["input_ids"] == [10, 11, 20, 21, 0]
+    assert sample["target_ids"] == [11, 12, 21, 22, 0]
+    assert sample["loss_mask"] == [False, True, True, True, False]
+    assert sample["seq_lens"] == [2, 2, 1]
+    assert sample["position_ids"] == [0, 1, 0, 1, 0]
+
+
+class _DummyBackendTokenizer:
+    def __init__(self, payload: str):
+        self.payload = payload
+
+    def to_str(self):
+        return self.payload
+
+
+class _DummyPretokenizedTokenizer:
+    bos_token_id = None
+    eos_token_id = 68
+    pad_token_id = 3
+    unk_token_id = None
+
+    def __init__(self, backend_payload: str):
+        self.backend_tokenizer = _DummyBackendTokenizer(backend_payload)
+
+
+def _write_pretokenized_artifact(tmp_path, *, declared_rows: int = 1, loss_mask_dtype: str = "uint8"):
+    root = tmp_path / "packed"
+    shard_path = root / "chunk_00000"
+    backend_payload = '{"model":"test"}'
+    features = Features(
+        {
+            "input_ids": Sequence(Value("uint32"), length=4),
+            "target_ids": Sequence(Value("uint32"), length=4),
+            "loss_mask": Sequence(Value(loss_mask_dtype), length=4),
+            "seq_lens": Sequence(Value("int64")),
+        }
+    )
+    Dataset.from_dict(
+        {
+            "input_ids": [[10, 11, 20, 0]],
+            "target_ids": [[11, 12, 21, 0]],
+            "loss_mask": [[1, 1, 1, 0]],
+            "seq_lens": [[2, 1, 1]],
+        },
+        features=features,
+    ).save_to_disk(shard_path)
+    files = [
+        {
+            "path": path.relative_to(shard_path).as_posix(),
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+        for path in sorted(shard_path.rglob("*"))
+        if path.is_file()
+    ]
+    manifest = {
+        "format": "prime-rl-packed-sft-v1",
+        "seq_len": 4,
+        "effective_tokenizer_json_sha256": hashlib.sha256(backend_payload.encode()).hexdigest(),
+        "special_token_ids": {
+            "bos_token_id": None,
+            "eos_token_id": 68,
+            "pad_token_id": 3,
+            "unk_token_id": None,
+        },
+        "columns": {
+            "input_ids": "uint32",
+            "target_ids": "uint32",
+            "loss_mask": "uint8",
+            "seq_lens": "list<int64>",
+        },
+        "shards": [{"path": "chunk_00000", "rows": declared_rows, "files": files}],
+        "stats": {"packed_rows": declared_rows},
+    }
+    manifest_bytes = json.dumps(manifest).encode()
+    (root / "tokenized_shards.json").write_bytes(manifest_bytes)
+    (root / "_READY").write_text(
+        json.dumps(
+            {
+                "format": "prime-rl-packed-sft-v1",
+                "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            }
+        )
+    )
+    return root, backend_payload
+
+
+def test_load_pretokenized_dataset_validates_and_roundtrips(tmp_path):
+    root, backend_payload = _write_pretokenized_artifact(tmp_path)
+    tokenizer = _DummyPretokenizedTokenizer(backend_payload)
+    config = PretokenizedSFTDataConfig(path=root, seq_len=4, shuffle=False)
+
+    loaded = load_pretokenized_dataset(config, tokenizer)
+    sample = next(iter(PretokenizedSFTDataset(loaded, shuffle=False, seq_len=4)))
+
+    assert sample["input_ids"] == [10, 11, 20, 0]
+    assert sample["target_ids"] == [11, 12, 21, 0]
+    assert sample["loss_mask"] == [True, True, True, False]
+    assert sample["seq_lens"] == [2, 1, 1]
+
+
+def test_load_pretokenized_dataset_rejects_tokenizer_or_row_drift(tmp_path):
+    root, _ = _write_pretokenized_artifact(tmp_path, declared_rows=2)
+    config = PretokenizedSFTDataConfig(path=root, seq_len=4, shuffle=False)
+
+    with pytest.raises(ValueError, match="tokenizer differ"):
+        load_pretokenized_dataset(config, _DummyPretokenizedTokenizer("wrong"))
+    with pytest.raises(ValueError, match="row count differs"):
+        load_pretokenized_dataset(config, _DummyPretokenizedTokenizer('{"model":"test"}'))
+
+
+def test_load_pretokenized_dataset_rejects_file_or_schema_drift(tmp_path):
+    root, backend_payload = _write_pretokenized_artifact(tmp_path)
+    config = PretokenizedSFTDataConfig(path=root, seq_len=4, shuffle=False)
+    (root / "chunk_00000" / "unexpected").write_text("drift")
+
+    with pytest.raises(ValueError, match="file sizes or SHA-256 hashes differ"):
+        load_pretokenized_dataset(config, _DummyPretokenizedTokenizer(backend_payload))
+
+    hash_root, hash_backend_payload = _write_pretokenized_artifact(tmp_path / "hash")
+    hash_config = PretokenizedSFTDataConfig(path=hash_root, seq_len=4, shuffle=False)
+    manifest = json.loads((hash_root / "tokenized_shards.json").read_text())
+    declared_file = hash_root / "chunk_00000" / manifest["shards"][0]["files"][0]["path"]
+    content = declared_file.read_bytes()
+    declared_file.write_bytes(bytes([content[0] ^ 1]) + content[1:])
+    with pytest.raises(ValueError, match="SHA-256 hashes differ"):
+        load_pretokenized_dataset(hash_config, _DummyPretokenizedTokenizer(hash_backend_payload))
+
+    schema_root, schema_backend_payload = _write_pretokenized_artifact(tmp_path / "schema", loss_mask_dtype="int64")
+    schema_config = PretokenizedSFTDataConfig(path=schema_root, seq_len=4, shuffle=False)
+    with pytest.raises(ValueError, match="must contain uint8"):
+        load_pretokenized_dataset(schema_config, _DummyPretokenizedTokenizer(schema_backend_payload))
+
+
+def test_load_pretokenized_dataset_requires_manifest(tmp_path):
+    root = tmp_path / "bare"
+    Dataset.from_dict({"input_ids": [[1]]}).save_to_disk(root)
+    config = PretokenizedSFTDataConfig(path=root, seq_len=1, shuffle=False)
+
+    with pytest.raises(FileNotFoundError, match="Rebuild or migrate"):
+        load_pretokenized_dataset(config, _DummyPretokenizedTokenizer("unused"))
+
+
+def test_load_pretokenized_dataset_ready_marker_binds_manifest(tmp_path):
+    root, backend_payload = _write_pretokenized_artifact(tmp_path)
+    manifest_path = root / "tokenized_shards.json"
+    manifest_path.write_bytes(manifest_path.read_bytes() + b"\n")
+    config = PretokenizedSFTDataConfig(path=root, seq_len=4, shuffle=False)
+
+    with pytest.raises(ValueError, match="does not match its ready marker"):
+        load_pretokenized_dataset(config, _DummyPretokenizedTokenizer(backend_payload))
+
+
+def test_pretokenized_shard_paths_cannot_escape_artifact_root(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (root / "link").symlink_to(outside, target_is_directory=True)
+
+    for shard_path in ("", str(outside), "../outside", "link"):
+        with pytest.raises(ValueError, match="within the artifact root"):
+            sft_data._resolve_shard_path(root, {"path": shard_path})
+
+
+def test_distributed_shard_hash_verification_runs_only_on_rank_zero(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(sft_data.torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(sft_data.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(sft_data.torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(sft_data.torch.distributed, "get_backend", lambda: "gloo")
+    monkeypatch.setattr(sft_data.torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(
+        sft_data.torch.distributed,
+        "broadcast_object_list",
+        lambda result, src, device: None,
+    )
+    monkeypatch.setattr(sft_data, "_validate_shard_files", lambda path, files: calls.append(path))
+
+    sft_data._validate_shard_files_once([(tmp_path, [])])
+    assert calls == []
+
+    monkeypatch.setattr(sft_data.torch.distributed, "get_rank", lambda: 0)
+    sft_data._validate_shard_files_once([(tmp_path, [])])
+    assert calls == [tmp_path]
+
+
+def test_distributed_shard_hash_verification_propagates_rank_zero_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(sft_data.torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(sft_data.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(sft_data.torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(sft_data.torch.distributed, "get_backend", lambda: "gloo")
+    monkeypatch.setattr(sft_data.torch.distributed, "get_rank", lambda: 1)
+
+    def propagate_error(result, src, device):
+        result[0] = "ValueError: corrupted shard"
+
+    monkeypatch.setattr(sft_data.torch.distributed, "broadcast_object_list", propagate_error)
+    with pytest.raises(RuntimeError, match="corrupted shard"):
+        sft_data._validate_shard_files_once([(tmp_path, [])])
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        (
+            {"input_ids": [1, 2], "target_ids": [2, 3], "loss_mask": [1, 1]},
+            "missing required columns",
+        ),
+        (
+            {
+                "input_ids": [1, 2],
+                "target_ids": [2, 3],
+                "loss_mask": [1, 1],
+                "seq_lens": [1, 2],
+            },
+            "sum to data.seq_len",
+        ),
+        (
+            {
+                "input_ids": [1, 2],
+                "target_ids": [2, 3],
+                "loss_mask": [0, 0],
+                "seq_lens": [2],
+            },
+            "no trainable tokens",
+        ),
+    ],
+)
+def test_pretokenized_dataset_rejects_invalid_packs(row, message):
+    dataset = PretokenizedSFTDataset(Dataset.from_list([row]), shuffle=False, seq_len=2)
+
+    with pytest.raises(ValueError, match=message):
+        next(iter(dataset))
+
+
+def test_cat_dataset_preserves_nested_pretokenized_boundaries():
+    sample = _sft_sample([1, 2, 3, 4])
+    sample["seq_lens"] = [2, 1, 1]
+
+    packed = next(iter(CatDataset([sample], seq_len=4)))
+
+    assert packed["seq_lens"] == [2, 1, 1]
+
+
 def test_cat_dataset_packs_multimodal_samples():
     dataset = CatDataset(
         [
@@ -485,3 +787,18 @@ def test_cat_dataset_packs_text_and_multimodal_samples_together():
     assert text_pack["seq_lens"] == [5]
     assert text_pack["mm_kwargs"] is None
     assert text_pack["mm_token_type_ids"] is None
+
+
+def test_pretokenized_shuffle_does_not_modify_saved_artifact(tmp_path):
+    root, backend_payload = _write_pretokenized_artifact(tmp_path)
+    tokenizer = _DummyPretokenizedTokenizer(backend_payload)
+    config = PretokenizedSFTDataConfig(path=root, seq_len=4, shuffle=True)
+    loaded = load_pretokenized_dataset(config, tokenizer)
+    before = {p.relative_to(root): hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in root.rglob("*") if p.is_file()}
+    samples = list(PretokenizedSFTDataset(loaded, shuffle=True, seq_len=4, max_epochs=2))
+    assert len(samples) == 2
+    after = {p.relative_to(root): hashlib.sha256(p.read_bytes()).hexdigest()
+             for p in root.rglob("*") if p.is_file()}
+    assert before == after
+    assert len(load_pretokenized_dataset(config, tokenizer)) == 1

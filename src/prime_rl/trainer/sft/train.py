@@ -41,6 +41,7 @@ from prime_rl.trainer.sft.data import (
     get_dataset_progress,
     get_dataset_state,
     load_sft_dataset,
+    requires_renderer,
     setup_dataloader,
     setup_dataset,
 )
@@ -141,6 +142,11 @@ def train(config: SFTConfig):
     logger.info(f"Initializing model ({config.model})")
     loading_from_ckpt_later = checkpoint_step is not None
     model = setup_model(config.model, parallel_dims, loading_from_ckpt_later)
+    from prime_rl.trainer.models.layers.lm_head import FusedOutputLinear
+
+    for module in model.modules():
+        if isinstance(module, FusedOutputLinear):
+            module.compute_entropy = False
 
     if parallel_dims.cp_enabled:
         setup_context_parallel(model, config.model, parallel_dims)
@@ -158,7 +164,7 @@ def train(config: SFTConfig):
     # can still be used to benchmark step time / memory. Validation data is
     # always real, so it needs the renderer even when training data is fake.
     renderer = None
-    if config.data.type != "fake" or config.val is not None:
+    if requires_renderer(config.data.type, has_validation=config.val is not None):
         renderer = create_renderer(tokenizer, config.renderer)
         if processor is not None and hasattr(renderer, "_processor"):
             renderer._processor = processor
