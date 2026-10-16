@@ -58,6 +58,7 @@ from prime_rl.trainer.models.layers.mxfp8_grouped_gemm import apply_mxfp8_moe_gr
 from prime_rl.trainer.models.layers.mxfp8_linear import replace_linear_with_mxfp8_linear
 from prime_rl.trainer.parallel_dims import ParallelDims
 from prime_rl.trainer.world import get_world
+from prime_rl.utils.chat_template import ensure_tokenizer_pad_token
 from prime_rl.utils.logger import get_logger
 from prime_rl.utils.sequence import get_cu_seqlens_from_position_ids
 from prime_rl.utils.utils import format_time
@@ -842,6 +843,16 @@ def get_model(
             )
         logger.debug(f"Loaded model {config.name} in {format_time(time.perf_counter() - load_model_start_time)}")
 
+    if config.cp > 1 and impl_to_use == "hf":
+        from prime_rl.utils.cp import assert_hf_ulysses_supports_model
+
+        assert_hf_ulysses_supports_model(model, config.cp)
+
+    if getattr(model.config, "model_type", None) == "apertus":
+        from prime_rl.trainer.apertus_buffers import normalize_apertus_parameter_dtype
+
+        normalize_apertus_parameter_dtype(model, dtype)
+
     assert model.lm_head.weight.dtype == dtype, (
         f"LM head dtype wasnt loaded correctly {model.lm_head.weight.dtype} != {dtype}"
     )
@@ -860,7 +871,7 @@ def setup_tokenizer(config: TokenizerConfig) -> PreTrainedTokenizer:
         else:
             logger.info("Using inline custom chat template")
             tokenizer.chat_template = config.chat_template
-    tokenizer.pad_token_id = tokenizer.eos_token_id
+    ensure_tokenizer_pad_token(tokenizer)
 
     return tokenizer
 
@@ -1128,6 +1139,11 @@ def can_reinit_empty_buffers(model: nn.Module):
     The main issue is with anything that is not in the checkpoint.
     This is usually any non-persistent buffers.
     """
+    from prime_rl.trainer.apertus_buffers import can_reinit_apertus_buffers
+
+    if can_reinit_apertus_buffers(model):
+        return True
+
     # Custom PrimeRL models handle buffer reinit via init_buffers_post_meta
     if isinstance(model, PreTrainedModelPrimeRL):
         return True

@@ -226,7 +226,7 @@ class ModelConfig(BaseModelConfig):
     """Context parallelism degree. 1 disables CP."""
 
     cp_style: Literal["ring", "ulysses"] = "ring"
-    """CP communication style. ``ring`` uses ring-attention all-gather/reduce-scatter (requires custom kernels per attention type). ``ulysses`` uses all-to-all to redistribute Q/K/V from sequence-sharded to head-sharded, runs vanilla attention locally on the full sequence, then all-to-all back — works out-of-the-box with any attention kernel (softmax FA, linear attention, mamba, etc.)."""
+    """CP communication style. ``ring`` uses ring-attention all-gather/reduce-scatter (requires custom kernels per attention type). ``ulysses`` uses all-to-all to redistribute Q/K/V from sequence-sharded to head-sharded, runs vanilla attention locally on the full sequence, then all-to-all back. The HF implementation supports Ulysses only for softmax-only causal models with Flash Attention 2; hybrid linear-attention and SSM models require a custom implementation."""
 
     impl: Literal["hf", "custom", "auto"] = "auto"
     """Model implementation. ``auto`` selects ``custom`` if supported by the model, otherwise ``hf``."""
@@ -261,7 +261,7 @@ class ModelConfig(BaseModelConfig):
     """Debugging knobs for the model and distributed training."""
 
     fused_lm_head_token_chunk_size: int | Literal["disabled"] = 8192
-    """Flattened token chunk size for the fused LM head. ``int >= 1`` sets the tokens per LM-head chunk explicitly; ``disabled`` uses the vanilla LM head. SFT training silently disables this (not supported yet)."""
+    """Flattened token chunk size for the fused LM head. ``int >= 1`` sets the tokens per LM-head chunk explicitly; ``disabled`` uses the vanilla LM head. SFT uses this for target log-probabilities without computing unused entropy."""
 
     @model_validator(mode="after")
     def trust_remote_code_only_with_hf(self):
@@ -287,10 +287,9 @@ class ModelConfig(BaseModelConfig):
     def validate_cp(self):
         if self.cp > 1 and self.attn not in ["flash_attention_2", "flash_attention_3", "flash_attention_4", "auto"]:
             raise ValueError("CP is only supported with flash attention 2, 3, or 4")
-        if self.cp > 1 and self.impl not in ("custom", "auto"):
+        if self.cp > 1 and self.impl == "hf" and (self.cp_style != "ulysses" or self.attn != "flash_attention_2"):
             raise ValueError(
-                "Context parallelism requires model.impl='custom' or 'auto' "
-                "(resolved to a custom PrimeRL implementation)"
+                "HF context parallelism requires model.cp_style='ulysses' and model.attn='flash_attention_2'"
             )
         return self
 

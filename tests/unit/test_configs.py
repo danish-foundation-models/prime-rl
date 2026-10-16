@@ -378,6 +378,23 @@ def test_trainer_rejects_vlm_cp_with_ring():
         TrainerConfig.model_validate(config)
 
 
+def test_trainer_allows_hf_ulysses_fa2_cp():
+    config = TrainerModelConfig.model_validate(
+        {"impl": "hf", "attn": "flash_attention_2", "cp": 4, "cp_style": "ulysses"}
+    )
+
+    assert config.cp == 4
+
+
+@pytest.mark.parametrize(
+    ("attn", "cp_style"),
+    [("flash_attention_2", "ring"), ("flash_attention_3", "ulysses"), ("auto", "ulysses")],
+)
+def test_trainer_rejects_unsupported_hf_cp(attn, cp_style):
+    with pytest.raises(ValidationError, match="HF context parallelism"):
+        TrainerModelConfig.model_validate({"impl": "hf", "attn": attn, "cp": 4, "cp_style": cp_style})
+
+
 def test_selective_activation_checkpointing_requires_custom_impl():
     with pytest.raises(ValidationError, match="Selective activation checkpointing requires model.impl='custom'"):
         TrainerModelConfig.model_validate({"impl": "hf", "ac": {"mode": "selective"}})

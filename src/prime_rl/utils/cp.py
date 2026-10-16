@@ -21,6 +21,14 @@ def _has_linear_attn_layer(model: nn.Module) -> bool:
     inner = getattr(model, "model", model)
     if hasattr(inner, "language_model"):
         inner = inner.language_model
+    config = getattr(inner, "config", getattr(model, "config", None))
+    for field in ("layer_types", "layers_block_type"):
+        layer_types = getattr(config, field, None)
+        if layer_types is not None and any(
+            any(marker in str(layer_type).lower() for marker in ("linear", "mamba", "ssm"))
+            for layer_type in layer_types
+        ):
+            return True
     layers = getattr(inner, "layers", None)
     if layers is None:
         return False
@@ -30,9 +38,45 @@ def _has_linear_attn_layer(model: nn.Module) -> bool:
         if getattr(layer, "layer_type", None) == "linear_attention":
             return True
         # NemotronH Mamba
-        if hasattr(layer, "mamba"):
+        if getattr(layer, "block_type", None) == "mamba" or hasattr(layer, "mamba"):
             return True
     return False
+
+
+def assert_hf_ulysses_supports_model(model: nn.Module, cp_world_size: int) -> None:
+    """Validate the model-level constraints of the HF Ulysses FA2 path."""
+    if cp_world_size < 2:
+        raise ValueError(f"HF Ulysses context parallelism requires cp >= 2, got {cp_world_size}")
+
+    model_config = getattr(model, "config", None)
+    model_type = getattr(model_config, "model_type", None)
+    if model_type != "apertus":
+        raise ValueError(
+            f"HF Ulysses context parallelism currently supports only model_type='apertus'; got {model_type!r}"
+        )
+    if _has_linear_attn_layer(model):
+        raise ValueError(
+            "HF Ulysses context parallelism only supports softmax-attention models; "
+            "linear-attention and Mamba/SSM layers require a custom PrimeRL implementation"
+        )
+
+    config = getattr(model_config, "text_config", model_config)
+    num_attention_heads = getattr(config, "num_attention_heads", None)
+    num_key_value_heads = getattr(config, "num_key_value_heads", num_attention_heads)
+    if (
+        not isinstance(num_attention_heads, int)
+        or not isinstance(num_key_value_heads, int)
+        or num_attention_heads < 1
+        or num_key_value_heads < 1
+    ):
+        raise ValueError("HF Ulysses context parallelism requires explicit attention-head counts")
+    if num_attention_heads % cp_world_size != 0:
+        raise ValueError(f"HF Ulysses cp={cp_world_size} must divide num_attention_heads={num_attention_heads}")
+    if num_key_value_heads % cp_world_size != 0 and cp_world_size % num_key_value_heads != 0:
+        raise ValueError(
+            f"HF Ulysses cp={cp_world_size} must divide num_key_value_heads={num_key_value_heads}, "
+            "or be divisible by it for KV-head replication"
+        )
 
 
 def assert_cp_style_supports_model(cp_style: CPStyle, model: nn.Module) -> None:

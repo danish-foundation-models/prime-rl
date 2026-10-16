@@ -111,6 +111,14 @@ CP shards a single sequence across multiple GPUs along the token dimension — f
 
 `ulysses` head-shards Q/K/V, so the CP degree must divide `num_attention_heads`. GQA models with fewer KV heads than the CP degree (e.g. NemotronH: 32 query heads, 2 KV heads) are supported via KV-head replication; the CP degree must then be a multiple of `num_key_value_heads`. Hybrid Mamba layers head-shard independently (`cp_mamba`), which requires the CP degree to divide `mamba_num_heads` and `n_groups`.
 
+The Hugging Face model path supports CP only with the explicit combination
+`impl = "hf"`, `attn = "flash_attention_2"`, and `cp_style = "ulysses"`.
+This path is currently allowlisted only for `model_type = "apertus"` and is
+limited to causal models whose layers all use softmax attention. Hybrid
+linear-attention and Mamba/SSM models require a custom PrimeRL implementation.
+Model initialization validates the model type and query- and KV-head
+divisibility constraints before training starts.
+
 ```toml
 [trainer.model]
 impl = "custom"
