@@ -4,7 +4,7 @@ max_steps = 15
 seq_len = 65536
 
 [run]
-name = "rl-apertus8b-swe-portfolio-mid15-b128-t50-6n-20260827-r3"
+name = "rl-apertus8b-swe-portfolio-mid15-b128-t50-6n-20260828-r7"
 
 [env_vars]
 HARBOR_CACHE_DIR = "/scratch/project_465002751/rasmus/.cache/xdg/harbor"
@@ -124,7 +124,7 @@ env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 65536
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
 env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
-env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260828-r7"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true, managed_process = true }
 serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
 
 [[orchestrator.train.source]]
@@ -138,7 +138,7 @@ env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 65536
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
 env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
-env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260828-r7"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true, managed_process = true }
 serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
 
 [[orchestrator.train.source]]
@@ -152,7 +152,7 @@ env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 65536
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
 env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
-env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260828-r7"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true, managed_process = true }
 serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
 
 [[orchestrator.train.source]]
@@ -166,7 +166,7 @@ env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 65536
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
 env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
-env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260828-r7"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true, managed_process = true }
 serve.pool = { type = "elastic", max_workers = 4, multiplex = 16 }
 
 [orchestrator.eval]
@@ -187,7 +187,7 @@ env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 65536
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
 env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
-env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260828-r7"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true, managed_process = true }
 serve.pool = { type = "elastic", max_workers = 1, multiplex = 4 }
 
 [[orchestrator.eval.source]]
@@ -199,7 +199,7 @@ env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 65536
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
 env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
-env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260828-r7"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true, managed_process = true }
 serve.pool = { type = "elastic", max_workers = 1, multiplex = 4 }
 
 [[orchestrator.eval.source]]
@@ -211,7 +211,7 @@ env.agent.max_output_tokens = 8192
 env.agent.max_total_tokens = 65536
 env.agent.timeout = { setup = 1800.0, rollout = 7200.0, finalize = 600.0, scoring = 1800.0 }
 env.agent.harness = { id = "mini-swe-agent", version = "2.4.5", request_timeout_seconds = 1800.0, env = { MSWEA_MODEL_RETRY_STOP_AFTER_ATTEMPT = "1", TMPDIR = "/var/tmp" } }
-env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260827-r3"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true }
+env.agent.runtime = { type = "ucloud", network_access = true, labels = ["apertus8b-swe-mid15-b128-t50-6n-20260828-r7"], creates_per_min = 64, retry_interval_seconds = 5.0, exec_attempts = 120, user = "root", enable_cron = true, enable_sshd = false, keep_alive = true, parkable = true, managed_process = true }
 serve.pool = { type = "elastic", max_workers = 1, multiplex = 4 }
 
 [inference.vllm]
