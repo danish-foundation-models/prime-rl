@@ -239,6 +239,20 @@ def test_expert_type_and_activation_are_independent(expert_type, activation):
     assert moe.shared_expert.activation is ActivationDispatch[activation]
 
 
+def test_relu2_matches_eager_and_saves_only_input():
+    up = torch.randn(64, 32, dtype=torch.float64, requires_grad=True)
+    ref_up = up.detach().clone().requires_grad_()
+    out = ActivationDispatch["relu2"].apply(None, up)
+    ref = F.relu(ref_up).square()
+    assert [t.data_ptr() for t in out.grad_fn.saved_tensors] == [up.data_ptr()]
+
+    grad = torch.randn_like(out)
+    out.backward(grad)
+    ref.backward(grad)
+    torch.testing.assert_close(out, ref)
+    torch.testing.assert_close(up.grad, ref_up.grad)
+
+
 def test_expert_load_stats():
     # Layer 0 is balanced; layer 1 sends 8 of 16 tokens to one expert and leaves one expert cold (< 0.1x mean).
     tokens_per_expert = torch.tensor([[4.0, 4.0, 4.0, 4.0], [8.0, 4.0, 4.0, 0.0]])

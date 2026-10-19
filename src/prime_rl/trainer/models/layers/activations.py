@@ -31,12 +31,31 @@ class ClampedSilu(Activation):
         return F.silu(gate) * up
 
 
+class _Relu2Function(torch.autograd.Function):
+    """relu(x)**2 that saves only `x` for backward.
+
+    Eager `F.relu(x).square()` keeps the relu output for backward and builds two
+    more full-size buffers in backward. In routed experts these are
+    routed-tokens x hidden, so they dominate the activation peak.
+    """
+
+    @staticmethod
+    def forward(ctx, x: torch.Tensor) -> torch.Tensor:
+        ctx.save_for_backward(x)
+        return torch.relu(x).square_()
+
+    @staticmethod
+    def backward(ctx, grad: torch.Tensor) -> torch.Tensor:
+        (x,) = ctx.saved_tensors
+        return torch.relu(x).mul_(2).mul_(grad)
+
+
 class Relu2(Activation):
     @staticmethod
     def apply(gate: torch.Tensor | None, up: torch.Tensor) -> torch.Tensor:
         if gate is not None:
             return F.relu(gate).square() * up
-        return F.relu(up).square()
+        return _Relu2Function.apply(up)
 
 
 class Silu(Activation):
