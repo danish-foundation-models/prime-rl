@@ -179,6 +179,7 @@ def write_slurm_script(
             output_dir=config.run_dir,
             launcher_dir=get_launcher_dir(config.run_dir),
             launcher_log_dir=get_launcher_log_dir(config.run_dir),
+            control_port=config.control.port if config.control is not None else None,
             gpus_per_node=config.deployment.gpus_per_node,
         )
     else:
@@ -215,6 +216,7 @@ def write_slurm_script(
             output_dir=config.run_dir,
             launcher_dir=get_launcher_dir(config.run_dir),
             launcher_log_dir=get_launcher_log_dir(config.run_dir),
+            control_port=config.control.port if config.control is not None else None,
             trainer_env_vars=trainer_env_vars,
             num_nodes=config.deployment.num_train_nodes,
             num_train_nodes=config.deployment.num_train_nodes,

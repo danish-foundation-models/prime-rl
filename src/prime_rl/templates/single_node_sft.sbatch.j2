@@ -14,6 +14,9 @@
 {%- if time %}
 #SBATCH --time={{ time }}
 {%- endif %}
+{%- if pause_before_time_limit %}
+#SBATCH --signal=B:USR1@{{ pause_before_time_limit }}
+{%- endif %}
 {%- if nodelist %}
 #SBATCH --nodelist={{ nodelist }}
 {%- endif %}
@@ -41,4 +44,12 @@ uv sync --all-extras --all-packages
 # Pre-run command
 {{ pre_run_command }}
 {% endif %}
-uv run sft @ {{ config_path }}
+{% if control_port %}export CONTROL_URL="http://localhost:{{ control_port }}"
+{% endif %}
+{% include '_pause_before_time_limit.sh.j2' %}
+
+# Run in the background so the batch shell can handle the time-limit signal.
+uv run sft @ {{ config_path }} &
+MAIN_PID=$!
+wait_main
+exit $EXIT_CODE

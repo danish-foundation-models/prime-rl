@@ -354,6 +354,8 @@ curl -X POST localhost:8041/v1/actions -H 'content-type: application/json' -d '{
 
 Once paused, both keep serving the API until the run is stopped, so its owner can read the committed step first.
 
+**Pausing before a SLURM time limit (SFT).** A job that hits its time limit loses every step since its last checkpoint. With `slurm.pause_before_time_limit = N` (seconds, enables `[control]`), Slurm signals the batch script N seconds before the limit (`#SBATCH --signal=B:USR1@N`). The script then pauses the trainer through the control API, waits until the pause is committed, stops the run and exits 0. A follow-up job with `[resume]` (for example one submitted with `--dependency=afterany:<job id>`) continues from the saved step. N must cover one step plus a checkpoint save, and Slurm may send the signal up to 60 seconds early.
+
 ### Exporting Checkpoints
 
 Trainer checkpoints are DCP-sharded; export them to HF-format safetensors with `tools/convert_dcp_to_bf16.py`. The script reads the model config from the run's resolved config and writes sharded safetensors plus config/tokenizer assets to `<ckpt_dir>/weights` (or a second positional arg). It exports full fine-tunes only — LoRA checkpoints are rejected.
