@@ -215,6 +215,20 @@ class MultiNodeDeploymentConfig(BaseDeploymentConfig):
     """Nodes per FSDP island. Auto-sets ``model.dp_replicate = num_train_nodes / nodes_per_fsdp_group``."""
 
 
+class SFTSlurmConfig(SlurmConfig):
+    pause_before_time_limit: int | None = Field(None, ge=60)
+    """Seconds before the job's time limit at which the job pauses the trainer: Slurm
+    signals the batch script (``#SBATCH --signal=B:USR1@N``), which asks the control API
+    to pause, so the trainer trains its next step, saves it and the job ends cleanly. A
+    follow-up job with ``[resume]`` then loses no steps. Enables ``[control]``. Must
+    exceed one step plus a checkpoint save; Slurm may signal up to 60 seconds early. If
+    None, the job runs until its time limit."""
+
+    @property
+    def template_vars(self) -> dict:
+        return {**super().template_vars, "pause_before_time_limit": self.pause_before_time_limit}
+
+
 SFTDeploymentConfig: TypeAlias = Annotated[
     SingleNodeDeploymentConfig | MultiNodeDeploymentConfig, Field(discriminator="type")
 ]
@@ -318,7 +332,7 @@ class SFTConfig(BaseConfig):
 
     deployment: SFTDeploymentConfig = SingleNodeDeploymentConfig()
 
-    slurm: SlurmConfig | None = None
+    slurm: SFTSlurmConfig | None = None
     """SLURM configuration. When set, the run is submitted as a SLURM job instead of running locally."""
 
     dashboard: bool = True
@@ -391,6 +405,13 @@ class SFTConfig(BaseConfig):
     def validate_deployment(self):
         if self.deployment.type == "multi_node" and self.slurm is None:
             raise ValueError("Must use SLURM for multi-node deployment.")
+        return self
+
+    @model_validator(mode="after")
+    def auto_setup_pause_before_time_limit(self):
+        """The time-limit pause goes through the trainer's control API."""
+        if self.slurm is not None and self.slurm.pause_before_time_limit is not None and self.control is None:
+            self.control = ControlConfig()
         return self
 
     @model_validator(mode="after")

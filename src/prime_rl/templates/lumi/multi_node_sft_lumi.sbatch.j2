@@ -12,6 +12,9 @@
 {%- else %}
 #SBATCH --time=24:00:00
 {%- endif %}
+{%- if pause_before_time_limit %}
+#SBATCH --signal=B:USR1@{{ pause_before_time_limit }}
+{%- endif %}
 {%- if nodelist %}
 #SBATCH --nodelist={{ nodelist }}
 {%- endif %}
@@ -80,6 +83,9 @@ export MASTER_ADDR=${HOSTNAMES[0]}
 export MASTER_PORT=29500
 echo "HOSTNAMES=${HOSTNAMES[*]}"
 echo "MASTER_ADDR=$MASTER_ADDR MASTER_PORT=$MASTER_PORT"
+{% if control_port %}export CONTROL_URL="http://${MASTER_ADDR}:{{ control_port }}"
+{% endif %}
+{% include '_pause_before_time_limit.sh.j2' %}
 
 {% if pre_run_command %}
 {{ pre_run_command }}
@@ -92,6 +98,7 @@ srun bash -s <<'CLEANUP_SH'
   # Never delete node-wide wildcard paths: other processes may own them.
 CLEANUP_SH
 
+# The step runs in the background so the batch shell can handle the time-limit signal.
 srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc '
   set -euo pipefail
   set -o pipefail
@@ -158,4 +165,7 @@ srun --kill-on-bad-exit=1 singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -l
     -m prime_rl.trainer.sft.train \
     @ "$CONFIG_PATH" \
     2>&1 | sed -u "s/^\\[[a-zA-Z]*[0-9]*\\]://" | tee -a "$OUTPUT_DIR/logs/trainer/node_${TRAIN_NODE_RANK}.log"
-'
+' &
+MAIN_PID=$!
+wait_main
+exit $EXIT_CODE

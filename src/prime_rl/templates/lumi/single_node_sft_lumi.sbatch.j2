@@ -8,7 +8,14 @@
 #SBATCH --cpus-per-task=56
 #SBATCH --gpus-per-node={{ gpus_per_node }}
 #SBATCH --mem=0
+{%- if time %}
+#SBATCH --time={{ time }}
+{%- else %}
 #SBATCH --time=02:00:00
+{%- endif %}
+{%- if pause_before_time_limit %}
+#SBATCH --signal=B:USR1@{{ pause_before_time_limit }}
+{%- endif %}
 #SBATCH --exclusive=user
 #SBATCH --hint=nomultithread
 #SBATCH --output={{ output_dir }}/job_%j.log
@@ -72,4 +79,12 @@ cd /workdir
 python -m torch.distributed.run --nproc-per-node=1 -m prime_rl.trainer.sft.train @ \"$CONFIG_PATH\"
 "
 
-singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD"
+{% if control_port %}export CONTROL_URL="http://localhost:{{ control_port }}"
+{% endif %}
+{% include '_pause_before_time_limit.sh.j2' %}
+
+# Run in the background so the batch shell can handle the time-limit signal.
+singularity exec "${SING_BIND_ARGS[@]}" "$SIF" bash -lc "$RANK_CMD" &
+MAIN_PID=$!
+wait_main
+exit $EXIT_CODE

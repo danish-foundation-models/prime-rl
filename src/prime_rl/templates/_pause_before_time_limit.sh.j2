@@ -1,0 +1,50 @@
+{# Shared helpers that run the main command in the background and wait for it, so the
+   batch shell can handle Slurm's time-limit signal while the run is in progress. With
+   slurm.pause_before_time_limit, Slurm sends USR1 to the batch shell (--signal=B:USR1@N)
+   and the trap asks the trainer's control API at $CONTROL_URL to pause. The trainer
+   trains its next step and saves it; once the pause is committed the trap stops the
+   run and the job exits 0, so a follow-up job resumes from that step.
+   Usage: start the main command with `&`, set MAIN_PID=$!, then call wait_main; it
+   sets EXIT_CODE. #}
+PAUSED=0
+MAIN_PID=
+{%- if pause_before_time_limit %}
+pause_before_time_limit() {
+    trap '' USR1
+    local response id state=""
+    echo "[time-limit] $(date '+%F %T') pausing the trainer through $CONTROL_URL"
+    # Retry while the API is unreachable (the signal can arrive during startup).
+    until response=$(curl -s -X POST "$CONTROL_URL/v1/actions" -H 'content-type: application/json' -d '{"type": "pause"}'); do
+        kill -0 "$MAIN_PID" 2>/dev/null || return 0
+        sleep 5
+    done
+    id=$(sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' <<< "$response")
+    if [ -z "$id" ]; then
+        echo "[time-limit] the pause was rejected: $response"
+        return 0
+    fi
+    while kill -0 "$MAIN_PID" 2>/dev/null; do
+        response=$(curl -sf "$CONTROL_URL/v1/actions/$id" || true)
+        state=$(sed -n 's/.*"state": *"\([^"]*\)".*/\1/p' <<< "$response")
+        [ "$state" = committed ] && break
+        sleep 10
+    done
+    if [ "$state" = committed ]; then
+        echo "[time-limit] $(date '+%F %T') saved step $(sed -n 's/.*"step": *\([0-9]*\).*/\1/p' <<< "$response"); stopping the run"
+        PAUSED=1
+        kill -TERM "$MAIN_PID" 2>/dev/null || true
+    fi
+}
+trap pause_before_time_limit USR1
+{%- endif %}
+
+# Wait for $MAIN_PID; a trap interrupts `wait`, so wait again.
+wait_main() {
+    while kill -0 "$MAIN_PID" 2>/dev/null; do
+        wait "$MAIN_PID" || true
+    done
+    wait "$MAIN_PID" && EXIT_CODE=0 || EXIT_CODE=$?
+    if [ "$PAUSED" -eq 1 ]; then
+        EXIT_CODE=0
+    fi
+}
