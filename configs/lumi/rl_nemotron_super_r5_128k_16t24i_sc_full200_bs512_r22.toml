@@ -1,6 +1,7 @@
 # r22: r21 (rl_nemotron_super_r5_128k_16t24i_sc_full200_bs512_r21.toml) on the r72 stack, fresh from the r6 SFT
 #   export step 2638 (adds 3,150 GLM-5.3 bash/pi/opencode/prime_agent traces), preconverted into its own conversion dir.
-# - Train sampling at temperature 0.8 (evals stay at 1.0, comparable with r21). First attempt is an 8 h trial.
+# - Train and eval sampling at temperature 0.8. First attempt is an 8 h trial.
+# - Inference uses MTP speculative decoding (frozen SFT MTP head, 2 draft tokens).
 # - Runtime: lumi-posttrain-u24r72-t213-vllm028 SIF with the gfx90a vLLM overlay instead of the retired r71 Super profile
 #   (as validated by rl_nemotron_super_r5_128k_16t4i_sc_r72_smoke_r1.toml).
 # - openswe and swesmith-env train on the oracle-validated lists (ucloud-task-ids-20261024-oracle): sanitized git history
@@ -985,6 +986,11 @@ max_num_batched_tokens = 32768
 max_num_seqs = 96
 block_size = 2048
 mamba_ssm_cache_dtype = "float32"
+# MTP speculative decoding with the export's single frozen MTP layer (num_nextn_predict_layers = 1),
+# drafting 2 tokens. The trainer drops mtp.* and never updates it, so the drafter stays at the SFT
+# weights while the target model trains. Rejection sampling keeps outputs on the target distribution;
+# check mismatch KL (r21: ~0.003) and the acceptance rate at the first steps.
+speculative_config = { method = "mtp", num_speculative_tokens = 2 }
 
 [ckpt]
 interval = 5
@@ -1007,7 +1013,7 @@ retrigger_on_resume = true
 
 [orchestrator.eval.sampling]
 reasoning_effort = "high"
-temperature = 1.0
+temperature = 0.8
 max_completion_tokens = 8192
 
 [[orchestrator.eval.source]]
