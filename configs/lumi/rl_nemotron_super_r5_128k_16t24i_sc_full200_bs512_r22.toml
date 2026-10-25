@@ -1,5 +1,6 @@
 # r22: r21 (rl_nemotron_super_r5_128k_16t24i_sc_full200_bs512_r21.toml) on the r72 stack, fresh from the r6 SFT
 #   export step 2638 (adds 3,150 GLM-5.3 bash/pi/opencode/prime_agent traces), preconverted into its own conversion dir.
+# - Train sampling at temperature 0.8 (evals stay at 1.0, comparable with r21). First attempt is an 8 h trial.
 # - Runtime: lumi-posttrain-u24r72-t213-vllm028 SIF with the gfx90a vLLM overlay instead of the retired r71 Super profile
 #   (as validated by rl_nemotron_super_r5_128k_16t4i_sc_r72_smoke_r1.toml).
 # - openswe and swesmith-env train on the oracle-validated lists (ucloud-task-ids-20261024-oracle): sanitized git history
@@ -33,7 +34,7 @@ job_name = "super-rl-sc-full200-bs512-r22"
 template_path = "src/prime_rl/templates/multi_node_rl_lumi.sbatch.j2"
 partition = "standard-g"
 account = "project_465002751"
-time = "48:00:00"
+time = "08:00:00"
 cleanup_grace_period = 60
 
 [model]
@@ -133,7 +134,10 @@ penalty = 0.1
 # Per model call. Multi-turn agent sources use this; single-turn sources (max_turns = 1),
 # where one call is the whole answer, override it to 32768. Train and eval match.
 reasoning_effort = "high"
-temperature = 1.0
+# 0.8 shrinks the junk-token tail that ended 10-15% of r21's agent episodes (a stray token in
+# place of <tool_call>, or <|im_end|> right after reasoning). Score centering allows any positive
+# untruncated temperature; the trainer applies the per-token temperature. Every source inherits it.
+temperature = 0.8
 max_completion_tokens = 8192
 
 [[orchestrator.train.source]]
