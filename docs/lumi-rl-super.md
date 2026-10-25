@@ -558,6 +558,14 @@ verifiers-ucloud summary
 verifiers-ucloud task-ids artifacts/manifests/ucloud-task-ids-<date>
 ```
 
+For `openswe` and `swesmith-env`, use the oracle-validated lists in
+`artifacts/manifests/ucloud-task-ids-20261024-oracle/`. The publisher pools pay reward
+for no edits: 18% of OpenSWE, because many eval scripts apply the fix themselves, and
+2% of SWE-smith. About 25% of each never pass. The lists keep tasks whose no-edit run
+scores 0 and whose gold run scores 1. They match prime-envs `679dfd3d7`, which also
+strips the git history that exposed the fix (upstream clones, task branches,
+`HEAD~1`). Its README says how to extend them.
+
 Each training taskset takes its environment's file as `task_ids_file`. Loading fails when a
 listed task is unknown or removed by the source's own filters, so derive a list without
 held-out tasks instead of filtering them. Remove tasks whose images are broken the same way, and record why next to the list (`swe-smith-train.removed.json` drops the charset_normalizer image, which lacks ripgrep, and one kakoune task whose branch is not in its image). SWE-smith grading queries the GitHub API from
