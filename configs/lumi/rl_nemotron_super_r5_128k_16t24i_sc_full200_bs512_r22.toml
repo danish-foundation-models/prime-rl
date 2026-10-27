@@ -1,7 +1,8 @@
 # r22: r21 (rl_nemotron_super_r5_128k_16t24i_sc_full200_bs512_r21.toml) on the r72 stack, fresh from the r6 SFT
 #   export step 2638 (adds 3,150 GLM-5.3 bash/pi/opencode/prime_agent traces), preconverted into its own conversion dir.
 # - Train and eval sampling at temperature 0.8. First attempt is an 8 h trial.
-# - Inference uses MTP speculative decoding (frozen SFT MTP head, 2 draft tokens) with the plain KV layout.
+# - No MTP: with MTP, 11/24 replicas segfaulted in torch.topk after the first NCCL weight update (r22-20261026);
+#   single-node repros did not trigger it. See artifacts/training/nemotron-super-r6-mtp-check-20261026.
 # - Runtime: lumi-posttrain-u24r72-t213-vllm028 SIF with the gfx90a vLLM overlay instead of the retired r71 Super profile
 #   (as validated by rl_nemotron_super_r5_128k_16t4i_sc_r72_smoke_r1.toml).
 # - openswe and swesmith-env train on the oracle-validated lists (ucloud-task-ids-20261024-oracle): sanitized git history
@@ -17,7 +18,7 @@ max_steps = 200
 seq_len = 131072
 
 [run]
-name = "rl-super-r6-step2638-sc-full200-bs512-r22-20261026"
+name = "rl-super-r6-step2638-sc-full200-bs512-r22-20261027"
 
 [deployment]
 type = "multi_node"
@@ -182,7 +183,7 @@ env.agent.runtime.harness_toolkit = "vf-agents"
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -229,7 +230,7 @@ env.agent.runtime.harness_toolkit = "vf-agents"
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -274,7 +275,7 @@ env.agent.runtime.repair_loopback_hosts = true
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -324,7 +325,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -374,7 +375,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -422,7 +423,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -479,7 +480,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -536,7 +537,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -591,7 +592,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -642,7 +643,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -693,7 +694,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -742,7 +743,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -793,7 +794,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -845,7 +846,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -895,7 +896,7 @@ env.agent.runtime.network_access = true
 env.agent.runtime.allow = []
 env.agent.runtime.block = ["*"]
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -986,11 +987,6 @@ max_num_batched_tokens = 32768
 max_num_seqs = 96
 block_size = 2048
 mamba_ssm_cache_dtype = "float32"
-# MTP speculative decoding with the export's single frozen MTP layer (num_nextn_predict_layers = 1),
-# drafting 2 tokens. The trainer drops mtp.* and never updates it, so the drafter stays at the SFT
-# weights while the target model trains. Rejection sampling keeps outputs on the target distribution;
-# check mismatch KL (r21: ~0.003) and the acceptance rate at the first steps.
-speculative_config = { method = "mtp", num_speculative_tokens = 2 }
 
 [ckpt]
 interval = 5
@@ -1040,7 +1036,7 @@ env.agent.runtime.repair_loopback_hosts = true
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -1070,7 +1066,7 @@ env.agent.runtime.repair_loopback_hosts = true
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -1100,7 +1096,7 @@ env.agent.runtime.repair_loopback_hosts = true
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -1131,7 +1127,7 @@ env.agent.runtime.repair_loopback_hosts = true
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -1165,7 +1161,7 @@ env.agent.runtime.repair_loopback_hosts = true
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.network_access = true
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.agent.runtime.creates_per_sec = 0.0
 serve.pool.type = "elastic"
 serve.pool.max_workers = 1
@@ -1216,7 +1212,7 @@ env.agent.runtime.park_interactive = true
 env.agent.runtime.repair_loopback_hosts = true
 env.agent.runtime.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.runtime.offline_python_bundle = "/scratch/project_465002751/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
-env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261026"
+env.agent.runtime.labels.run = "super-r6-step2638-sc-full200-bs512-r22-20261027"
 env.interception.type = "ucloud"
 env.interception.guest_relay_url = "http://sandbox-gateway-gateway-1:8092"
 env.agent.max_turns = 200
@@ -1566,11 +1562,5 @@ PRIME_RL_RELOAD_SKIP_MOE_EMPTY_CACHE = "1"
 PRIME_RL_RELOAD_SKIP_BUFFER_DIAGNOSTICS = "1"
 HSA_ENABLE_SDMA = "0"
 PRIME_RL_INFERENCE_PROFILE = "nemotron-super-gfx90a"
-# MTP needs the plain KV layout: AITER FA refuses the shuffled layout for multi-token decode. This
-# overrides the profile (inference env vars are exported after it). Never run the plain layout
-# without MTP on r72: single-token decode then JIT-builds AITER paged_attention_v1, which fails.
-# Single-node check (2026-10-26): same logprob mismatch as the shuffled baseline, ~5-20% lower
-# aggregate decode throughput (artifacts/training/nemotron-super-r6-mtp-check-20261026).
-VLLM_ROCM_SHUFFLE_KV_CACHE_LAYOUT = "0"
 # rlrs/vllm perf/rocm-gfx90a-nemotron-v028-super, from scripts/lumi_prepare_vllm_overlay.sh
 PRIME_RL_VLLM_OVERLAY = "/scratch/project_465002751/rasmus/.runtime/vllm-overlays/92c722822f2a0e42eaaca112c0854217c809f1df"
