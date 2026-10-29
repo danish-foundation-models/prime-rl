@@ -585,6 +585,14 @@ class DegenerateTurnConfig(BaseConfig):
     max_mean_nll: float = Field(3.0, gt=0)
     """A turn whose mean negative sampling logprob per token exceeds this is degenerate (typical turns: ~0.3-0.7)."""
 
+    min_pattern_size: int = Field(16, ge=1)
+    """Smallest loop period stripped from a turn vLLM stopped with finish reason ``repetition`` before it is judged
+    (such turns are judged on their tokens before the loop). Defaults to the train
+    ``extra_body.repetition_detection.min_pattern_size`` when that is set."""
+
+    max_pattern_size: int = Field(64, ge=1)
+    """Largest loop period stripped (see ``min_pattern_size``); defaults to ``repetition_detection.max_pattern_size``."""
+
     live: bool = True
     """Also stop each train rollout right after its first degenerate turn (the same rule, run by the env server's
     interception layer), instead of generating turns for a trace that will be dropped. Sets ``degenerate_turn`` on
@@ -855,9 +863,20 @@ class OrchestratorConfig(BaseConfig):
     def resolve_degenerate_turn_limit(self):
         """Stamp ``degenerate_turns`` onto each train agent's live limit, so one setting drives both checks."""
         config = self.degenerate_turns
+        detection = self.train.sampling.extra_body.get("repetition_detection") or {}
+        for field in ("min_pattern_size", "max_pattern_size"):
+            if field not in config.model_fields_set and field in detection:
+                setattr(config, field, detection[field])
+        if config.min_pattern_size > config.max_pattern_size:
+            raise ValueError("degenerate_turns.min_pattern_size must be <= max_pattern_size")
         if not (config.enabled and config.live):
             return self
-        limit = vf.DegenerateTurnLimit(min_tokens=config.min_tokens, max_mean_nll=config.max_mean_nll)
+        limit = vf.DegenerateTurnLimit(
+            min_tokens=config.min_tokens,
+            max_mean_nll=config.max_mean_nll,
+            min_pattern_size=config.min_pattern_size,
+            max_pattern_size=config.max_pattern_size,
+        )
         for source in self.train.source:
             for name, field in type(source.env).model_fields.items():
                 if isinstance(field.default, vf.AgentConfig):

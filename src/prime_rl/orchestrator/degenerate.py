@@ -8,7 +8,7 @@ The per-turn rule lives in ``verifiers.v1.degenerate`` so the interception serve
 stop (``RolloutLimits.degenerate_turn``, stop condition ``degenerate_turn``) and this
 post-hoc check reach the same verdict on the same turn. The post-hoc check stays the
 authority: the dispatcher drops whatever it flags. Turns the engine ended by repetition
-detection (finish reason ``repetition``) are exempt in both.
+detection (finish reason ``repetition``) are judged in both on their tokens before the loop.
 """
 
 from verifiers.v1.degenerate import DEGENERATE_TURN, DegenerateTurn, find_degenerate_turn

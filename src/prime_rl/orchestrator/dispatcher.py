@@ -637,8 +637,12 @@ class Dispatcher:
                 episode.ok = False
                 get_logger().warning(f"Empty trajectory in group {meta.group_id} ({meta.env_name})")
             if meta.kind == "train" and self.degenerate_turns is not None and not trace.has_error:
+                rule = self.degenerate_turns
                 turn = find_degenerate_turn(
-                    trace, min_tokens=self.degenerate_turns.min_tokens, max_mean_nll=self.degenerate_turns.max_mean_nll
+                    trace,
+                    min_tokens=rule.min_tokens,
+                    max_mean_nll=rule.max_mean_nll,
+                    pattern_sizes=(rule.min_pattern_size, rule.max_pattern_size),
                 )
                 if turn is not None:
                     message = f"turn {turn.index}: {turn.tokens} tokens at mean NLL {turn.mean_nll:.2f}"

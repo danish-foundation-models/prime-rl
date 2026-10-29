@@ -27,12 +27,19 @@ def test_ignores_unsampled_nodes_and_missing_logprobs():
     assert find_degenerate_turn(t, min_tokens=100, max_mean_nll=3.0) is None
 
 
-def test_repetition_stopped_turns_are_exempt():
-    t = trace(node([-0.5] * 300), node([-8.0] * 400), node([-7.0] * 200))
+def test_repetition_stopped_turns_are_judged_before_the_loop():
+    def looped(prefix_lp):
+        tokens = list(range(1000, 1300)) + [7 + i % 20 for i in range(700)]
+        return SimpleNamespace(
+            sampled=True, token_ids=tokens, mask=[True] * len(tokens), logprobs=[prefix_lp] * 300 + [-0.01] * 700
+        )
+
+    t = trace(node([-0.5] * 300), looped(-0.5), looped(-8.0))
     t.calls = [
-        SimpleNamespace(node=0, finish_reason="tool_calls", error=None),
-        SimpleNamespace(node=1, finish_reason="repetition", error=None),
-        SimpleNamespace(node=2, finish_reason="length", error=None),
+        SimpleNamespace(node=i, finish_reason=f, error=None)
+        for i, f in enumerate(["tool_calls", "repetition", "repetition"])
     ]
     turn = find_degenerate_turn(t, min_tokens=100, max_mean_nll=3.0)
-    assert turn is not None and turn.index == 2 and turn.tokens == 200
+    assert turn is not None and turn.index == 2 and turn.tokens == 300 and round(turn.mean_nll, 1) == 8.0
+    t.calls[2].finish_reason = "length"  # judged whole, the loop dilutes it below the threshold
+    assert find_degenerate_turn(t, min_tokens=100, max_mean_nll=3.0) is None

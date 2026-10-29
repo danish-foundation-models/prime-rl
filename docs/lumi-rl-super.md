@@ -625,7 +625,8 @@ that is dropped anyway. The post-rollout check still decides what is dropped.
 `max_pattern_size`, `min_count`) turns on vLLM's repetition stop for train rollouts: a turn
 whose last `p * min_count` tokens repeat with a period `p` in the range ends with finish reason
 `repetition`. Harnesses see it as `length`, training treats it as a max-tokens truncation, and the
-degenerate-turn rule skips such turns. `loop/repetition_stopped_*` metrics count them.
+degenerate-turn rule judges such turns on their tokens before the loop (periods searched in
+`degenerate_turns.min_pattern_size..max_pattern_size`, by default the `repetition_detection` range). `loop/repetition_stopped_*` metrics count them.
 
 `general-agent` (multi-turn tool use, 4,417 tasks with their own tools and databases) also
 runs locally: each task's tools are served host-side over MCP to the `null` harness and
