@@ -585,6 +585,11 @@ class DegenerateTurnConfig(BaseConfig):
     max_mean_nll: float = Field(3.0, gt=0)
     """A turn whose mean negative sampling logprob per token exceeds this is degenerate (typical turns: ~0.3-0.7)."""
 
+    live: bool = True
+    """Also stop each train rollout right after its first degenerate turn (the same rule, run by the env server's
+    interception layer), instead of generating turns for a trace that will be dropped. Sets ``degenerate_turn`` on
+    every agent of every train source; the post-rollout check still decides what is dropped."""
+
 
 class OrchestratorConfig(BaseConfig):
     algo: AlgoConfig = GRPOAlgoConfig()
@@ -844,6 +849,20 @@ class OrchestratorConfig(BaseConfig):
                 env.sampling.extra_body.setdefault("top_k", -1)
                 env.sampling.extra_body.setdefault("min_p", 0.0)
                 env.sampling.extra_body.setdefault("return_token_ids", True)
+        return self
+
+    @model_validator(mode="after")
+    def resolve_degenerate_turn_limit(self):
+        """Stamp ``degenerate_turns`` onto each train agent's live limit, so one setting drives both checks."""
+        config = self.degenerate_turns
+        if not (config.enabled and config.live):
+            return self
+        limit = vf.DegenerateTurnLimit(min_tokens=config.min_tokens, max_mean_nll=config.max_mean_nll)
+        for source in self.train.source:
+            for name, field in type(source.env).model_fields.items():
+                if isinstance(field.default, vf.AgentConfig):
+                    agent = getattr(source.env, name).model_copy(update={"degenerate_turn": limit})
+                    setattr(source.env, name, agent)
         return self
 
     @model_validator(mode="after")

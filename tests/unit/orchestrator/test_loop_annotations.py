@@ -1,7 +1,7 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
-from prime_rl.orchestrator.loop_annotations import analyze_nodes, annotate_episode
+from prime_rl.orchestrator.loop_annotations import analyze_nodes, annotate_episode, finish_metrics
 
 
 def conversation(pairs):
@@ -176,3 +176,22 @@ def test_reviewed_real_traces_distinguish_analysis_loops_from_code_repetition():
     for fixture in fixtures:
         nodes = [{"sampled": True, "message": fixture["message"]}]
         assert analyze_nodes(nodes)[1]["suspected"] == fixture["expected"], fixture["episode_id"]
+
+
+def test_finish_metrics_count_repetition_stops():
+    def call(finish, tokens, node=1):
+        return SimpleNamespace(node=node, finish_reason=finish, usage=SimpleNamespace(completion_tokens=tokens))
+
+    calls = [
+        call("repetition", 300),
+        call("length", 16384),
+        call("stop", 50),
+        call("repetition", 128),
+        call(None, 0, None),
+    ]
+    metrics = finish_metrics(calls)
+    assert metrics["loop/repetition_stopped_turns"] == 2
+    assert metrics["loop/repetition_stopped_turn_fraction"] == 0.5
+    assert metrics["loop/repetition_stopped_output_tokens"] == 428
+    assert metrics["loop/length_stopped_turns"] == 1
+    assert finish_metrics(None)["loop/repetition_stopped_turn_fraction"] == 0.0

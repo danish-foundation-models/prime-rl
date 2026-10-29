@@ -41,7 +41,7 @@ from aiolimiter import AsyncLimiter
 from prime_rl.orchestrator.clients import InferenceClient
 from prime_rl.orchestrator.envs import EvalEnvs, TrainEnvs
 from prime_rl.orchestrator.eval_source import EvalSource
-from prime_rl.orchestrator.degenerate import find_degenerate_turn
+from prime_rl.orchestrator.degenerate import DEGENERATE_TURN, find_degenerate_turn
 from prime_rl.orchestrator.image_prefetch import INFRASTRUCTURE_ERROR
 from prime_rl.orchestrator.train_source import TrainSource
 from prime_rl.orchestrator.types import (
@@ -641,10 +641,14 @@ class Dispatcher:
                     trace, min_tokens=self.degenerate_turns.min_tokens, max_mean_nll=self.degenerate_turns.max_mean_nll
                 )
                 if turn is not None:
-                    trace.errors.append(vf.Error(
-                        type="DegenerateTurn",
-                        message=f"turn {turn.index}: {turn.tokens} tokens at mean NLL {turn.mean_nll:.2f}",
-                    ))
+                    message = f"turn {turn.index}: {turn.tokens} tokens at mean NLL {turn.mean_nll:.2f}"
+                elif trace.stop_condition == DEGENERATE_TURN:
+                    # The env server stopped (and skipped scoring) on a rule that this check
+                    # does not reproduce, e.g. mismatched settings: never train that trace.
+                    message = "rollout stopped live as degenerate_turn, not confirmed post hoc"
+                    get_logger().warning(f"Degenerate-turn mismatch in group {meta.group_id} ({meta.env_name})")
+                if turn is not None or trace.stop_condition == DEGENERATE_TURN:
+                    trace.errors.append(vf.Error(type="DegenerateTurn", message=message))
                     trace.ok = False
                     episode.ok = False
             if trace.has_error:

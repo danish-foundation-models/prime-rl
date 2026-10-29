@@ -616,6 +616,16 @@ sampled turn of at least `min_tokens` whose mean negative sampling logprob excee
 `max_mean_nll` is marked failed (`DegenerateTurn`). At temperature 1 with no tail cut-off the
 Bash harness occasionally spirals into thousands of near-random tokens (mean NLL ~8 against
 ~0.65); in r21 these grew to 1% of Bash turns and 17% of Bash rollouts and drove its entropy up.
+With `live = true` (the default) the same rule (`verifiers.v1.degenerate`) also runs in each
+train env server's interception layer: the rollout stops right after the degenerate turn
+(stop condition `degenerate_turn`, scoring skipped) instead of generating turns for a trace
+that is dropped anyway. The post-rollout check still decides what is dropped.
+
+`[orchestrator.train.sampling.extra_body.repetition_detection]` (`min_pattern_size`,
+`max_pattern_size`, `min_count`) turns on vLLM's repetition stop for train rollouts: a turn
+whose last `p * min_count` tokens repeat with a period `p` in the range ends with finish reason
+`repetition`. Harnesses see it as `length`, training treats it as a max-tokens truncation, and the
+degenerate-turn rule skips such turns. `loop/repetition_stopped_*` metrics count them.
 
 `general-agent` (multi-turn tool use, 4,417 tasks with their own tools and databases) also
 runs locally: each task's tools are served host-side over MCP to the `null` harness and

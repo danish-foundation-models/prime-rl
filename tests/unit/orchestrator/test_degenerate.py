@@ -25,3 +25,14 @@ def test_ignores_normal_and_short_turns():
 def test_ignores_unsampled_nodes_and_missing_logprobs():
     t = trace(node([-9.0] * 500, sampled=False), node(None), node([None] * 200))
     assert find_degenerate_turn(t, min_tokens=100, max_mean_nll=3.0) is None
+
+
+def test_repetition_stopped_turns_are_exempt():
+    t = trace(node([-0.5] * 300), node([-8.0] * 400), node([-7.0] * 200))
+    t.calls = [
+        SimpleNamespace(node=0, finish_reason="tool_calls", error=None),
+        SimpleNamespace(node=1, finish_reason="repetition", error=None),
+        SimpleNamespace(node=2, finish_reason="length", error=None),
+    ]
+    turn = find_degenerate_turn(t, min_tokens=100, max_mean_nll=3.0)
+    assert turn is not None and turn.index == 2 and turn.tokens == 200

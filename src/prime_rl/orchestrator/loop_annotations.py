@@ -329,6 +329,22 @@ def analyze_nodes(nodes: list[dict]) -> tuple[dict[str, float], dict]:
     return metrics, info
 
 
+def finish_metrics(calls: Any) -> dict[str, float]:
+    """How the trace's model turns ended: engine repetition stops (vLLM
+    ``repetition_detection``, finish reason ``repetition``) next to max-token cuts."""
+    turns = [call for call in calls or () if getattr(call, "node", None) is not None]
+    repetition = [call for call in turns if call.finish_reason == "repetition"]
+    length = sum(call.finish_reason == "length" for call in turns)
+    return {
+        "loop/repetition_stopped_turns": float(len(repetition)),
+        "loop/repetition_stopped_turn_fraction": len(repetition) / len(turns) if turns else 0.0,
+        "loop/repetition_stopped_output_tokens": float(
+            sum(call.usage.completion_tokens for call in repetition if call.usage is not None)
+        ),
+        "loop/length_stopped_turns": float(length),
+    }
+
+
 def annotate_episode(episode: Any) -> None:
     """Only append diagnostic metadata; do not alter any training/scoring fields."""
     for trace in episode.traces:
@@ -348,4 +364,5 @@ def annotate_episode(episode: Any) -> None:
             "truncated": bool(getattr(trace, "is_truncated", False)),
         }
         trace.metrics.update(metrics)
+        trace.metrics.update(finish_metrics(getattr(trace, "calls", None)))
         trace.info["loop_annotations"] = info
