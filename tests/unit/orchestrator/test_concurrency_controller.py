@@ -1,7 +1,13 @@
 import time
 
 from prime_rl.configs.orchestrator import ConcurrencyConfig
-from prime_rl.orchestrator.concurrency import KV_CEILING_FRACTION, KV_CEILING_RECOVERY, ConcurrencyController, EngineLoadSample
+from prime_rl.orchestrator.concurrency import (
+    KV_CEILING_FRACTION,
+    KV_CEILING_RECOVERY,
+    PREFILL_THRASH_POLLS,
+    ConcurrencyController,
+    EngineLoadSample,
+)
 
 
 def sample(kv_usage: float, *, preemptions: int = 0, engine: str = "e0") -> EngineLoadSample:
@@ -85,3 +91,41 @@ def test_fleet_wide_kv_pressure_trims():
     c, inflight = controller(800)
     c.observe([sample(0.9, engine=f"e{i}") for i in range(24)])
     assert c.max_inflight < 800
+
+
+def prefill(waiting: int, hit_rate: float, *, engine: str = "p0") -> EngineLoadSample:
+    return EngineLoadSample(
+        engine_id=engine, role="prefill", kv_capacity_tokens=1_000_000, max_model_len=131072,
+        kv_usage=0.01, running=2, waiting=waiting, waiting_capacity=0, preemptions_delta=0,
+        prefix_cache_queries_delta=100_000.0, prefix_cache_hits_delta=100_000.0 * hit_rate,
+    )
+
+
+def test_a_thrashing_prefill_engine_cuts_after_the_persistence_window():
+    c, inflight = controller(800)
+    for _ in range(PREFILL_THRASH_POLLS - 1):
+        c.observe([sample(0.05), prefill(900, 0.17), prefill(0, 0.9, engine="p1")])
+    assert c.max_inflight == 800
+    c.observe([sample(0.05), prefill(900, 0.17), prefill(0, 0.9, engine="p1")])
+    assert c.max_inflight == 720
+    # Draining: the backlog it left behind does not cut again until the pool is under the cap
+    for _ in range(3 * PREFILL_THRASH_POLLS):
+        c.observe([sample(0.05), prefill(900, 0.17)])
+    assert c.max_inflight == 720
+
+
+def test_a_queued_prefill_engine_with_a_warm_cache_does_not_cut_but_blocks_growth():
+    # Startup burst in job 534149: 100-300 queued at 80-90% prefix hits on the healthy engines
+    c, inflight = controller(800)
+    for _ in range(3 * PREFILL_THRASH_POLLS):
+        c.observe([sample(0.05), prefill(300, 0.85)])
+    assert c.max_inflight == 800
+    assert c.signal == "soft" and not c.can_grow
+
+
+def test_an_interrupted_thrash_does_not_cut():
+    c, inflight = controller(800)
+    for i in range(3 * PREFILL_THRASH_POLLS):
+        hit = 0.9 if i % PREFILL_THRASH_POLLS == PREFILL_THRASH_POLLS - 2 else 0.2
+        c.observe([sample(0.05), prefill(900, hit)])
+    assert c.max_inflight == 800

@@ -89,6 +89,19 @@ undercounts the pool by the duty cycle and cutting to it over-cuts."""
 PREEMPTION_CUT_FRACTION = 0.8
 """A preemption cut targets this fraction of the in-flight pool."""
 
+PREFILL_QUEUE_MIN = 64
+"""A prefill engine with at least this many queued requests blocks growth, and counts toward
+a prefill-thrash cut when its prefix cache is also missing."""
+
+PREFILL_HIT_FLOOR = 0.5
+"""Prefix-cache hit rate (per poll) below which a queued prefill engine is thrashing: its
+sessions' prefixes are evicted before their next turn, so every turn re-prefills its whole
+context and the queue feeds itself (job 534149: one P at ~900 queued and 17% hits for an hour,
+while the healthy P ran 85-93% even when queued at startup)."""
+
+PREFILL_THRASH_POLLS = 12
+"""Consecutive polls of prefill thrash before the HARD cut."""
+
 GROWTH_GATE_TTL_S = 15.0
 """The growth gate expires this long after the poll that set it — if the
 metrics path stalls (an API server too loaded to answer is exactly the state
@@ -117,6 +130,9 @@ class EngineLoadSample:
     # not report the by-reason breakdown; fall back to ``waiting``)
     waiting_capacity: int | None
     preemptions_delta: int
+    # Prefix-cache token queries/hits since the previous poll (0 without a baseline)
+    prefix_cache_queries_delta: float = 0.0
+    prefix_cache_hits_delta: float = 0.0
 
 
 class ConcurrencyController:
@@ -139,6 +155,7 @@ class ConcurrencyController:
         self.can_grow_until = 0.0
         self.prev_waiting: dict[str, int] = {}
         self.queue_overload_polls = 0
+        self.prefill_thrash_polls = 0
         self.trim_cooldown = 0
         # After a cut, ignore further cuts until inflight has drained below
         # the new cap — the overload during drain is stale
@@ -195,8 +212,20 @@ class ConcurrencyController:
                 self.capacity_by_engine[sample.engine_id] = sample.kv_capacity_tokens
             if sample.max_model_len:
                 self.engine_max_len = max(self.engine_max_len or 0, sample.max_model_len)
-        # Overload signals read decode engines only: in P/D deployments a
-        # prefill queue or prefill preemption is normal flow, not KV pressure
+        # Prefill engines hold no decode KV, so a prefill queue alone is normal flow, not KV
+        # pressure. A queue on a prefill engine whose prefix cache misses is not: the router
+        # keeps each session on its prefill engine, so admitting more sessions only deepens it.
+        prefill = [sample for sample in samples if sample.role == "prefill"]
+        prefill_queued = any(sample.waiting >= PREFILL_QUEUE_MIN for sample in prefill)
+        prefill_thrash = any(
+            sample.waiting >= PREFILL_QUEUE_MIN
+            and sample.prefix_cache_queries_delta > 0
+            and sample.prefix_cache_hits_delta < PREFILL_HIT_FLOOR * sample.prefix_cache_queries_delta
+            for sample in prefill
+        )
+        self.prefill_thrash_polls = self.prefill_thrash_polls + 1 if prefill_thrash else 0
+        prefill_overload = self.prefill_thrash_polls >= PREFILL_THRASH_POLLS
+        # The remaining overload signals read decode engines only
         samples = [sample for sample in samples if sample.role != "prefill"]
         if not samples:
             return
@@ -225,15 +254,17 @@ class ConcurrencyController:
         else:
             self.queue_overload_polls = 0
         queue_overload = self.queue_overload_polls >= QUEUE_PERSISTENCE_POLLS
-        if queue_overload or max_usage > KV_USAGE_GROW:
-            worst = max(worst, "hard" if queue_overload else "soft", key=SEVERITY.__getitem__)
+        if queue_overload or prefill_overload or max_usage > KV_USAGE_GROW:
+            worst = max(worst, "hard" if queue_overload or prefill_overload else "soft", key=SEVERITY.__getitem__)
+        elif prefill_queued:
+            worst = max(worst, "soft", key=SEVERITY.__getitem__)
         self.signal = worst
 
         inflight = self.get_inflight() if self.get_inflight is not None else 0
         # Release the drain only once the pool is under the cap and the
         # engines have settled: preemption deltas from the backlog the cut
         # left behind must not trigger follow-up cuts.
-        if self.draining and inflight <= self.max_inflight and not preempted and not queue_overload:
+        if self.draining and inflight <= self.max_inflight and not preempted and not queue_overload and not prefill_overload:
             self.draining = False
         self.trim_cooldown = max(0, self.trim_cooldown - 1)
         self.can_grow = worst == "clear" and total_queued == 0 and not self.draining
@@ -254,11 +285,12 @@ class ConcurrencyController:
         if self.draining:
             return
 
-        if preempted or queue_overload:
-            if queue_overload:
+        if preempted or queue_overload or prefill_overload:
+            if queue_overload or prefill_overload:
                 self.queue_overload_polls = 0
+                self.prefill_thrash_polls = 0
                 target = int(self.clamp(inflight * QUEUE_CUT_FRACTION))
-                reason = "queue overload"
+                reason = "queue overload" if queue_overload else "prefill cache thrash"
             else:
                 target = int(self.clamp(inflight * PREEMPTION_CUT_FRACTION))
                 reason = "preemptions"

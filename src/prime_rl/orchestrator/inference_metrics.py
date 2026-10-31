@@ -390,11 +390,17 @@ class InferenceMetricsCollector:
         # an orchestrator restart) is not a fresh preemption
         previous = self.previous.get(sample.key)
         preemptions_delta = 0
+        prefix_deltas = {"queries": 0.0, "hits": 0.0}
         if previous is not None:
             for name in ("num_preemptions", "num_preemptions_total"):
                 if name in sample.snapshot.counters:
                     delta = sample.snapshot.counters[name] - previous.snapshot.counters.get(name, 0.0)
                     preemptions_delta = max(preemptions_delta, int(delta))
+            for kind in prefix_deltas:
+                for name in (f"prefix_cache_{kind}", f"prefix_cache_{kind}_total"):
+                    if name in sample.snapshot.counters:
+                        delta = sample.snapshot.counters[name] - previous.snapshot.counters.get(name, 0.0)
+                        prefix_deltas[kind] = max(prefix_deltas[kind], delta)
 
         return EngineLoadSample(
             engine_id=sample.engine_id,
@@ -410,6 +416,8 @@ class InferenceMetricsCollector:
                 else None
             ),
             preemptions_delta=preemptions_delta,
+            prefix_cache_queries_delta=prefix_deltas["queries"],
+            prefix_cache_hits_delta=prefix_deltas["hits"],
         )
 
     def build_metrics(self, samples: list[EngineSample]) -> dict[str, float]:
