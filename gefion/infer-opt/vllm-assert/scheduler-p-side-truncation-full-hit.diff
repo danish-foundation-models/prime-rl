@@ -1,0 +1,30 @@
+--- a/vllm/v1/core/sched/scheduler.py	2026-10-31 15:53:36.829096097 +0100
++++ b/vllm/v1/core/sched/scheduler.py	2026-10-31 15:53:36.848096402 +0100
+@@ -872,6 +872,27 @@
+                                 request.shared_prefix_boundary,
+                             ) = self.kv_cache_manager.get_computed_blocks(request)
+ 
++                        if (
++                            num_external_computed_tokens == 0
++                            and num_new_local_computed_tokens >= request.num_tokens
++                        ):
++                            # infer-opt vllm-assert fix: the connector shortened
++                            # the request inside get_num_new_matched_tokens (NIXL
++                            # Mamba P-side N-1 truncation) after the local lookup
++                            # was capped at the *old* num_tokens - 1, so the local
++                            # hit now covers the whole request and num_new_tokens
++                            # would be 0 (assert below). Redo the lookup against
++                            # the new length; it caps at num_tokens - 1 and the
++                            # last block is recomputed, as for any full-prompt hit.
++                            # Equivalent to upstream vllm#53523 (truncate before
++                            # lookup). Lookups have no side effects.
++                            load_kv_async = False
++                            (
++                                new_computed_blocks,
++                                num_new_local_computed_tokens,
++                                request.shared_prefix_boundary,
++                            ) = self.kv_cache_manager.get_computed_blocks(request)
++
+                         connector_prefix_cache_queries = (
+                             request.num_tokens - num_new_local_computed_tokens
+                         )

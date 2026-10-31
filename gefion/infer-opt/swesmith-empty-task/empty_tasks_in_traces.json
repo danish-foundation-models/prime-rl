@@ -1,0 +1,20 @@
+{
+ "py": [
+  "py:HIPS__autograd.ac044f0d.func_pm_ctrl_invert_if__n34k7p84",
+  "py:HIPS__autograd.ac044f0d.func_pm_ctrl_invert_if__uhlpjqhd",
+  "py:graphql-python__graphene.82903263.combine_module__ihkvxju9",
+  "py:graphql-python__graphene.82903263.combine_module__wmbpvy35",
+  "py:joke2k__faker.8b401a7d.func_pm_ctrl_shuffle__futjp7ox",
+  "py:kayak__pypika.1c9646f0.func_basic__mukzb976",
+  "py:mozillazg__python-pinyin.e42dede5.combine_module__g9sgh1aw",
+  "py:pandas-dev__pandas.95280573.func_pm_ctrl_shuffle__o821nn5j",
+  "py:pandas-dev__pandas.95280573.func_pm_remove_loop__rovkjm41",
+  "py:pudo__dataset.5c2dc8d3.combine_file__qvs8hzuj"
+ ],
+ "go": [
+  "go:RoaringBitmap__roaring.09c46a0a.func_pm_remove_loop__irwanzoo",
+  "go:emirpasic__gods.1d83d5ae.func_pm_op_change_const__eepakx6o",
+  "go:golang__groupcache.2c02b820.func_pm_remove_assign__d0mydkoc",
+  "go:krotik__eliasdb.88a1da66.func_pm_ctrl_invert_if__wbrpd6ih"
+ ]
+}

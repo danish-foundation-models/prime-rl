@@ -1,0 +1,3 @@
+Optional PD arm (not scripted): the trace logprobs (T) already come from the live FP8 PD decode
+path, so analyze_scores.py's F-T column (FP8 PD decode vs FP8 non-PD prefill, same tokens) is the
+PD/KV-transfer check. A dedicated 2-node PD rescoring arm would only add the PD *prefill* path.

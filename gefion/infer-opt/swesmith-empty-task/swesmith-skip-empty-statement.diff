@@ -1,0 +1,32 @@
+--- a/deps/prime-envs/environments/swe/swesmith_env/swesmith_env/taskset.py
++++ b/deps/prime-envs/environments/swe/swesmith_env/swesmith_env/taskset.py
+@@ -408,6 +408,7 @@
+                 raise ValueError("task_ids_file must be a nonempty JSON array of unique task names")
+             selected = set(ids)
+         seen = set()
++        empty_statements: set[str] = set()
+         filter_fn = _resolve_filter_fn(self.config.filter_fn) if self.config.filter_fn is not None else None
+         task_index = 0
+         for language in self.config.languages:
+@@ -433,6 +434,11 @@
+                 if filter_fn is not None and not filter_fn(raw):
+                     continue
+                 row = dict(raw)
++                # Upstream has no issue text for many rows (about 80% of go, 22% of py, 10% of java);
++                # the agent would get no task at all.
++                if not (row.get("problem_statement") or "").strip():
++                    empty_statements.add(task_name)
++                    continue
+                 try:
+                     registry.get_from_inst(row)
+                 except KeyError:
+@@ -475,5 +481,7 @@
+                     f"Skipping {missing_count} SWE-Smith {language} rows from {dataset_name} "
+                     f"because no profile is registered for {len(missing_profiles)} repo keys; examples: {examples}"
+                 )
+-        if selected is not None and selected - seen:
+-            raise ValueError(f"Unknown, filtered, or unavailable task names: {sorted(selected - seen)}")
++        if empty_statements:
++            logger.warning(f"Skipped {len(empty_statements)} SWE-Smith rows with an empty problem_statement")
++        if selected is not None and selected - seen - empty_statements:
++            raise ValueError(f"Unknown, filtered, or unavailable task names: {sorted(selected - seen - empty_statements)}")
