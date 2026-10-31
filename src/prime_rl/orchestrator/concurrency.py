@@ -264,7 +264,13 @@ class ConcurrencyController:
         # Release the drain only once the pool is under the cap and the
         # engines have settled: preemption deltas from the backlog the cut
         # left behind must not trigger follow-up cuts.
-        if self.draining and inflight <= self.max_inflight and not preempted and not queue_overload and not prefill_overload:
+        if (
+            self.draining
+            and inflight <= self.max_inflight
+            and not preempted
+            and not queue_overload
+            and not prefill_overload
+        ):
             self.draining = False
         self.trim_cooldown = max(0, self.trim_cooldown - 1)
         self.can_grow = worst == "clear" and total_queued == 0 and not self.draining
