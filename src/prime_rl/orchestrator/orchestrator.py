@@ -336,13 +336,21 @@ class Orchestrator:
         scheduler = None
         if config.concurrency.throughput_balancing:
             from prime_rl.orchestrator.throughput_scheduler import ThroughputScheduler
+
             if config.batch_size is None:
                 raise ValueError("throughput_balancing requires trace-count batches")
             if config.concurrency.category_targets and not config.constant_trainer_batch_size:
                 raise ValueError("category_targets requires constant_trainer_batch_size")
             scheduler = ThroughputScheduler(
-                [(e.name, e.config.balance_category or e.config.env.taskset.id, float(e.config.ratio), e.config.group_size)
-                 for e in self.train_envs],
+                [
+                    (
+                        e.name,
+                        e.config.balance_category or e.config.env.taskset.id,
+                        float(e.config.ratio),
+                        e.config.group_size,
+                    )
+                    for e in self.train_envs
+                ],
                 window=config.batch_size * config.concurrency.lookahead_batches,
                 category_targets=config.concurrency.category_targets,
                 batch_tolerance=config.concurrency.category_batch_tolerance,
@@ -357,7 +365,9 @@ class Orchestrator:
                 rebalance_on_resume=config.concurrency.rebalance_on_resume,
             )
         self.train_source = await asyncio.to_thread(
-            TrainSource, self.train_envs, scheduler=scheduler,
+            TrainSource,
+            self.train_envs,
+            scheduler=scheduler,
             quarantine_path=config.output_dir / "quarantined-images.json",
         )
         if config.image_prefetch.enabled:
@@ -1079,8 +1089,10 @@ class Orchestrator:
     def allowed_train_sources(self) -> set[str]:
         from prime_rl.orchestrator.scheduling import eligible_sources
 
-        sources = [(env.name, env.config.env.taskset.id, float(env.config.ratio), env.config.group_size)
-                   for env in self.train_envs]
+        sources = [
+            (env.name, env.config.env.taskset.id, float(env.config.ratio), env.config.group_size)
+            for env in self.train_envs
+        ]
         pressure = self.train_sink.pending_batch_by_env()
         if self.train_source.scheduler is not None:
             outstanding = {}
@@ -1088,7 +1100,9 @@ class Orchestrator:
                 outstanding[name] = outstanding.get(name, 0) + size
             scheduler = self.train_source.scheduler
             chosen = scheduler.choose_sources(
-                pressure, outstanding, self.dispatcher.max_inflight,
+                pressure,
+                outstanding,
+                self.dispatcher.max_inflight,
                 buffered_tokens=self.train_sink.buffered_token_count(),
                 token_limit=scheduler.window * self.config.seq_len,
             )

@@ -538,7 +538,9 @@ class ConcurrencyConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_bounds(self):
         if not self.scheduler_min_oversampling <= self.scheduler_oversampling <= self.scheduler_max_oversampling:
-            raise ValueError("Require scheduler_min_oversampling <= scheduler_oversampling <= scheduler_max_oversampling")
+            raise ValueError(
+                "Require scheduler_min_oversampling <= scheduler_oversampling <= scheduler_max_oversampling"
+            )
         if self.category_targets:
             if not self.throughput_balancing:
                 raise ValueError("category_targets requires throughput_balancing")
