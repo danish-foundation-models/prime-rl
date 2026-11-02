@@ -12,6 +12,7 @@ Multiple output directories can be tracked at once.
 
 import argparse
 import asyncio
+import bisect
 import hashlib
 import math
 import os
@@ -489,9 +490,55 @@ def read_report(run: str, file: str) -> dict:
 # ------------------------------------------------------------------------- metrics
 
 
-MAX_METRICS_CHUNK = 4 * 1024 * 1024
-"""Per-response cap on /metrics: huge runs stream in chunks the client loops over,
-so the first charts paint long before a 100MB metrics.jsonl finishes loading."""
+MAX_METRICS_CHUNK = 32 * 1024 * 1024
+"""Bytes of metrics.jsonl scanned per /metrics request: huge runs stream in chunks the
+client loops over, so the first charts paint long before the file finishes loading."""
+
+MAX_METRICS_ROWS = 2000
+"""Per-response row cap, for a client starting from 0 on a file already scanned."""
+
+METRICS_TIME_RESOLUTION_S = 60
+"""Time-keyed rows (inference metrics) are thinned to one per this many seconds and cut
+to the fleet aggregate under ``inference/agg/``. The orchestrator writes a ~200 KB
+per-engine row every few seconds, which served raw streams gigabytes to the browser."""
+
+# path -> (bytes scanned, [(row end offset, row)], last time bucket kept)
+_metrics_cache: dict[Path, tuple[int, list[tuple[int, dict]], float | None]] = {}
+_metrics_scan_lock = threading.Lock()
+
+
+def scan_metrics(path: Path, size: int) -> tuple[int, list[tuple[int, dict]]]:
+    """Advance the thinned rows of an append-only metrics file by one chunk."""
+    with _metrics_scan_lock:
+        scanned, rows, last_bucket = _metrics_cache.get(path, (0, [], None))
+        if scanned > size:  # file was truncated/replaced
+            scanned, rows, last_bucket = 0, [], None
+        if scanned < size:
+            with path.open("rb") as f:
+                f.seek(scanned)
+                data = f.read(MAX_METRICS_CHUNK)
+                if data and b"\n" not in data:  # a single line larger than the chunk
+                    data += f.readline()
+            consumed = data.rfind(b"\n") + 1  # leave a partially-written last line for the next poll
+            end = scanned
+            for line in data[:consumed].splitlines(keepends=True):
+                end += len(line)
+                try:
+                    row = orjson.loads(line)
+                except orjson.JSONDecodeError:
+                    continue
+                if row.get("step") is None and isinstance(row.get("time"), (int, float)):
+                    bucket = row["time"] // METRICS_TIME_RESOLUTION_S
+                    if bucket == last_bucket:
+                        continue
+                    last_bucket = bucket
+                    row = {
+                        k: v for k, v in row.items() if not k.startswith("inference/") or k.startswith("inference/agg/")
+                    }
+                rows.append((end, row))
+            scanned += consumed
+            _metrics_cache[path] = (scanned, rows, last_bucket)
+        return scanned, rows
 
 
 @app.get("/api/runs/{run}/metrics")
@@ -502,19 +549,11 @@ def read_metrics(run: str, offset: int = 0) -> dict:
     size = path.stat().st_size
     if offset > size:  # file was truncated/replaced
         offset = 0
-    rows = []
-    with path.open("rb") as f:
-        f.seek(offset)
-        data = f.read(MAX_METRICS_CHUNK)
-        if data and b"\n" not in data:  # a single line larger than the chunk
-            data += f.readline()
-    consumed = data.rfind(b"\n") + 1  # leave a partially-written last line for the next poll
-    for line in data[:consumed].splitlines():
-        try:
-            rows.append(orjson.loads(line))
-        except orjson.JSONDecodeError:
-            continue
-    return {"rows": rows, "offset": offset + consumed, "size": size}
+    scanned, rows = scan_metrics(path, size)
+    start = bisect.bisect_right(rows, offset, key=lambda r: r[0])
+    batch = rows[start : start + MAX_METRICS_ROWS]
+    next_offset = batch[-1][0] if len(batch) == MAX_METRICS_ROWS else max(scanned, offset)
+    return {"rows": [row for _, row in batch], "offset": next_offset, "size": size}
 
 
 # ------------------------------------------------------------------------ rollouts
