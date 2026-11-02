@@ -6,7 +6,7 @@ pressure off the engines and reacts at the pipeline's own pace (AIMD):
 
 - **Grow** the cap multiplicatively per pipeline turnover (each completion
   advances the turnover by ``1/inflight``) while the engines are clear, KV
-  usage is below ``KV_USAGE_GROW``, and the cap binds admission.
+  usage is below ``ConcurrencyConfig.kv_usage_grow``, and the cap binds admission.
 - **Trim** above ``KV_USAGE_SOFT_CAP``: lower the cap to what the engines
   hold at ``KV_USAGE_TARGET`` and let completions drain the pool. KV trims
   never cancel work: a unit's KV grows long after admission, so high usage
@@ -48,9 +48,6 @@ TURNOVER_GROWTH = 1.1
 
 BINDING_FRACTION = 0.9
 """The cap counts as binding when inflight reaches this fraction of it."""
-
-KV_USAGE_GROW = 0.6
-"""Grow only while every decode engine's KV usage is below this."""
 
 KV_USAGE_SOFT_CAP = 0.8
 """Above this mean usage across decode engines, soft-trim: lower the cap and
@@ -254,7 +251,7 @@ class ConcurrencyController:
         else:
             self.queue_overload_polls = 0
         queue_overload = self.queue_overload_polls >= QUEUE_PERSISTENCE_POLLS
-        if queue_overload or prefill_overload or max_usage > KV_USAGE_GROW:
+        if queue_overload or prefill_overload or max_usage > self.config.kv_usage_grow:
             worst = max(worst, "hard" if queue_overload or prefill_overload else "soft", key=SEVERITY.__getitem__)
         elif prefill_queued:
             worst = max(worst, "soft", key=SEVERITY.__getitem__)

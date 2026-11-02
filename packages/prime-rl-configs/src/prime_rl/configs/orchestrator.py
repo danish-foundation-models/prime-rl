@@ -532,6 +532,9 @@ class ConcurrencyConfig(BaseConfig):
     max_inflight: int | None = Field(1024, ge=1)
     """Maximum number of in-flight episodes. Set it to avoid runaway concurrency, especially to limit other external resources (e.g. sandboxes). None removes the ceiling."""
 
+    kv_usage_grow: float = Field(0.6, gt=0, lt=0.8)
+    """The cap grows only while every decode engine's KV usage is below this. Keep it below the 0.8 soft-trim threshold; 0.7 matches the level a trim resizes to."""
+
     @model_validator(mode="after")
     def validate_bounds(self):
         if not self.scheduler_min_oversampling <= self.scheduler_oversampling <= self.scheduler_max_oversampling:
