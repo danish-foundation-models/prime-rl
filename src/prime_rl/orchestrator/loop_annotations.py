@@ -20,7 +20,8 @@ MIN_REPEATED_FRACTION = 0.25
 
 def _digest(value: Any) -> str:
     encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode()).hexdigest()
+    # json.loads turns a model-written "\\ud800" escape into a lone surrogate, which strict UTF-8 rejects.
+    return hashlib.sha256(encoded.encode("utf-8", "surrogatepass")).hexdigest()
 
 
 def _call_key(call: dict) -> str:
