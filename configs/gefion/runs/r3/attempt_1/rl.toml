@@ -1,0 +1,2460 @@
+output_dir = "/dcai/projects/iu_0145/rasmus/runs"
+clean = false
+max_steps = 300
+seq_len = 131072
+
+[run]
+name = "gefion-super-r6s2638-8t4p4d-tp8-r3"
+
+[deployment]
+type = "multi_node"
+num_train_nodes = 8
+num_infer_nodes = 8
+num_infer_replicas = 1
+gpus_per_node = 8
+orchestrator_on_inference = true
+
+[slurm]
+job_name = "gefion-super-r21mix"
+template_path = "src/prime_rl/templates/multi_node_rl.sbatch.j2"
+partition = "defq"
+account = "iu_0145"
+time = "73:00:00"
+exclude = "dgx001,dgx002,dgx003,dgx004,dgx005,dgx006,dgx007,dgx008,dgx009,dgx010,dgx011,dgx012,dgx013,dgx014,dgx015,dgx016,dgx017,dgx018,dgx019,dgx020,dgx021,dgx022,dgx023,dgx024,dgx025,dgx026,dgx027,dgx028,dgx029,dgx030,dgx031,dgx032,dgx033,dgx034,dgx035,dgx036,dgx037,dgx038,dgx039,dgx040,dgx041,dgx042,dgx043,dgx044,dgx057,dgx058,dgx060,dgx061,dgx064,dgx065,dgx066,dgx067,dgx068,dgx069,dgx070,dgx071,dgx072,dgx073,dgx074,dgx075,dgx076,dgx077,dgx078,dgx079,dgx080,dgx081,dgx082,dgx083,dgx084,dgx085,dgx086,dgx087,dgx088,dgx089,dgx090,dgx091,dgx092,dgx093,dgx094,dgx095,dgx096,dgx097,dgx098,dgx099,dgx100,dgx101,dgx102,dgx103,dgx104,dgx105,dgx106,dgx107,dgx108,dgx109,dgx110,dgx111,dgx112,dgx113,dgx114,dgx115,dgx116,dgx117,dgx118,dgx119,dgx120,dgx121,dgx122,dgx123,dgx124,dgx125,dgx126,dgx127,dgx128,dgx129,dgx130,dgx131,dgx132,dgx133,dgx134,dgx135,dgx136,dgx137,dgx138,dgx139,dgx140,dgx141,dgx142,dgx143,dgx144,dgx145,dgx146,dgx147,dgx148,dgx149,dgx150,dgx151,dgx155,dgx157,dgx158,dgx159,dgx160,dgx161,dgx162,dgx163,dgx164,dgx165,dgx166,dgx167,dgx168,dgx169,dgx170,dgx171,dgx172,dgx173,dgx174,dgx175,dgx176,dgx177,dgx178,dgx179,dgx180,dgx181,dgx182,dgx183,dgx184,dgx185,dgx186,dgx187,dgx188,dgx189,dgx190,dgx191"
+pre_run_command = "bash /dcai/projects/iu_0145/rasmus/phase0/full/preflight.sh"
+cleanup_grace_period = 60
+
+[model]
+name = "/dcai/projects/iu_0145/rasmus/models/nemotron-super-r6-step2638"
+
+[weight_broadcast]
+type = "nccl"
+timeout = 1800
+
+[trainer]
+enable_router_replay = false
+dist_timeout_seconds = 1800
+
+[trainer.model]
+conversion_dir = "/dcai/projects/iu_0145/models/conversion/nemotron-super-r6-step2638"
+attn = "flash_attention_2"
+impl = "custom"
+optim_cpu_offload = false
+fsdp_cpu_offload = false
+ac_offloading = "None"
+reshard_after_forward = true
+ep = 8
+cp = 8
+cp_style = "ulysses"
+fused_lm_head_token_chunk_size = 2048
+
+[trainer.model.ac]
+mode = "full"
+
+[trainer.model.compile]
+fullgraph = false
+
+[trainer.optim]
+type = "adamw"
+lr = 1e-06
+weight_decay = 0.1
+max_norm = 1.0
+
+[trainer.loss]
+type = "score_centering"
+top_k = 32
+importance_sampling = "tis"
+tis_cap = 2.0
+
+[trainer.env_vars]
+PYTORCH_CUDA_ALLOC_CONF = "expandable_segments:True"
+HF_HUB_OFFLINE = "1"
+TORCHINDUCTOR_CACHE_DIR = "/tmp/$SLURM_JOB_ID/inductor-cache"
+TRITON_CACHE_DIR = "/tmp/$SLURM_JOB_ID/triton-cache"
+
+[orchestrator]
+batch_size = 512
+group_size = 8
+max_off_policy_steps = 5
+
+[orchestrator.concurrency]
+throughput_balancing = true
+scheduler_target_mix = 0.5
+scheduler_oversampling = 3.0
+scheduler_min_oversampling = 0.0
+scheduler_max_oversampling = 16.0
+scheduler_acceptance_floor = 0.05
+scheduler_inventory_factor = 2.0
+category_batch_tolerance = 2
+category_max_surplus = 8
+lookahead_batches = 4
+rebalance_on_resume = true
+eval_fraction = 0.125
+initial_inflight = 600
+min_inflight = 512
+max_inflight = 900
+
+[orchestrator.concurrency.category_targets]
+swe = 240
+terminal = 128
+sql = 32
+tooluse = 56
+instruction = 32
+math = 16
+toolbench = 8
+
+[orchestrator.degenerate_turns]
+enabled = true
+min_tokens = 100
+max_mean_nll = 3.0
+live = true
+
+[orchestrator.image_prefetch]
+enabled = true
+lookahead_tasks = 64
+interval_seconds = 15.0
+
+[orchestrator.renderer]
+name = "nemotron-3"
+enable_thinking = true
+truncate_history_thinking = false
+low_effort = false
+
+[orchestrator.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.sampling]
+reasoning_effort = "high"
+temperature = 0.8
+max_completion_tokens = 16384
+
+[orchestrator.train.sampling.extra_body.repetition_detection]
+min_pattern_size = 16
+max_pattern_size = 64
+min_count = 8
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "scaleswe-opencode"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "scaleswe"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/scaleswe-train.task-ids.json"
+filter_unavailable_images = false
+filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr297', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "opencode"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "scaleswe"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1251
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "scaleswe-pi"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "scaleswe"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/scaleswe-train.task-ids.json"
+filter_unavailable_images = false
+filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr297', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "pi"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "scaleswe"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1252
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "scaleswe-bash"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "scaleswe"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/scaleswe-train.task-ids.json"
+filter_unavailable_images = false
+filter_fn = "lambda row: row.get('instance_id') not in ['k2-fsa_sherpa-onnx_pr297', 'materialsvirtuallab_monty_pr152', 'miguelgrinberg_flask-migrate_pr523', 'spyoungtech_json-five_pr19']"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "scaleswe"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1253
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "terminal-lego-opencode"
+balance_category = "terminal"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "terminal-lego"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/terminal-lego.task-ids.json"
+task_data_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata-20261010/terminal-lego.jsonl"
+require_image = true
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "opencode"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "terminal-lego"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1263
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "terminal-lego-pi"
+balance_category = "terminal"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "terminal-lego"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/terminal-lego.task-ids.json"
+task_data_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata-20261010/terminal-lego.jsonl"
+require_image = true
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "pi"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "terminal-lego"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1264
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "terminal-lego-bash"
+balance_category = "terminal"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "terminal-lego"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/terminal-lego.task-ids.json"
+task_data_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata-20261010/terminal-lego.jsonl"
+require_image = true
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "terminal-lego"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1265
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swesmith-env-opencode"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "swesmith-env"
+task_ids_file = "/dcai/projects/iu_0145/rasmus/manifests/ucloud-task-ids-20261024-oracle/swe-smith-train.nonempty-stable.task-ids.json"
+split = "train"
+
+[orchestrator.train.source.env.taskset.revisions]
+php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
+cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
+rs = "1ae20d63edd611309d86133466247e3a9723a27d"
+ts = "c243d86f112d01b8507d311af912668aa1d74449"
+js = "d6aeb41ba9fb045c39e1c6d2322a8f08ee31cef4"
+java = "1172df9919a8232e066562dfdb6e0193156de0c4"
+go = "d2f6ecc2cf8ae1af00fc790801bbacfa2913e015"
+py = "77cab9055d42ab4a5c25c89a8f937096db13558e"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "opencode"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "swesmith-env"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1266
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swesmith-env-pi"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "swesmith-env"
+task_ids_file = "/dcai/projects/iu_0145/rasmus/manifests/ucloud-task-ids-20261024-oracle/swe-smith-train.nonempty-stable.task-ids.json"
+split = "train"
+
+[orchestrator.train.source.env.taskset.revisions]
+php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
+cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
+rs = "1ae20d63edd611309d86133466247e3a9723a27d"
+ts = "c243d86f112d01b8507d311af912668aa1d74449"
+js = "d6aeb41ba9fb045c39e1c6d2322a8f08ee31cef4"
+java = "1172df9919a8232e066562dfdb6e0193156de0c4"
+go = "d2f6ecc2cf8ae1af00fc790801bbacfa2913e015"
+py = "77cab9055d42ab4a5c25c89a8f937096db13558e"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "pi"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "swesmith-env"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1267
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "swesmith-env-bash"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "swesmith-env"
+task_ids_file = "/dcai/projects/iu_0145/rasmus/manifests/ucloud-task-ids-20261024-oracle/swe-smith-train.nonempty-stable.task-ids.json"
+split = "train"
+
+[orchestrator.train.source.env.taskset.revisions]
+php = "6b5da17f1e3543fb2ed5d151a6f4972a457a8c36"
+cpp = "b1554a5f12603c825f9b48b361b9b97032347e48"
+rs = "1ae20d63edd611309d86133466247e3a9723a27d"
+ts = "c243d86f112d01b8507d311af912668aa1d74449"
+js = "d6aeb41ba9fb045c39e1c6d2322a8f08ee31cef4"
+java = "1172df9919a8232e066562dfdb6e0193156de0c4"
+go = "d2f6ecc2cf8ae1af00fc790801bbacfa2913e015"
+py = "77cab9055d42ab4a5c25c89a8f937096db13558e"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "swesmith-env"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1268
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "openswe-opencode"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "openswe"
+task_ids_file = "/dcai/projects/iu_0145/rasmus/manifests/ucloud-task-ids-20261024-oracle/openswe.task-ids.json"
+revision = "a8db93af5335df2c8baac0cd1ff367e4d475d3d7"
+split = "train"
+
+[orchestrator.train.source.env.taskset.workdir_overrides]
+"ansible-collections__hetzner.hcloud-161" = "/ansible_collections/hetzner/hcloud"
+nosarthur__gita-236 = "/gita"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "opencode"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "openswe"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1269
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "openswe-pi"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "openswe"
+task_ids_file = "/dcai/projects/iu_0145/rasmus/manifests/ucloud-task-ids-20261024-oracle/openswe.task-ids.json"
+revision = "a8db93af5335df2c8baac0cd1ff367e4d475d3d7"
+split = "train"
+
+[orchestrator.train.source.env.taskset.workdir_overrides]
+"ansible-collections__hetzner.hcloud-161" = "/ansible_collections/hetzner/hcloud"
+nosarthur__gita-236 = "/gita"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "pi"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "openswe"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1270
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "openswe-bash"
+balance_category = "swe"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "openswe"
+task_ids_file = "/dcai/projects/iu_0145/rasmus/manifests/ucloud-task-ids-20261024-oracle/openswe.task-ids.json"
+revision = "a8db93af5335df2c8baac0cd1ff367e4d475d3d7"
+split = "train"
+
+[orchestrator.train.source.env.taskset.workdir_overrides]
+"ansible-collections__hetzner.hcloud-161" = "/ansible_collections/hetzner/hcloud"
+nosarthur__gita-236 = "/gita"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "openswe"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1271
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "tmax-opencode"
+balance_category = "terminal"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "tmax"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/tmax.task-ids.json"
+task_data_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata-20261010/tmax.jsonl"
+require_image = true
+task_root = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/expanded-sources/prime-tasks/datasets/tmax"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "opencode"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "tmax"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1275
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "tmax-pi"
+balance_category = "terminal"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "tmax"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/tmax.task-ids.json"
+task_data_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata-20261010/tmax.jsonl"
+require_image = true
+task_root = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/expanded-sources/prime-tasks/datasets/tmax"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "pi"
+compaction = true
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+toolkits = [
+    "vf-agents:latest",
+]
+harness_toolkit = "vf-agents"
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "tmax"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1276
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "tmax-bash"
+balance_category = "terminal"
+ratio = 0.3333333333333333
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "tmax"
+task_ids_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/manifests/ucloud-task-ids-20261010b/tmax.task-ids.json"
+task_data_file = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/all-tasks/task-metadata-20261010/tmax.jsonl"
+require_image = true
+task_root = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/expanded-sources/prime-tasks/datasets/tmax"
+
+[orchestrator.train.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.train.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.train.source.env.agent.timeout]
+setup = 7500.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.train.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.train.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.train.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+image_reference_type = "name"
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+allow = []
+block = [
+    "*",
+]
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.train.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "tmax"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1277
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 512
+
+[[orchestrator.train.source]]
+share_taskset = true
+name = "bird-sql"
+balance_category = "sql"
+ratio = 1.0
+
+[orchestrator.train.source.algo]
+type = "grpo"
+zero_truncated_reward = true
+mask_runaway_turns = true
+
+[orchestrator.train.source.algo.behavior_penalty]
+penalty = 0.1
+
+[orchestrator.train.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.train.source.env.taskset]
+id = "text2sql"
+dataset = "bird"
+data_dir = "/dcai/projects/iu_0145/lumi-mirror/oliver/data/bird"
+split = "train"
+db_split = "train"
+max_examples = -1
+
+[orchestrator.train.source.env.taskset.task]
+mode = "agentic"
+
+[orchestrator.train.source.env.agent]
+max_turns = 200
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.train.source.env.agent.harness]
+id = "text2sql"
+
+[orchestrator.train.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "text2sql"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1278
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 64
+
+[[orchestrator.train.source]]
+name = "nemo-pivot"
+ratio = 1.0
+share_taskset = true
+balance_category = "tooluse"
+
+[orchestrator.train.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "nemo_local"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1280
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/pivot-train.jsonl"
+id = "nemo_local"
+kind = "pivot"
+
+[orchestrator.train.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.train.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.train.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.train.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.train.source.env.interception]
+type = "server"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.train.source]]
+name = "nemo-workplace"
+ratio = 1.0
+share_taskset = true
+balance_category = "tooluse"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "nemo_local"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1281
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/workplace-train.jsonl"
+id = "nemo_local"
+kind = "workplace"
+
+[orchestrator.train.source.env.agent]
+max_turns = 200
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.train.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.train.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.train.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.train.source.env.interception]
+type = "server"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.train.source]]
+name = "nemo-instruction"
+ratio = 1.0
+share_taskset = true
+balance_category = "instruction"
+
+[orchestrator.train.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "nemo_local"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1282
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/instruction-train.jsonl"
+id = "nemo_local"
+kind = "instruction"
+
+[orchestrator.train.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.train.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.train.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.train.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.train.source.env.interception]
+type = "server"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.train.source]]
+name = "nemo-calendar"
+ratio = 1.0
+share_taskset = true
+balance_category = "instruction"
+
+[orchestrator.train.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "nemo_local"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1283
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/calendar-train.jsonl"
+id = "nemo_local"
+kind = "calendar"
+
+[orchestrator.train.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.train.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.train.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.train.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.train.source.env.interception]
+type = "server"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.train.source]]
+name = "i3-math"
+ratio = 1.0
+balance_category = "math"
+
+[orchestrator.train.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "i3_math"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1290
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.env.taskset]
+id = "i3-math"
+network_allow = [
+    "*",
+]
+
+[orchestrator.train.source.env.taskset.filter]
+column = "avg@8_qwen3_4b_instruct_2507"
+min = 0.0
+max = 0.875
+
+[orchestrator.train.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.train.source.env.agent.harness]
+id = "null"
+
+[orchestrator.train.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.train.source.env.agent.timeout]
+rollout = 5400.0
+scoring = 120.0
+
+[orchestrator.train.source.env.interception]
+type = "server"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 64
+
+[[orchestrator.train.source]]
+name = "general-agent"
+ratio = 1.0
+balance_category = "toolbench"
+
+[orchestrator.train.source.curriculum.sampler]
+type = "difficulty_pool"
+strategy = "smoothed_replay"
+shared_group = "general_agent"
+history_size = 64
+replay_fraction = 0.2
+replay_warmup_tasks = 16
+seed = 1291
+
+[orchestrator.train.source.curriculum.gates.zero_advantage]
+type = "advantage_range"
+
+[orchestrator.train.source.env.taskset]
+id = "general-agent"
+max_pass_rate = 0.5
+
+[orchestrator.train.source.env.agent]
+max_turns = 150
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.train.source.env.agent.harness]
+id = "null"
+
+[orchestrator.train.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.train.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.train.source.env.interception]
+type = "server"
+
+[orchestrator.train.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[orchestrator.eval]
+interval = 12
+num_examples = 4
+group_size = 1
+skip_first_step = false
+retrigger_on_resume = true
+
+[orchestrator.eval.sampling]
+reasoning_effort = "high"
+temperature = 0.8
+max_completion_tokens = 16384
+
+[[orchestrator.eval.source]]
+name = "swebench-verified"
+num_examples = 32
+interval = 25
+
+[orchestrator.eval.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.eval.source.env.taskset]
+id = "swebench-verified"
+
+[orchestrator.eval.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.eval.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.eval.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.eval.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.eval.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.eval.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "swebench-multilingual"
+num_examples = 24
+interval = 25
+
+[orchestrator.eval.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.eval.source.env.taskset]
+id = "swebench-multilingual"
+
+[orchestrator.eval.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.eval.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.eval.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.eval.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.eval.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.eval.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "terminal-bench-2"
+num_examples = 16
+interval = 25
+
+[orchestrator.eval.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.eval.source.env.taskset]
+id = "terminal-bench-2"
+
+[orchestrator.eval.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.eval.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.eval.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.eval.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.eval.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "ucloud"
+park_interactive = true
+repair_loopback_hosts = true
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.eval.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "openthoughts-tblite"
+num_examples = 16
+interval = 12
+
+[orchestrator.eval.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.eval.source.env.taskset]
+id = "openthoughts-tblite"
+
+[orchestrator.eval.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.eval.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.eval.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 300.0
+scoring = 1200.0
+
+[orchestrator.eval.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.eval.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "ucloud"
+image_reference_type = "name"
+park_interactive = true
+repair_loopback_hosts = true
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.eval.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "senior-swe-bench-glm53-judge"
+num_examples = 10
+interval = 25
+
+[orchestrator.eval.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.eval.source.env.taskset]
+id = "senior-swe-bench"
+
+[orchestrator.eval.source.env.taskset.task]
+upstream_judges = true
+
+[orchestrator.eval.source.env.taskset.task.judge_client]
+base_url = "https://inference.alexandra.dk/v1"
+api_key_var = "ALEXANDRA_API_KEY"
+
+[orchestrator.eval.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.eval.source.env.agent]
+max_turns = 300
+max_total_tokens = 300000
+
+[orchestrator.eval.source.env.agent.timeout]
+setup = 900.0
+rollout = 7200.0
+finalize = 1800.0
+scoring = 1800.0
+
+[orchestrator.eval.source.env.agent.harness]
+id = "bash"
+tool_timeout = 180.0
+
+[orchestrator.eval.source.env.agent.harness.compaction]
+summarize_at_tokens = 98304
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "ucloud"
+image_reference_type = "name"
+park_interactive = true
+repair_loopback_hosts = true
+guest_relay_url = "http://10.42.0.2:8092"
+network_access = true
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-1.tar.gz"
+creates_per_sec = 0.0
+
+[orchestrator.eval.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 16
+
+[[orchestrator.eval.source]]
+name = "bird-dev-sql"
+num_examples = 64
+interval = 12
+
+[orchestrator.eval.source.env.retries]
+max_retries = 5
+include = [
+    "SandboxNodeLost",
+]
+
+[orchestrator.eval.source.env.taskset]
+id = "text2sql"
+dataset = "bird"
+data_dir = "/dcai/projects/iu_0145/lumi-mirror/oliver/data/bird"
+split = "dev"
+db_split = "dev"
+max_examples = -1
+
+[orchestrator.eval.source.env.taskset.task]
+mode = "agentic"
+
+[orchestrator.eval.source.env.agent]
+max_turns = 200
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "text2sql"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 64
+
+[[orchestrator.eval.source]]
+name = "browsecomp-plus-bm25-glm"
+num_examples = 32
+interval = 12
+
+[orchestrator.eval.source.env.taskset]
+id = "browsecomp-plus"
+
+[orchestrator.eval.source.env.taskset.tools]
+k = 5
+snippet_max_tokens = 512
+include_get_document = false
+
+[orchestrator.eval.source.env.taskset.task.judge]
+model = "glm-5.3-flash"
+base_url = "https://inference.alexandra.dk/v1"
+api_key_var = "ALEXANDRA_API_KEY"
+question_field = "question"
+
+[orchestrator.eval.source.env.agent]
+max_turns = 200
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "null"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "ucloud"
+image = "python:3.11-slim"
+cpu = 1.0
+memory = 2.0
+disk = 2.0
+park_interactive = true
+repair_loopback_hosts = true
+guest_relay_url = "http://10.42.0.2:8092"
+offline_python_bundle = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemotron-super-r5-rl-scale-20260917/offline-compaction-20260922/python-0.tar.gz"
+
+[orchestrator.eval.source.env.agent.runtime.labels]
+run = "gefion-super-r6-step2638-r1"
+
+[orchestrator.eval.source.env.agent.timeout]
+setup = 900.0
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.eval.source.env.interception]
+type = "ucloud"
+guest_relay_url = "http://10.42.0.2:8092"
+forward_timeout_seconds = 1800.0
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 8
+
+[[orchestrator.eval.source]]
+name = "nemo-pivot-heldout"
+num_examples = 32
+interval = 12
+
+[orchestrator.eval.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.eval.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/pivot-validation.jsonl"
+id = "nemo_local"
+kind = "pivot"
+
+[orchestrator.eval.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.eval.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.eval.source.env.interception]
+type = "server"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.eval.source]]
+name = "nemo-workplace-heldout"
+num_examples = 32
+interval = 12
+
+[orchestrator.eval.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/workplace-validation.jsonl"
+id = "nemo_local"
+kind = "workplace"
+
+[orchestrator.eval.source.env.agent]
+max_turns = 200
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.eval.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.eval.source.env.interception]
+type = "server"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.eval.source]]
+name = "nemo-instruction-heldout"
+num_examples = 32
+interval = 12
+
+[orchestrator.eval.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.eval.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/instruction-validation.jsonl"
+id = "nemo_local"
+kind = "instruction"
+
+[orchestrator.eval.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.eval.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.eval.source.env.interception]
+type = "server"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.eval.source]]
+name = "nemo-calendar-heldout"
+num_examples = 32
+interval = 12
+
+[orchestrator.eval.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.eval.source.env.taskset]
+dataset = "/dcai/projects/iu_0145/lumi-mirror/rasmus/artifacts/training/nemo-local-20260923/data-v2/calendar-validation.jsonl"
+id = "nemo_local"
+kind = "calendar"
+
+[orchestrator.eval.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "nemo_local"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.eval.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.eval.source.env.interception]
+type = "server"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.eval.source]]
+name = "aime25"
+num_examples = 30
+interval = 12
+
+[orchestrator.eval.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.eval.source.env.taskset]
+id = "aime25"
+network_allow = [
+    "*",
+]
+
+[orchestrator.eval.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "null"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.eval.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.eval.source.env.interception]
+type = "server"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[[orchestrator.eval.source]]
+name = "aime26"
+num_examples = 30
+interval = 12
+
+[orchestrator.eval.source.sampling]
+max_completion_tokens = 32768
+
+[orchestrator.eval.source.env.taskset]
+id = "aime26"
+network_allow = [
+    "*",
+]
+
+[orchestrator.eval.source.env.agent]
+max_turns = 1
+max_output_tokens = 32768
+max_total_tokens = 131072
+
+[orchestrator.eval.source.env.agent.harness]
+id = "null"
+
+[orchestrator.eval.source.env.agent.runtime]
+type = "subprocess"
+
+[orchestrator.eval.source.env.agent.timeout]
+rollout = 2700.0
+scoring = 120.0
+
+[orchestrator.eval.source.env.interception]
+type = "server"
+
+[orchestrator.eval.source.serve.pool]
+type = "elastic"
+max_workers = 1
+multiplex = 32
+
+[inference]
+use_deep_gemm = false
+enable_fp32_lm_head = true
+enable_fp32_router_logits = true
+
+[inference.router]
+type = "vllm-router"
+policy = "consistent_hash"
+
+[inference.vllm]
+safetensors_load_strategy = "prefetch"
+trust_remote_code = true
+dtype = "bfloat16"
+quantization = "fp8_per_block"
+max_model_len = 131072
+tool_call_parser = "qwen3_coder"
+reasoning_parser = "nemotron_v3"
+language_model_only = true
+tensor_parallel_size = 8
+data_parallel_size = 1
+data_parallel_size_local = 1
+enable_expert_parallel = true
+all2all_backend = "allgather_reducescatter"
+enable_eplb = false
+max_num_seqs = 176
+max_num_batched_tokens = 8704
+gpu_memory_utilization = 0.91
+mamba_ssm_cache_dtype = "float32"
+enable_prefix_caching = true
+mamba_cache_mode = "align"
+
+[inference.env_vars]
+PRIME_RL_RELOAD_FILTER_NEMOTRON_EXPERTS = "1"
+PRIME_RL_RELOAD_SKIP_MOE_EMPTY_CACHE = "1"
+PRIME_RL_RELOAD_SKIP_BUFFER_DIAGNOSTICS = "1"
+PYTHONPATH = "/dcai/projects/iu_0145/rasmus/infer-opt"
+INFER_OPT = "ep_compact_moe,fast_generate,fi_moe_chunk,dg_jit_per_proc"
+VLLM_TUNED_CONFIG_FOLDER = "/dcai/projects/iu_0145/rasmus/infer-opt/moe_configs"
+VLLM_CACHE_ROOT = "/tmp/$SLURM_JOB_ID/vllm-cache"
+TRITON_CACHE_DIR = "/tmp/$SLURM_JOB_ID/triton-cache"
+VLLM_SSM_CONV_STATE_LAYOUT = "DS"
+UCX_RCACHE_MAX_UNRELEASED = "1024"
+UCX_MEMTYPE_CACHE = "n"
+
+[inference.deployment]
+type = "disaggregated"
+gpus_per_node = 8
+prefill_nodes_per_replica = 1
+decode_nodes_per_replica = 1
+num_prefill_replicas = 4
+num_decode_replicas = 4
+
+[inference.deployment.prefill_vllm_overrides]
+all2all_backend = "allgather_reducescatter"
+
+[inference.deployment.decode_vllm_overrides]
+all2all_backend = "allgather_reducescatter"
+max_num_seqs = 384
+
+[inference.deployment.decode_vllm_overrides.compilation_config]
+cudagraph_mode = "FULL_AND_PIECEWISE"
+
+[inference.deployment.decode_env_vars]
+UCX_NET_DEVICES = "mlx5_0:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_9:1,mlx5_10:1,mlx5_11:1"
+
+[ckpt]
+interval = 5
+keep_last = 2
+keep_interval = 25
+
+[monitors.file]
+
+[log]
+level = "info"
+
+[env_vars]
+NLTK_DATA = "/dcai/projects/iu_0145/lumi-mirror/rasmus/.cache/nltk_data"
+BROWSECOMP_PLUS_CACHE_DIR = "/dcai/projects/iu_0145/lumi-mirror/rasmus/.cache/browsecomp-plus"
+SSB_OVERRIDE_ALL_JUDGE_MODEL = "openai/glm-5.3-flash"
+SSB_OVERRIDE_CLASSIFIER_MODEL = "openai/glm-5.3-flash"
+SSB_OVERRIDE_VA_MODEL = "openai/glm-5.3-flash"
+HF_DATASETS_OFFLINE = "1"
+NCCL_DEBUG = "WARN"
+PYTHONFAULTHANDLER = "1"
+PRIME_RL_FAIL_ON_INFERENCE_EXIT = "1"
+TORCH_NCCL_HIGH_PRIORITY = "1"
+PRIME_RL_WEIGHT_NCCL_ALGO = "Ring"
+PRIME_RL_WEIGHT_NCCL_PROTO = "Simple"
+PRIME_RL_WEIGHT_HIGH_PRIORITY = "1"
+PRIME_RL_WEIGHT_BUCKET_BYTES = "268435456"
+PRIME_RL_PAUSE_NCCL_INIT = "1"
+NCCL_IB_HCA = "=mlx5_0:1,mlx5_3:1,mlx5_4:1,mlx5_5:1,mlx5_6:1,mlx5_9:1,mlx5_10:1,mlx5_11:1"
+NCCL_SOCKET_IFNAME = "enp170s0f1np1"
+GLOO_SOCKET_IFNAME = "enp170s0f1np1"
+OMPI_MCA_btl_tcp_if_include = "10.10.17.0/24"
+OMPI_MCA_oob_tcp_if_include = "10.10.17.0/24"
+HF_HOME = "/dcai/projects/iu_0145/rasmus/.cache/huggingface"
+UV_CACHE_DIR = "/dcai/projects/iu_0145/rasmus/phase0/uvcache"
