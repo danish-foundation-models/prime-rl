@@ -374,6 +374,10 @@ class EvalConfig(BaseConfig):
     crash that left in-flight evals unfinished). By default, assumes a clean
     exit where all evals already completed."""
 
+    eval_on_resume: bool = False
+    """If True, a resumed run evaluates every env at the checkpoint step, as a fresh
+    run's startup eval does, whatever the interval."""
+
     @model_validator(mode="after")
     def resolve_env_defaults(self):
         """Resolve per-env overrides: inherit group-level sampling, num_examples,

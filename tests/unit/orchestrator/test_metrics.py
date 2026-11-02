@@ -39,6 +39,7 @@ def mk(
     agent_harness: float = 0.0,
     finalize: float = 0.0,
     scoring: float = 0.0,
+    finish_reason: str | None = None,
 ):
     """Build one episode around a trace-shaped metrics fixture."""
     trace = SimpleNamespace(
@@ -55,6 +56,7 @@ def mk(
         has_error=has_error,
         last_error=SimpleNamespace(type=error_type) if has_error else None,
         stop_condition=stop_condition,
+        calls=[SimpleNamespace(error=None, finish_reason=finish_reason)] if finish_reason else [],
         metrics=metrics or {},
         agent=SimpleNamespace(trainable=trainable, name=agent_name),
         nodes=[SimpleNamespace(advantages=[1.0] if is_trainable else [0.0])],
@@ -214,8 +216,10 @@ def test_solve_rates():
 
 def test_stop_condition_breakdown():
     truncated = [mk(is_truncated=True, stop_condition=c) for c in ("length", "max_turns", "prompt_too_long")]
-    out = train_wandb(truncated + [mk(stop_condition=None)])
-    assert out["train/agg/all/agent/stop_condition/generation_truncated"] == 0.5  # truncated & not prompt_too_long
+    cut_off = mk(is_truncated=True, stop_condition=None, finish_reason="length")
+    out = train_wandb(truncated + [cut_off])
+    assert out["train/agg/all/agent/stop_condition/generation_truncated"] == 0.75  # truncated & not prompt_too_long
+    assert out["train/agg/all/agent/stop_condition/response_cut_off"] == 0.25  # final response hit the cap
     assert out["train/agg/all/agent/stop_condition/length"] == 1 / 3  # over the 3 recorded conditions
     assert out["train/agg/all/agent/stop_condition/prompt_too_long"] == 1 / 3
 

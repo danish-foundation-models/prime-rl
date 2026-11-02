@@ -867,7 +867,11 @@ class Orchestrator:
         fires. No-op when eval is not configured."""
         if self.eval_source is None or step in self.eval_triggered_steps:
             return
-        if self.resume_step == step and self.config.eval is not None and not self.config.eval.retrigger_on_resume:
+        if (
+            self.resume_step == step
+            and self.config.eval is not None
+            and not (self.config.eval.retrigger_on_resume or self.config.eval.eval_on_resume)
+        ):
             return
         is_final = self.config.max_steps is not None and step >= self.config.max_steps
         fired = self.eval_source.trigger(step, force=is_final)
@@ -1045,7 +1049,8 @@ class Orchestrator:
             f"Evaluated {batch.env_name} | "
             f"Policy v{policy_version} | {format_time(elapsed):>7} | Reward {eff.reward.mean():.4f} | "
             f"Turns {eff.num_turns.mean():.1f} | Branches {eff.num_branches.mean():.1f} | "
-            f"Error {full.has_error.mean():.1%} | Truncation {eff.is_truncated.mean():.1%}"
+            f"Error {full.has_error.mean():.1%} | Truncation {eff.is_truncated.mean():.1%} | "
+            f"Cut-off {eff.ended_on_cutoff.mean():.1%}"
         )
 
     async def maybe_save_ckpt(self, step: int) -> float:

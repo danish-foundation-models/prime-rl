@@ -45,12 +45,12 @@ class EvalSource:
         self._triggered_task_counts: dict[tuple[str, int], int] = {}
 
         # A fresh run evaluates the base policy. Resumed runs apply interval
-        # rules to the loaded checkpoint and later policies.
-        self.first_trigger = not is_resumed
+        # rules to the loaded checkpoint and later policies, unless eval_on_resume.
+        self.first_trigger = not is_resumed or eval_config.eval_on_resume
 
     def trigger(self, step: int, *, force: bool = False) -> list[str]:
         """Fire eligible envs for ``step`` and return their names. On resume
-        ``first_trigger`` is False, so the startup/base eval doesn't re-run.
+        ``first_trigger`` is False unless ``eval_on_resume``, so the startup eval doesn't re-run.
         ``force`` fires every env regardless of interval (e.g. the evals process's
         final-checkpoint eval)."""
         is_first, self.first_trigger = self.first_trigger, False

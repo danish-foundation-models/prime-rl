@@ -15,6 +15,15 @@ from prime_rl.orchestrator.utils import compute_pass_metrics, episode_env_name, 
 Subset = Literal["all", "effective"]
 
 
+def ended_on_cutoff(trace: vf.Trace) -> bool:
+    """The final response was cut off (token limit or the engine's repetition stop), not finished.
+
+    Harnesses that end a run on any reply without tool calls stop there and score the
+    transcript as is, so these runs count as completed rather than truncated by a limit."""
+    last = next((call for call in reversed(trace.calls) if call.error is None), None)
+    return bool(last and last.finish_reason in ("length", "repetition"))
+
+
 def dispatch_failure_metrics(failures: list[DispatchFailure], *, prefix: str, total_attempts: int) -> dict[str, float]:
     """Metrics for requests that failed outside the verifier episode boundary."""
     if total_attempts == 0:
@@ -231,7 +240,8 @@ class TraceMetrics(StatGroup):
             "generation_truncated": sum(
                 trace.is_truncated and trace.stop_condition != "prompt_too_long" for trace in self.traces
             )
-            / len(self.traces)
+            / len(self.traces),
+            "response_cut_off": sum(ended_on_cutoff(trace) for trace in self.traces) / len(self.traces),
         }
         conditions = [trace.stop_condition for trace in self.traces if trace.stop_condition is not None]
         for condition in sorted(set(conditions)):
@@ -320,6 +330,10 @@ class EpisodeMetrics:
     @property
     def is_truncated(self) -> Stat:
         return Stat([float(record.trace.is_truncated) for record in self.records])
+
+    @property
+    def ended_on_cutoff(self) -> Stat:
+        return Stat([float(ended_on_cutoff(record.trace)) for record in self.records])
 
     @property
     def has_error(self) -> Stat:
