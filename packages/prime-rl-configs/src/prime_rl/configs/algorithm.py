@@ -221,6 +221,17 @@ class GRPOAlgoConfig(BaseAlgoConfig):
     length_penalty: LengthPenaltyConfig | None = None
     """Linear length penalty subtracted from each reward before the GRPO baseline (see ``LinearLengthPenaltyConfig``): a ``pass_rate``-scaled sum of output-token, input-token, and turns terms, each normalized by the group's own max for that quantity. None disables it."""
 
+    zero_truncated_reward: bool = False
+    """Score a truncated trace (``Trace.is_truncated``: a framework limit such as
+    ``max_total_tokens``, or a length-finished final response) as reward 0 before the
+    group baseline, so running out of budget is never reinforced. Task scores are preserved."""
+
+    mask_runaway_turns: bool = False
+    """Zero the advantage of every sampled turn whose model call stopped on ``length`` or
+    ``repetition``, so the turn's tokens leave the ``rl`` loss: a reasoning loop or an
+    overlong turn is neither reinforced nor pushed down token by token. The rollout's
+    other turns keep their credit."""
+
 
 class EchoAlgoConfig(GRPOAlgoConfig):
     type: Literal["echo"] = "echo"  # type: ignore[assignment]

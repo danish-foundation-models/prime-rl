@@ -23,10 +23,15 @@ class GRPOAlgorithm(Algorithm):
         super().__init__(config, clients)
         self.length_penalty = config.length_penalty
         self.behavior_penalty = config.behavior_penalty
+        self.zero_truncated_reward = config.zero_truncated_reward
+        self.mask_runaway_turns = config.mask_runaway_turns
 
     async def score_group(self, episodes: list[vf.Episode]) -> None:
         traces = [trace for _, trace in iter_trainable_traces(episodes)]
-        rewards = torch.tensor([trace.reward for trace in traces], dtype=torch.float32)
+        rewards = torch.tensor(
+            [0.0 if self.zero_truncated_reward and trace.is_truncated else trace.reward for trace in traces],
+            dtype=torch.float32,
+        )
         length_penalty = self.length_penalty
         shaped_rewards = rewards.clone()
         if length_penalty is not None:
@@ -64,3 +69,23 @@ class GRPOAlgorithm(Algorithm):
         advantages = shaped_rewards - shaped_rewards.mean()
         for trace, advantage in zip(traces, advantages.tolist(), strict=True):
             assign_advantages(trace, advantage)
+            if self.mask_runaway_turns:
+                trace.metrics["runaway/masked_turns"] = float(mask_runaway_turns(trace))
+
+
+RUNAWAY_FINISH_REASONS = ("length", "repetition")
+
+
+def mask_runaway_turns(trace: vf.Trace) -> int:
+    """Zero the advantages of sampled turns stopped on length or repetition; returns how many."""
+    runaway = {
+        id(trace.nodes[call.node])
+        for call in trace.calls
+        if call.node is not None and call.finish_reason in RUNAWAY_FINISH_REASONS
+    }
+    masked = 0
+    for node in trace.nodes:
+        if id(node) in runaway and node.advantages:
+            node.advantages = [0.0] * len(node.advantages)
+            masked += 1
+    return masked

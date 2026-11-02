@@ -367,3 +367,26 @@ def test_behavior_penalty_default_off():
         content="<SPECIAL_7><function=bash><parameter=command>ls</parameter></function></tool_call>"
     )
     assert _grpo(group) == pytest.approx([0.0, 0.0])
+
+
+def test_grpo_zero_truncated_reward_and_mask_runaway_turns():
+    truncated = _build_episode(1.0, sampled_lengths=[3])
+    truncated.traces[0].stop_condition = "max_total_tokens"
+    runaway = _build_episode(1.0, sampled_lengths=[2, 4, 3], obs_lengths=[1, 1])
+    trace = runaway.traces[0]
+    sampled = [i for i, node in enumerate(trace.nodes) if node.sampled]
+    trace.calls = [
+        vf.ModelCall(node=sampled[0], finish_reason="repetition"),
+        vf.ModelCall(node=sampled[1], finish_reason="length"),
+        vf.ModelCall(node=sampled[2], finish_reason="stop"),
+    ]
+    group = [truncated, runaway, _make_episode(0.0)]
+    algo = GRPOAlgorithm(GRPOAlgoConfig(zero_truncated_reward=True, mask_runaway_turns=True), clients=None)
+    asyncio.run(algo.score_group(group))
+
+    assert _scalar(truncated) == pytest.approx(-1 / 3)
+    assert trace.nodes[sampled[0]].advantages == [0.0] * 2
+    assert trace.nodes[sampled[1]].advantages == [0.0] * 4
+    assert trace.nodes[sampled[2]].advantages == pytest.approx([2 / 3] * 3)
+    assert trace.metrics["runaway/masked_turns"] == 2.0
+    assert truncated.traces[0].reward == 1.0
