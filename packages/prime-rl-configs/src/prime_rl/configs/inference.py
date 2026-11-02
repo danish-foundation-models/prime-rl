@@ -458,6 +458,9 @@ class InferenceConfig(BaseConfig):
     use_pd_kv_transfer: bool = False
     """Auto-set for disaggregated P/D: emit the NIXL transfer connector. Persisted into the per-node config (which drops ``deployment``) so the connector is still built per worker. Not meant to be set by hand."""
 
+    pd_kv_lease_seconds: int = Field(120, ge=30)
+    """NIXL ``kv_lease_duration``: how long a prefill engine holds a request's KV for the decode engine to pull. Decode renews the lease by heartbeat while it runs; the orchestrator pauses prefill before decode for weight updates so pending KV is pulled before decode stops. The lease bounds how long a prefill pause can wait on KV that decode never pulls."""
+
     enable_return_sampling_mask: bool = False
     """Return per-token sampling masks (``sampling_mask``) on ``/inference/v1/generate`` responses via vLLM's native ``--return-sampling-mask`` (>= 0.28). The ``rl`` entrypoint enables this field for truncated policy sampling. Standalone inference must set it explicitly because no orchestrator sampling config is available. The field persists into per-node configs and selects the V2 model runner before vLLM starts. Capture is engine-wide: vLLM rejects requests with ``temperature <= 0`` or without ``top_k > 0`` while it is on."""
 
@@ -577,7 +580,7 @@ class InferenceConfig(BaseConfig):
                 {
                     "kv_connector": "NixlConnector",
                     "kv_role": "kv_both",
-                    "kv_connector_extra_config": {"num_threads": 1},
+                    "kv_connector_extra_config": {"num_threads": 1, "kv_lease_duration": self.pd_kv_lease_seconds},
                 }
             )
         if self.kv_cache_offload is not None:

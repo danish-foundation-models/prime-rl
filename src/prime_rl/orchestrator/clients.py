@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -84,8 +85,11 @@ class AdminPlane:
     GPU rank order used by NCCL/NIXL initialization and the metrics collector's
     role list index."""
 
-    def __init__(self, client_config: ClientConfig):
+    def __init__(self, client_config: ClientConfig, roles: list[str] | None = None):
         self.clients = setup_admin_clients(client_config)
+        if roles is not None and len(roles) != len(self.clients):
+            raise ValueError(f"Got {len(roles)} P/D role(s) for {len(self.clients)} admin client(s)")
+        self._roles = roles
         # When admin URLs bypass a router, also health-check the client-facing
         # (router) endpoint - it only starts serving once its workers are healthy.
         self._router_clients = (
@@ -169,7 +173,10 @@ class AdminPlane:
         """Update every inference engine through its configured weight transport."""
         weight_dir_posix = weight_dir.as_posix() if weight_dir is not None else None
 
-        await _pause_engines(self.clients, step=step)
+        for role, clients in self._pause_groups():
+            start = time.perf_counter()
+            await _pause_engines(clients, step=step)
+            get_logger().info(f"Paused {role} engines in {time.perf_counter() - start:.1f}s")
         update_complete = False
         try:
             if on_paused is not None:
@@ -193,18 +200,29 @@ class AdminPlane:
             if update_complete or transport != "nccl":
                 await _resume_engines(self.clients)
 
+    def _pause_groups(self) -> list[tuple[str, list[AsyncClient]]]:
+        """Prefill engines pause before decode engines. A prefill engine's pause completes
+        only once decode has pulled (or the lease has expired on) every KV block it holds,
+        and a paused decode engine pulls nothing, so pausing both at once stalls for the
+        full lease and hands decode expired blocks on resume."""
+        if self._roles is None:
+            return [("all", self.clients)]
+        prefill = [client for client, role in zip(self.clients, self._roles) if role == "prefill"]
+        decode = [client for client, role in zip(self.clients, self._roles) if role != "prefill"]
+        return [(role, clients) for role, clients in (("prefill", prefill), ("decode", decode)) if clients]
+
     async def aclose(self) -> None:
         for client in self.clients + self._router_clients:
             await client.aclose()
 
 
-def setup_admin_plane(client_config: ClientConfig, model_name: str) -> AdminPlane:
+def setup_admin_plane(client_config: ClientConfig, model_name: str, roles: list[str] | None = None) -> AdminPlane:
     dynamo = client_config.dynamo
     if dynamo is not None and dynamo.enabled:
         from prime_rl.inference.dynamo import DynamoAdminPlane
 
         return DynamoAdminPlane(client_config, model_name)
-    return AdminPlane(client_config)
+    return AdminPlane(client_config, roles=roles)
 
 
 async def check_inference_ready(client_config: ClientConfig, model_name: str) -> None:
