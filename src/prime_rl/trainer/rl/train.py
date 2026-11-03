@@ -15,7 +15,7 @@ import torch.distributed as dist
 from torch.profiler import profile, ProfilerActivity, record_function
 from prime_rl.trainer.ckpt import Progress, setup_ckpt_manager
 from prime_rl.trainer.optim import setup_optimizer
-from prime_rl.trainer.scheduler import setup_scheduler
+from prime_rl.trainer.scheduler import rescale_learning_rate, setup_scheduler
 from prime_rl.configs.trainer import TrainerConfig
 from prime_rl.trainer.rl.data import DataLoader, FakeDataLoader
 from prime_rl.utils.cp import (
@@ -210,6 +210,7 @@ def train(config: TrainerConfig):
             progress,
             path=resume_dir / "trainer" if resume_dir is not None else None,
         )
+        rescale_learning_rate(optimizer, scheduler, config.optim.lr)
         # The checkpoint finished step ``checkpoint_step``; resume training at the next step.
         progress.step += 1
         logger.info(

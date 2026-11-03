@@ -14,6 +14,24 @@ def _get_base_optimizer(optimizer: OptimizerLike) -> Optimizer:
     return optimizer
 
 
+def rescale_learning_rate(optimizer: OptimizerLike, scheduler: LRScheduler, lr: float) -> None:
+    """Rescale a schedule restored from a checkpoint so it peaks at ``lr``.
+
+    The optimizer state carries the learning rate it was saved with, and the chainable
+    schedulers continue from each group's current ``lr``, so without this a resume keeps
+    the checkpoint's learning rate whatever the config says."""
+    groups = _get_base_optimizer(optimizer).param_groups
+    schedulers = [s for s in [scheduler, *getattr(scheduler, "_schedulers", [])] if hasattr(s, "base_lrs")]
+    for i, group in enumerate(groups):
+        scale = lr / group["initial_lr"]
+        group["initial_lr"] = lr
+        group["lr"] *= scale
+        for s in schedulers:
+            s.base_lrs[i] *= scale
+    for s in schedulers:
+        s._last_lr = [group["lr"] for group in groups]
+
+
 def setup_constant_scheduler(optimizer: Optimizer) -> LRScheduler:
     """Create a constant learning rate scheduler."""
     return ConstantLR(optimizer, factor=1.0)
