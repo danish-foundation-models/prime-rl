@@ -15,6 +15,7 @@ import torch.distributed as dist
 from torch.profiler import profile, ProfilerActivity, record_function
 from prime_rl.trainer.ckpt import Progress, setup_ckpt_manager
 from prime_rl.trainer.optim import setup_optimizer
+from prime_rl.trainer.optim.rounding import StochasticBF16Rounding
 from prime_rl.trainer.scheduler import rescale_learning_rate, setup_scheduler
 from prime_rl.configs.trainer import TrainerConfig
 from prime_rl.trainer.rl.data import DataLoader, FakeDataLoader
@@ -239,6 +240,7 @@ def train(config: TrainerConfig):
     )
 
     gc_handler = GarbageCollection(config.gc.interval) if config.gc else None
+    bf16_rounding = StochasticBF16Rounding(model) if config.optim.stochastic_round_bf16 else None
 
     logger.info(f"Starting training loop (max_steps={config.max_steps or 'infinite'})")
     maybe_record_function = nullcontext
@@ -604,6 +606,8 @@ def train(config: TrainerConfig):
         # Update the model parameters
         optimizer.step()
         optimizer.zero_grad()
+        if bf16_rounding is not None:
+            bf16_rounding.step(progress.step)
 
         # Update learning rate scheduler
         scheduler.step()

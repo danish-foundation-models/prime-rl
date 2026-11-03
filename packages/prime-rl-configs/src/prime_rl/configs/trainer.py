@@ -497,6 +497,13 @@ class BaseOptimizerConfig(BaseConfig):
     max_norm: float | None = Field(1.0, ge=0)
     """Maximum gradient norm to clip to. If None, gradient clipping is disabled."""
 
+    stochastic_round_bf16: bool = False
+    """Train and serve a stochastically rounded bf16 copy of an exact fp32 master (arXiv 2610.41073).
+    Round-to-nearest bf16 casts silently drop updates smaller than half a bf16 step, which at small
+    learning rates is most of them. With this on, the trainer's forward weights and the broadcast
+    weights are one unbiased bf16 copy, re-drawn every step and within one bf16 step of the master.
+    Costs an fp32 residual per trainable parameter, kept in pinned CPU memory."""
+
 
 class SGDConfig(BaseOptimizerConfig):
     type: Literal["sgd"] = "sgd"
