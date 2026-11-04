@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +13,16 @@ from prime_rl.orchestrator.curriculum.samplers.base import TaskSampler
 
 if TYPE_CHECKING:
     from prime_rl.configs.orchestrator import DifficultyPoolSamplerConfig
+
+
+def valid_rewards(group: list[vf.Episode]) -> list[float]:
+    """Rewards of a group's clean trainable traces."""
+    return [
+        trace.reward
+        for episode in group
+        for trace in episode.traces
+        if not trace.has_error and trace.agent.trainable
+    ]
 
 
 class DifficultyPoolSampler(TaskSampler):
@@ -51,6 +61,11 @@ class DifficultyPoolSampler(TaskSampler):
         self.pools = config.pools
         self.strategy = config.strategy
         self.shared_group = config.shared_group
+        self.stagger = config.stagger_harnesses
+        # Unseen tasks a staggered peer is exploring; TrainSource gives all peers one set.
+        self.claimed: set[str] = set()
+        # Tasks whose first group on a peer harness came out mixed, explored here next.
+        self.offered: deque[str] = deque()
         self.history_size = config.history_size
         self.replay_fraction = config.replay_fraction
         self.replay_warmup_tasks = config.replay_warmup_tasks
@@ -89,6 +104,10 @@ class DifficultyPoolSampler(TaskSampler):
         if not self.has_available_tasks:
             raise StopIteration
         if self.strategy == "smoothed_replay":
+            while self.offered:
+                key = self.offered.popleft()
+                if key not in self.excluded_keys:
+                    return self.tasks_by_key[key]
             available = [key for key in self.task_keys if key not in self.excluded_keys]
             observed = [key for key in available if key in self.task_rewards]
             unseen = [key for key in available if key not in self.task_rewards]
@@ -99,6 +118,8 @@ class DifficultyPoolSampler(TaskSampler):
                 key = self.rng.choices(observed, weights=weights, k=1)[0]
             else:
                 key = self._next_unexplored() or self.rng.choice(unseen or available)
+                if self.stagger:
+                    self.claimed.add(key)
             return self.tasks_by_key[key]
         weights = []
         for task_key in self.task_keys:
@@ -109,7 +130,7 @@ class DifficultyPoolSampler(TaskSampler):
         return self.rng.choices(self.tasks, weights=weights, k=1)[0]
 
     def _unexplored(self, key: str) -> bool:
-        return key not in self.excluded_keys and key not in self.task_rewards
+        return key not in self.excluded_keys and key not in self.task_rewards and key not in self.claimed
 
     def _next_unexplored(self) -> str | None:
         while self._explore_cursor < len(self._explore_order):
@@ -135,13 +156,13 @@ class DifficultyPoolSampler(TaskSampler):
                 found.append(self.tasks_by_key[key])
         return found
 
+    def offer(self, key: str) -> None:
+        """Explore a task next that a staggered peer harness found mixed."""
+        if key in self.tasks_by_key:
+            self.offered.append(key)
+
     def observe(self, group: list[vf.Episode]) -> None:
-        rewards = [
-            trace.reward
-            for episode in group
-            for trace in episode.traces
-            if not trace.has_error and trace.agent.trainable
-        ]
+        rewards = valid_rewards(group)
         if not rewards:
             return
         task = group[0].task
@@ -164,11 +185,14 @@ class DifficultyPoolSampler(TaskSampler):
             "task_rewards": dict(self.task_rewards),
             **({"task_history": {key: list(values) for key, values in self.task_history.items()}}
                if self.strategy == "smoothed_replay" else {}),
+            # Claims are not saved: their groups are in flight and die with the run.
+            **({"offered": list(self.offered)} if self.stagger else {}),
         }
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self.rng.setstate(state_dict["rng"])
         self._explore_cursor = state_dict.get("explore_cursor", 0)
+        self.offered = deque(key for key in state_dict.get("offered", []) if key in self.tasks_by_key)
         self.task_rewards = dict(state_dict["task_rewards"])
         if self.strategy == "smoothed_replay":
             histories = state_dict.get("task_history")

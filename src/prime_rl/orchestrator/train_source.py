@@ -11,6 +11,7 @@ from typing import Any
 import verifiers.v1 as vf
 
 from prime_rl.orchestrator.curriculum import Curriculum
+from prime_rl.orchestrator.curriculum.samplers.pool import valid_rewards
 from prime_rl.orchestrator.envs import TrainEnvs
 from prime_rl.orchestrator.types import TaskRequest
 from prime_rl.orchestrator.utils import episode_env_name
@@ -43,6 +44,10 @@ class TrainSource:
                 peers = self._shared_difficulty[sampler.shared_group]
                 if peers and sampler.history_size != peers[0].history_size:
                     raise ValueError("Shared task difficulty requires matching history_size")
+                if peers and sampler.stagger != peers[0].stagger:
+                    raise ValueError("Shared task difficulty requires matching stagger_harnesses")
+                if peers:
+                    sampler.claimed = peers[0].claimed
                 peers.append(sampler)
 
         self.env_names = [env.name for env in self.envs]
@@ -138,9 +143,19 @@ class TrainSource:
         env_name = episode_env_name(group[0])
         admitted = self.curricula[env_name].on_result(group)
         sampler = self.curricula[env_name].sampler
-        for peer in self._shared_difficulty.get(getattr(sampler, "shared_group", None), []):
+        peers = self._shared_difficulty.get(getattr(sampler, "shared_group", None), [])
+        for peer in peers:
             if peer is not sampler:
                 peer.observe(group)
+        if getattr(sampler, "stagger", False) and group[0].task.key in sampler.claimed:
+            # A staggered task's first group. An errored one releases the claim; the task comes back once
+            # the explore order runs out.
+            key = group[0].task.key
+            sampler.claimed.discard(key)
+            if len(set(valid_rewards(group))) > 1:
+                for peer in peers:
+                    if peer is not sampler:
+                        peer.offer(key)
         if not isinstance(admitted, bool):
             raise TypeError(f"Curriculum.on_result() must return bool, got {type(admitted).__name__}")
         if admitted:

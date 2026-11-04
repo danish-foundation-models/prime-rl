@@ -402,3 +402,50 @@ def test_samplers_sharing_outcomes_explore_unseen_tasks_in_one_order():
     scored = next(bash)
     pi.observe(make_rollout(scored, reward=0.5))  # TrainSource shares a group's outcomes.
     assert next(pi).key == order[1]
+
+
+def test_staggered_harnesses_explore_each_task_once_and_share_only_mixed_tasks():
+    from verifiers.v1.trace import Error
+
+    tasks = [make_task(i) for i in range(100)]
+
+    def envs():
+        result = []
+        for seed, name in enumerate(("bash", "pi", "opencode")):
+            sampler = DifficultyPoolSamplerConfig(
+                strategy="smoothed_replay",
+                shared_group="family",
+                seed=seed,
+                replay_fraction=0.0,
+                stagger_harnesses=True,
+            )
+            config = SimpleNamespace(ratio=1, curriculum=CurriculumConfig(sampler=sampler))
+            result.append(SimpleNamespace(name=name, tasks=iter(tasks), num_tasks=len(tasks), config=config))
+        return result
+
+    def group(task, env_name, rewards):
+        return [episode for reward in rewards for episode in make_rollout(task, env_name=env_name, reward=reward)]
+
+    source = TrainSource(envs())
+    samplers = {name: source.curricula[name].sampler for name in ("bash", "pi", "opencode")}
+    first = {name: [next(sampler) for _ in range(3)] for name, sampler in samplers.items()}
+    keys = [task.key for drawn in first.values() for task in drawn]
+    assert len(set(keys)) == 9  # No unseen task goes to two harnesses before its first group lands.
+
+    mixed, solved, broken = first["bash"]
+    source.on_result(group(mixed, "bash", [1.0, 0, 0, 0, 0, 0, 0, 0]))
+    source.on_result(group(solved, "bash", [1.0] * 8))
+    failed = make_rollout(broken, env_name="bash")
+    failed[0].traces[0].errors = [Error(type="SandboxError", message="unavailable")]
+    failed[0].traces[0].ok = False
+    source.on_result(failed)
+    assert broken.key not in samplers["pi"].claimed
+    for name in ("pi", "opencode"):
+        assert next(samplers[name]).key == mixed.key  # Only the mixed task is offered to the peers.
+        assert next(samplers[name]).key not in {mixed.key, solved.key}
+
+    samplers["pi"].offer(solved.key)
+    state = source.state_dict()
+    restored = TrainSource(envs())
+    restored.load_state_dict(state)
+    assert next(restored.curricula["pi"].sampler).key == solved.key

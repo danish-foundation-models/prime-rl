@@ -234,6 +234,10 @@ class DifficultyPoolSamplerConfig(BaseConfig):
     """Smoothed replay balances observed tasks by reward variation and explores unseen tasks."""
     shared_group: str | None = None
     """Share task outcomes across source harnesses with this explicitly matching identity."""
+    stagger_harnesses: bool = False
+    """With a shared group, explore each unseen task on one harness first and offer it to the other
+    harnesses only if that first group's rewards differ. A task's outcome is nearly harness-independent,
+    so this skips the other harnesses' groups on tasks that are all-pass or all-fail."""
     history_size: int = Field(default=64, ge=1)
     """Maximum recent valid rollout rewards retained per task."""
     replay_fraction: float = Field(default=0.5, ge=0, le=1)
