@@ -240,6 +240,12 @@ class DifficultyPoolSamplerConfig(BaseConfig):
     so this skips the other harnesses' groups on tasks that are all-pass or all-fail."""
     history_size: int = Field(default=64, ge=1)
     """Maximum recent valid rollout rewards retained per task."""
+    retire_solved_after: int | None = Field(default=None, ge=1)
+    """Smoothed replay: stop sampling a task once its history holds at least this many rewards and its
+    smoothed pass rate reaches ``retire_solved_rate``. Such groups are nearly always all-pass and dropped."""
+    retire_solved_rate: float = Field(default=0.85, gt=0, le=1)
+    retire_unsolved_after: int | None = Field(default=None, ge=1)
+    """Smoothed replay: stop sampling a task once its history holds at least this many rewards, none positive."""
     replay_fraction: float = Field(default=0.5, ge=0, le=1)
     replay_warmup_tasks: int = Field(default=16, ge=1)
     """Ramp replay to its target fraction as this many observed tasks become available."""

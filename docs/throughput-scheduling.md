@@ -227,6 +227,16 @@ draws explore unseen tasks, falling back to all available tasks once every task
 has observations. Category targets and adaptive rollout concurrency still belong
 to the existing scheduler. Quarantined tasks are excluded from both paths.
 
+`retire_solved_after` and `retire_unsolved_after` stop sampling tasks that are
+decided. The first retires a task once its history holds at least that many rewards
+and its estimate reaches `retire_solved_rate` (default 0.85). The second retires a
+task once its history holds at least that many rewards and none of them is positive.
+Retirement is derived from the history, so a resume re-applies it.
+
+The explore order is a seeded shuffle of the task list. A checkpoint records a
+digest of that order. If the task list changes, the resume restarts exploration
+from the beginning of the new order; already-observed tasks are skipped.
+
 History and per-source RNG state are checkpointed. Legacy latest-mean checkpoints
 are treated as one weak observation per task, not a fabricated group of trials.
 The default `strategy = "pools"` preserves the explicit threshold/weight policy.

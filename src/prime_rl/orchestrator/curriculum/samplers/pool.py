@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import random
 from collections import Counter, deque
 from collections.abc import Iterator, Sequence
@@ -67,6 +68,10 @@ class DifficultyPoolSampler(TaskSampler):
         # Tasks whose first group on a peer harness came out mixed, explored here next.
         self.offered: deque[str] = deque()
         self.history_size = config.history_size
+        self.retire_solved_after = config.retire_solved_after
+        self.retire_solved_rate = config.retire_solved_rate
+        self.retire_unsolved_after = config.retire_unsolved_after
+        self.retired: set[str] = set()
         self.replay_fraction = config.replay_fraction
         self.replay_warmup_tasks = config.replay_warmup_tasks
         self.task_history: dict[str, list[float]] = {}
@@ -82,6 +87,7 @@ class DifficultyPoolSampler(TaskSampler):
         explore_seed = config.shared_group if config.shared_group is not None else config.seed
         random.Random(f"{explore_seed}:explore").shuffle(self._explore_order)
         self._explore_cursor = 0
+        self._explore_digest = hashlib.sha256("\n".join(self._explore_order).encode()).hexdigest()
 
     def task_pool(self, task_key: str) -> str | None:
         """Return the task's current pool, or ``None`` until it has a score."""
@@ -175,13 +181,25 @@ class DifficultyPoolSampler(TaskSampler):
             self.task_history[task.key] = history
             # Beta(1, 1) smoothing: 0/8 is uncertain, while 2/8 remains useful.
             self.task_rewards[task.key] = (1.0 + sum(history)) / (2.0 + len(history))
+            self._maybe_retire(task.key)
         else:
             self.task_rewards[task.key] = sum(rewards) / len(rewards)
+
+    def _maybe_retire(self, key: str) -> None:
+        history = self.task_history[key]
+        solved = (self.retire_solved_after is not None and len(history) >= self.retire_solved_after
+                  and self.task_rewards[key] >= self.retire_solved_rate)
+        unsolved = (self.retire_unsolved_after is not None and len(history) >= self.retire_unsolved_after
+                    and not any(history))
+        if solved or unsolved:
+            self.retired.add(key)
+            self.excluded_keys.add(key)
 
     def state_dict(self) -> dict[str, Any]:
         return {
             "rng": self.rng.getstate(),
             "explore_cursor": self._explore_cursor,
+            "explore_digest": self._explore_digest,
             "task_rewards": dict(self.task_rewards),
             **({"task_history": {key: list(values) for key, values in self.task_history.items()}}
                if self.strategy == "smoothed_replay" else {}),
@@ -191,7 +209,10 @@ class DifficultyPoolSampler(TaskSampler):
 
     def load_state_dict(self, state_dict: dict[str, Any]) -> None:
         self.rng.setstate(state_dict["rng"])
-        self._explore_cursor = state_dict.get("explore_cursor", 0)
+        # The cursor indexes this taskset's explore order; a changed task list reorders it, so start over
+        # (observed tasks are skipped). A checkpoint from before the digest was saved restarts too.
+        same_order = state_dict.get("explore_digest") == self._explore_digest
+        self._explore_cursor = state_dict.get("explore_cursor", 0) if same_order else 0
         self.offered = deque(key for key in state_dict.get("offered", []) if key in self.tasks_by_key)
         self.task_rewards = dict(state_dict["task_rewards"])
         if self.strategy == "smoothed_replay":
@@ -202,6 +223,9 @@ class DifficultyPoolSampler(TaskSampler):
             self.task_history = {key: list(values)[-self.history_size:] for key, values in histories.items()}
             self.task_rewards = {key: (1.0 + sum(values)) / (2.0 + len(values))
                                  for key, values in self.task_history.items()}
+            for key in self.task_history:
+                if key in self.tasks_by_key:
+                    self._maybe_retire(key)
 
     def metrics(self) -> dict[str, float]:
         occupancy = dict.fromkeys(self.pools, 0)
@@ -210,6 +234,8 @@ class DifficultyPoolSampler(TaskSampler):
             if pool is not None:
                 occupancy[pool] += 1
         return {
-            "pool/unseen": float(len(self.tasks_by_key) - len(self.task_rewards)),
+            "pool/unseen": float(sum(key not in self.task_rewards for key in self.task_keys)),
+            **({"pool/retired": float(len(self.retired))}
+               if self.retire_solved_after is not None or self.retire_unsolved_after is not None else {}),
             **{f"pool/{name}": float(count) for name, count in occupancy.items()},
         }

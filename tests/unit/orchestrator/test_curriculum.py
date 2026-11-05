@@ -363,6 +363,34 @@ def test_smoothed_replay_keeps_exploration_and_does_not_let_one_task_dominate():
     assert all(next(sampler).key not in known for _ in range(100))
 
 
+def test_smoothed_replay_retires_decided_tasks_and_restarts_exploration_on_a_new_task_list():
+    from prime_rl.orchestrator.curriculum.samplers import DifficultyPoolSampler
+
+    tasks = [make_task(i) for i in range(100)]
+    config = DifficultyPoolSamplerConfig(
+        strategy="smoothed_replay", replay_fraction=1.0, replay_warmup_tasks=1,
+        retire_solved_after=16, retire_unsolved_after=24,
+    )
+    sampler = DifficultyPoolSampler(config, tasks)
+    solved, unsolved, mixed = tasks[:3]
+    for _ in range(2):
+        sampler.observe(make_rollout(solved, reward=1.0) * 8)
+        sampler.observe(make_rollout(mixed, reward=1.0) * 4 + make_rollout(mixed, reward=0.0) * 4)
+    for _ in range(3):
+        sampler.observe(make_rollout(unsolved, reward=0.0) * 8)
+    assert sampler.retired == {solved.key, unsolved.key}
+    assert {next(sampler).key for _ in range(50)} == {mixed.key}
+
+    state = sampler.state_dict()
+    restored = DifficultyPoolSampler(config, tasks)
+    restored.load_state_dict(state)
+    assert restored.retired == sampler.retired
+    assert restored._explore_cursor == sampler._explore_cursor
+    shrunk = DifficultyPoolSampler(config, tasks[:50])
+    shrunk.load_state_dict(state)
+    assert shrunk._explore_cursor == 0
+
+
 def test_smoothed_replay_knows_its_next_unseen_tasks_ahead_of_sampling():
     from prime_rl.orchestrator.curriculum.samplers import DifficultyPoolSampler
 
