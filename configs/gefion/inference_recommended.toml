@@ -1,0 +1,83 @@
+# Recommended per-node inference block for the Gefion Nemotron-3 Super PRIME-RL run. Each inference
+# node is one independent DP8+EP8 replica: in [deployment] set num_infer_nodes = 1 and
+# num_infer_replicas = <inference nodes>. Merge into the RL config; it replaces the TP8
+# [inference.vllm] layout of gefion_smoke.toml. Evidence: section 12 of
+# /dcai/projects/iu_0145/rasmus/gefion-phase0-report.md.
+#
+# Measured (one node, i3-math multi-turn load, 1408 requests in flight, job 531424):
+#   5.4k output tok/s, 47% prefix-cache hits, 0 preemptions.
+#   Logprob mismatch k3 vs. itself ~5.5-5.9e-3 (bf16: 1.3e-3).
+# Not measured: FP8 weight reload after a trainer step; this block inside a real RL job.
+#
+# MTP is OFF: FP8 + MTP reached only 1.3k tok/s on the same load (prefill-bound, cause not found).
+#
+# Known numerical effect of prefix caching on this model (bf16 too): a hit that reuses a Mamba state
+# written during decode drifts from a cold prefill (mean |dlogprob| 0.06-0.10 FP8, ~0.02 bf16).
+
+[inference]
+use_deep_gemm = false
+enable_fp32_lm_head = true          # GPU cost ~0.4 ms of a ~40 ms step; keep for logprob accuracy
+enable_fp32_router_logits = true
+
+# PRIME-RL's router: one global vllm-router on the first inference node, consistent hash on the
+# rollout's x-session-id across every per-rank server, so a rollout's turns hit the same prefix cache.
+# Without it (vLLM's own DP balancer, load-only) hits drop to ~36% at the same throughput.
+[inference.router]
+type = "vllm-router"
+policy = "consistent_hash"
+
+# Host-RAM KV offload, allocated per DP engine in /dev/shm (1008 GB per node): 8 x 96 GiB = 768 GiB.
+# Stores and restores decoded history only with the offload_fix patch below. Needs `ulimit -l
+# unlimited` (the multi_node_rl template sets it).
+[inference.kv_cache_offload]
+type = "native"
+
+[inference.kv_cache_offload.cpu]
+num_bytes = 103079215104  # 96 GiB per DP engine
+
+[inference.vllm]
+# VerifiedSuperWorker assumes TP8 and rejects DP>1 and online FP8: use the stock worker (do not set worker_cls).
+safetensors_load_strategy = "prefetch"
+trust_remote_code = true
+dtype = "bfloat16"
+quantization = "fp8_per_block"      # online FP8; PRIME-RL re-quantizes the broadcast bf16 weights on reload
+max_model_len = 131072
+tool_call_parser = "qwen3_coder"
+reasoning_parser = "nemotron_v3"
+language_model_only = true
+tensor_parallel_size = 1
+data_parallel_size = 8
+data_parallel_size_local = 8
+enable_expert_parallel = true
+all2all_backend = "allgather_reducescatter"
+enable_eplb = false
+max_num_seqs = 176                  # per DP rank
+# Must be >= 2 Mamba cache blocks (block = 4160 tokens here): below one block plus the decode tokens,
+# vLLM 0.28's align-mode scheduler schedules no prefill and stalls.
+max_num_batched_tokens = 8704
+gpu_memory_utilization = 0.91
+mamba_ssm_cache_dtype = "float32"
+enable_prefix_caching = true
+mamba_cache_mode = "align"
+# Leave prefix_match_unit at its default: 16 collapsed under load (preemption storms).
+
+[inference.env_vars]
+PRIME_RL_RELOAD_FILTER_NEMOTRON_EXPERTS = "1"
+PRIME_RL_RELOAD_SKIP_MOE_EMPTY_CACHE = "1"
+PRIME_RL_RELOAD_SKIP_BUFFER_DIAGNOSTICS = "1"
+# infer-opt patches (see /dcai/projects/iu_0145/rasmus/infer-opt/README.md); loaded by its
+# sitecustomize.py in every vLLM process:
+#   ep_compact_moe:  EP-aware Triton MoE for relu2 experts (bitwise = stock GEMMs)
+#   fast_generate:   numpy logprob store + direct JSON for /inference/v1/generate (same JSON as stock)
+#   fi_moe_chunk:    caps FlashInfer FP8 MoE workspace (14 -> 5.6 GiB peak activation per GPU)
+#   dg_jit_per_proc: per-process DeepGEMM JIT cache dir in /tmp (concurrent JIT on shared $HOME crashed)
+#   offload_fix:     host offload keeps decoded tokens (stock offloads prompts only) + backports of
+#                    vllm#52771, #54288, #52807 (offload/load fixes for Mamba groups)
+PYTHONPATH = "/dcai/projects/iu_0145/rasmus/infer-opt"
+INFER_OPT = "ep_compact_moe,fast_generate,fi_moe_chunk,dg_jit_per_proc,offload_fix"
+VLLM_TUNED_CONFIG_FOLDER = "/dcai/projects/iu_0145/rasmus/infer-opt/moe_configs"
+# Per-job compile caches avoid the cross-job Triton cache breakage seen in section 11 (the template
+# exports these in double quotes, so $SLURM_JOB_ID expands):
+VLLM_CACHE_ROOT = "/tmp/$SLURM_JOB_ID/vllm-cache"
+TRITON_CACHE_DIR = "/tmp/$SLURM_JOB_ID/triton-cache"
+# Operational: exclude dgx035 (NCCL hang), dgx150 (CUDA-graph capture hangs), dgx157.
