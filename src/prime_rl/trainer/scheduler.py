@@ -32,6 +32,12 @@ def rescale_learning_rate(optimizer: OptimizerLike, scheduler: LRScheduler, lr: 
         s._last_lr = [group["lr"] for group in groups]
 
 
+def restore_adam_eps(optimizer: OptimizerLike, eps: float) -> None:
+    """Set Adam's ε on every group; a checkpoint load restores the ε it was saved with."""
+    for group in _get_base_optimizer(optimizer).param_groups:
+        group["eps"] = eps
+
+
 def setup_constant_scheduler(optimizer: Optimizer) -> LRScheduler:
     """Create a constant learning rate scheduler."""
     return ConstantLR(optimizer, factor=1.0)

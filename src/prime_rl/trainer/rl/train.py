@@ -16,7 +16,7 @@ from torch.profiler import profile, ProfilerActivity, record_function
 from prime_rl.trainer.ckpt import Progress, setup_ckpt_manager
 from prime_rl.trainer.optim import setup_optimizer
 from prime_rl.trainer.optim.rounding import StochasticBF16Rounding
-from prime_rl.trainer.scheduler import rescale_learning_rate, setup_scheduler
+from prime_rl.trainer.scheduler import rescale_learning_rate, restore_adam_eps, setup_scheduler
 from prime_rl.configs.trainer import TrainerConfig
 from prime_rl.trainer.rl.data import DataLoader, FakeDataLoader
 from prime_rl.utils.cp import (
@@ -212,6 +212,9 @@ def train(config: TrainerConfig):
             path=resume_dir / "trainer" if resume_dir is not None else None,
         )
         rescale_learning_rate(optimizer, scheduler, config.optim.lr)
+        if config.optim.type == "adamw":
+            restore_adam_eps(optimizer, config.optim.eps)
+            logger.info(f"Adam eps set to {config.optim.eps:g} after checkpoint load")
         # The checkpoint finished step ``checkpoint_step``; resume training at the next step.
         progress.step += 1
         logger.info(

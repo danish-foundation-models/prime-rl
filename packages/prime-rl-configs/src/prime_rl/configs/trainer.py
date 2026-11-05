@@ -524,6 +524,9 @@ class AdamWConfig(BaseOptimizerConfig):
     betas2: float = Field(0.999, ge=0)
     """Adam second-moment (β2) decay."""
 
+    eps: float = Field(1e-8, gt=0)
+    """Adam denominator ε. Overrides the value stored in a resumed checkpoint's optimizer state."""
+
 
 class MuonConfig(BaseOptimizerConfig):
     type: Literal["muon"] = "muon"
