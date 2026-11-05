@@ -237,6 +237,11 @@ The explore order is a seeded shuffle of the task list. A checkpoint records a
 digest of that order. If the task list changes, the resume restarts exploration
 from the beginning of the new order; already-observed tasks are skipped.
 
+A task's key is a content hash that includes its row index, so removing tasks from
+the list changes the keys of the tasks after them, and a resume finds no history for
+them. To drop tasks from a run that resumes, keep the list and name the dropped
+tasks' keys in `exclude_keys_file` (a JSON list) instead.
+
 History and per-source RNG state are checkpointed. Legacy latest-mean checkpoints
 are treated as one weak observation per task, not a fabricated group of trials.
 The default `strategy = "pools"` preserves the explicit threshold/weight policy.

@@ -246,6 +246,9 @@ class DifficultyPoolSamplerConfig(BaseConfig):
     retire_solved_rate: float = Field(default=0.85, gt=0, le=1)
     retire_unsolved_after: int | None = Field(default=None, ge=1)
     """Smoothed replay: stop sampling a task once its history holds at least this many rewards, none positive."""
+    exclude_keys_file: Path | None = None
+    """JSON list of task keys never to sample. Unlike a shorter task list, this keeps every other task's
+    key (a content hash that includes the task's row index), so a resumed sampler keeps its history."""
     replay_fraction: float = Field(default=0.5, ge=0, le=1)
     replay_warmup_tasks: int = Field(default=16, ge=1)
     """Ramp replay to its target fraction as this many observed tasks become available."""

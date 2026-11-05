@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 from collections import Counter, deque
 from collections.abc import Iterator, Sequence
@@ -79,6 +80,8 @@ class DifficultyPoolSampler(TaskSampler):
         self._ordered_pools = tuple(ordered)
         self.task_rewards: dict[str, float] = {}
         self.excluded_keys: set[str] = set()
+        if config.exclude_keys_file is not None:
+            self.exclude_tasks(set(json.loads(config.exclude_keys_file.read_text())))
         # Smoothed replay explores unseen tasks in one seeded order, so the next
         # unseen tasks are known ahead of sampling (see ``upcoming``). Samplers that
         # share outcomes also share the order: one harness's scored task is skipped
