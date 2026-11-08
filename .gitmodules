@@ -1,14 +1,15 @@
 [submodule "verifiers"]
 	path = deps/verifiers
-	url = git@github.com:PrimeIntellect-ai/verifiers.git
+	url = https://github.com/rlrs/verifiers.git
+	branch = munin-2.0
 [submodule "renderers"]
 	path = deps/renderers
 	url = https://github.com/rlrs/renderers.git
-	branch = feat/lumi-sampler-topk-20261011
+	branch = munin-2.0/xml-tool-arg-newlines
 [submodule "prime-envs"]
 	path = deps/prime-envs
 	url = https://github.com/rlrs/research-environments.git
-	branch = feat/lumi-ucloud-envs-20260930
+	branch = munin-2.0/swe-scoring
 [submodule "pydantic-config"]
 	path = deps/pydantic-config
 	url = https://github.com/PrimeIntellect-ai/pydantic-config
